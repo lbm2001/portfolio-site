@@ -141,13 +141,14 @@ export function useFloatDrag(params: FloatParams) {
   return { ref, wasDraggedRef };
 }
 
-export type Corner = "tl" | "tr" | "ml" | "mr" | "bl" | "br";
+// six evenly-spaced seats on a ring around the name (see .mini-* in globals.css)
+export type Corner = "top" | "ur" | "lr" | "bot" | "ll" | "ul";
 
 export const FLOAT_PARAMS: Record<Corner, FloatParams> = {
-  tl: { ampX: 46, ampY: 30, freqX: 0.31, freqY: 0.22, phase: 0 },
-  tr: { ampX: -44, ampY: 28, freqX: 0.27, freqY: 0.24, phase: 1.3 },
-  ml: { ampX: 40, ampY: 34, freqX: 0.24, freqY: 0.19, phase: 4.7 },
-  mr: { ampX: -42, ampY: 32, freqX: 0.22, freqY: 0.2, phase: 5.5 },
-  bl: { ampX: 44, ampY: -30, freqX: 0.29, freqY: 0.21, phase: 2.4 },
-  br: { ampX: -46, ampY: -28, freqX: 0.25, freqY: 0.23, phase: 3.6 },
+  top: { ampX: 34, ampY: 26, freqX: 0.27, freqY: 0.21, phase: 0 },
+  ur: { ampX: -32, ampY: 28, freqX: 0.24, freqY: 0.23, phase: 1.0 },
+  lr: { ampX: -34, ampY: -26, freqX: 0.26, freqY: 0.2, phase: 2.1 },
+  bot: { ampX: 32, ampY: -28, freqX: 0.23, freqY: 0.22, phase: 3.1 },
+  ll: { ampX: 34, ampY: -26, freqX: 0.25, freqY: 0.19, phase: 4.2 },
+  ul: { ampX: 32, ampY: 28, freqX: 0.22, freqY: 0.24, phase: 5.2 },
 };

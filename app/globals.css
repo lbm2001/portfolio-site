@@ -89,10 +89,10 @@ a {
   flex-shrink: 0;
 }
 
-/* ---- Hero (four RL demos in the corners) ---- */
+/* ---- Hero (six learning demos ringed around the name) ---- */
 .hero {
   position: relative;
-  min-height: 720px;
+  min-height: 800px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -117,11 +117,15 @@ a {
   color: var(--red);
 }
 
-/* ---- Mini learning-demo panels (floating, draggable mindmap nodes) ---- */
+/* ---- Mini learning-demo panels (floating, draggable ring nodes) ---- */
 .mini {
   position: absolute;
   z-index: 1;
   width: 248px;
+  /* every seat is placed relative to the hero centre; the JS transform
+     (ambient drift + drag) is layered on top — see useFloatDrag */
+  left: 50%;
+  top: 50%;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -138,33 +142,31 @@ a {
   opacity: 1;
   z-index: 5;
 }
-/* base anchors — three per side; position is driven from here via JS transform
-   (ambient drift + drag), see useFloatDrag */
-.mini-tl {
-  top: 30px;
-  left: 56px;
+/* six seats evenly spaced on a ring (ellipse Rx≈420, Ry≈258) around the name.
+   margins offset each panel's top-left from the hero centre. */
+.mini-top {
+  margin-left: -124px;
+  margin-top: -368px;
 }
-.mini-tr {
-  top: 30px;
-  right: 56px;
+.mini-ur {
+  margin-left: 240px;
+  margin-top: -239px;
 }
-.mini-ml {
-  top: 50%;
-  margin-top: -108px;
-  left: 44px;
+.mini-lr {
+  margin-left: 240px;
+  margin-top: 19px;
 }
-.mini-mr {
-  top: 50%;
-  margin-top: -108px;
-  right: 44px;
+.mini-bot {
+  margin-left: -124px;
+  margin-top: 148px;
 }
-.mini-bl {
-  bottom: 30px;
-  left: 56px;
+.mini-ll {
+  margin-left: -488px;
+  margin-top: 19px;
 }
-.mini-br {
-  bottom: 30px;
-  right: 56px;
+.mini-ul {
+  margin-left: -488px;
+  margin-top: -239px;
 }
 
 /* an actively-training node stays more visible even without a hover */

@@ -91,18 +91,51 @@ export class ClassificationTask implements NNTask {
     return [px, py];
   }
 
+  // probability of class 1 at a canvas pixel
+  private pAt(cx: number, cy: number): number {
+    const [px, py] = this.toData(cx, cy);
+    return this.net.predict([px, py])[0];
+  }
+
   draw(ctx: CanvasRenderingContext2D) {
     if (!this.net) return;
+    // soft region tint (kept faint so the boundary line reads clearly)
     const cell = 6;
     for (let cy = 0; cy < this.h; cy += cell) {
       for (let cx = 0; cx < this.w; cx += cell) {
-        const [px, py] = this.toData(cx + cell / 2, cy + cell / 2);
-        const p = this.net.predict([px, py])[0];
-        const alpha = 0.08 + 0.14 * Math.abs(p - 0.5) * 2;
+        const p = this.pAt(cx + cell / 2, cy + cell / 2);
+        const alpha = 0.05 + 0.08 * Math.abs(p - 0.5) * 2;
         ctx.fillStyle = p > 0.5 ? `rgba(225,45,26,${alpha})` : `rgba(17,17,17,${alpha})`;
         ctx.fillRect(cx, cy, cell, cell);
       }
     }
+
+    // solid decision boundary: the p = 0.5 iso-line via marching squares
+    const gs = 9;
+    ctx.strokeStyle = "#E12D1A";
+    ctx.lineWidth = 2;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    for (let y = 0; y + gs <= this.h; y += gs) {
+      for (let x = 0; x + gs <= this.w; x += gs) {
+        const a = this.pAt(x, y) - 0.5; // top-left
+        const b = this.pAt(x + gs, y) - 0.5; // top-right
+        const c = this.pAt(x + gs, y + gs) - 0.5; // bottom-right
+        const d = this.pAt(x, y + gs) - 0.5; // bottom-left
+        const pts: [number, number][] = [];
+        if (a * b < 0) pts.push([x + (gs * -a) / (b - a), y]);
+        if (b * c < 0) pts.push([x + gs, y + (gs * -b) / (c - b)]);
+        if (d * c < 0) pts.push([x + (gs * -d) / (c - d), y + gs]);
+        if (a * d < 0) pts.push([x, y + (gs * -a) / (d - a)]);
+        for (let i = 0; i + 1 < pts.length; i += 2) {
+          ctx.moveTo(pts[i][0], pts[i][1]);
+          ctx.lineTo(pts[i + 1][0], pts[i + 1][1]);
+        }
+      }
+    }
+    ctx.stroke();
+
+    // data points
     for (const { x, y } of this.data) {
       const [cx, cy] = this.toPx(x[0], x[1]);
       ctx.fillStyle = y[0] === 1 ? "#E12D1A" : "#111";

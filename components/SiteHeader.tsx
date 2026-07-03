@@ -56,14 +56,14 @@ export default function SiteHeader() {
       </nav>
 
       <header className="hero">
-        {/* Six live learning demos — neural nets on the left, RL agents on the
-            right — floating around the intro. Drag them; click one to train. */}
-        <MiniDemoNN make={makeClassification} corner="tl" />
-        <MiniDemoNN make={makeCurveFit} corner="ml" />
-        <MiniDemoNN make={makeDigit} corner="bl" />
-        <MiniDemo make={makeCartPole} corner="tr" />
-        <MiniDemo make={makePendulum} corner="mr" />
-        <MiniDemo make={makeWalker} corner="br" displayDisturb={17} />
+        {/* Six live learning demos ringed around the name — neural nets on the
+            left arc, RL agents on the right. Drag them; click one to train. */}
+        <MiniDemoNN make={makeClassification} corner="ul" />
+        <MiniDemoNN make={makeCurveFit} corner="ll" />
+        <MiniDemoNN make={makeDigit} corner="bot" />
+        <MiniDemo make={makeCartPole} corner="top" />
+        <MiniDemo make={makePendulum} corner="ur" />
+        <MiniDemo make={makeWalker} corner="lr" displayDisturb={17} />
 
         <div className="hero-content">
           <div className="hero-tag">{profile.tagline}</div>

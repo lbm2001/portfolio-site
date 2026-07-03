@@ -112,7 +112,7 @@ export default function MiniDemo({
         if (statsRef.current) {
           statsRef.current.textContent = `episode ${pad(trainer.episode)}   return ${pad(
             trainer.genMean
-          )}   run ${trainer.run}`;
+          )}   gen ${trainer.run}`;
         }
       }
       raf = requestAnimationFrame(frame);
@@ -134,7 +134,7 @@ export default function MiniDemo({
         </div>
         <div className="mini-title">{title}</div>
         <div ref={statsRef} className="mini-stats">
-          episode 000&nbsp;&nbsp;&nbsp;return 000&nbsp;&nbsp;&nbsp;run 1
+          episode 000&nbsp;&nbsp;&nbsp;return 000&nbsp;&nbsp;&nbsp;gen 1
         </div>
       </div>
       <canvas ref={chartRef} className="mini-chart" />

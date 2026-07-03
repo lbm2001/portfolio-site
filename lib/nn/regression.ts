@@ -5,15 +5,18 @@
 import type { NNTask } from "./types";
 import { MLP, type Sample } from "./mlp";
 
+// A smooth, low-frequency target the small tanh MLP can actually fit well.
+// (An earlier version had a sin(7x) term that the net couldn't resolve —
+// spectral bias — so the curve never matched the points.)
 function targetFn(x: number): number {
-  return 0.35 * Math.sin(3 * x) + 0.18 * Math.sin(7 * x + 1.0);
+  return 0.5 * Math.sin(2.2 * x) + 0.14 * Math.sin(3.6 * x + 0.7);
 }
 
 const N_POINTS = 40;
 
 export class CurveFitTask implements NNTask {
   readonly title = "Regression · curve fit · backprop";
-  readonly netSizes = [1, 12, 12, 1];
+  readonly netSizes = [1, 16, 16, 1];
   readonly lossType = "mse" as const;
   w = 0;
   h = 0;
@@ -40,7 +43,7 @@ export class CurveFitTask implements NNTask {
   }
 
   trainStep(): number {
-    const loss = this.net.trainStep(this.data, 0.4, this.lossType);
+    const loss = this.net.trainStep(this.data, 0.5, this.lossType);
     this.stepCount++;
     if (this.stepCount % 40 === 0) {
       this.probe = this.data[(Math.random() * this.data.length) | 0];
@@ -57,8 +60,8 @@ export class CurveFitTask implements NNTask {
   }
 
   private toPx(x: number, y: number): [number, number] {
-    const cx = ((x + 1) / 2) * this.w;
-    const cy = this.h * 0.5 - y * this.h * 0.85;
+    const cx = 6 + ((x + 1) / 2) * (this.w - 12);
+    const cy = this.h * 0.5 - y * this.h * 0.72;
     return [cx, cy];
   }
 
