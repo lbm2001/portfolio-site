@@ -1,3 +1,6 @@
+import Link from "next/link";
+
+// Home preview: CV teaser linking to the full /cv page.
 export default function CvStrip() {
   return (
     <section id="cv" className="cv">
@@ -5,12 +8,12 @@ export default function CvStrip() {
         <span className="cv-num">04</span>
         <div>
           <div className="cv-k">Curriculum Vitae</div>
-          <div className="cv-t">Download my full CV</div>
+          <div className="cv-t">Education, experience & skills</div>
         </div>
       </div>
-      <a className="cv-btn" href="#">
-        CV.pdf ↓
-      </a>
+      <Link className="cv-btn" href="/cv">
+        View CV →
+      </Link>
     </section>
   );
 }

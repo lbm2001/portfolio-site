@@ -1,11 +1,14 @@
 import Image from "next/image";
+import Link from "next/link";
 import { profile } from "@/lib/content";
 
+// Home preview: short about block with a link to the full /about page.
 export default function About() {
   return (
     <section id="about" className="section">
-      <div className="label-mono" style={{ marginBottom: 28 }}>
-        01 — About
+      <div className="section-head">
+        <div className="label-mono">01 — About</div>
+        <Link href="/about">More about me →</Link>
       </div>
       <div className="about-head">
         <div className="about-photo">

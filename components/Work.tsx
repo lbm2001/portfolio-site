@@ -1,15 +1,17 @@
+import Link from "next/link";
 import { projects } from "@/lib/content";
 
+// Home preview: the selected-work grid, each card linking to its detail page.
 export default function Work() {
   return (
     <section id="work" className="section">
       <div className="section-head">
         <div className="label-mono">02 — Selected Work</div>
-        <a href="#">All projects →</a>
+        <Link href="/projects">All projects →</Link>
       </div>
       <div className="work-grid">
         {projects.map((p) => (
-          <a key={p.idx} className="work-card" href="#">
+          <Link key={p.slug} className="work-card" href={`/projects/${p.slug}`}>
             <span className="work-meta">
               <span className="work-idx">{p.idx}</span>
               <span className="work-venue">{p.venue}</span>
@@ -30,7 +32,7 @@ export default function Work() {
                 </span>
               ))}
             </span>
-          </a>
+          </Link>
         ))}
       </div>
     </section>

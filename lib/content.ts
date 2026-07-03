@@ -9,6 +9,7 @@ export interface ProjectLink {
 }
 
 export interface Project {
+  slug: string;
   idx: string;
   title: string;
   venue: string;
@@ -18,11 +19,11 @@ export interface Project {
 }
 
 export interface Post {
+  slug: string;
   date: string;
   cat: string;
   title: string;
   excerpt: string;
-  href: string;
 }
 
 export const profile = {
@@ -33,17 +34,24 @@ export const profile = {
   field: "Robotics",
   location: "Frankfurt, Germany",
   email: "lukasbmueller@gmail.com",
+  links: {
+    github: "https://github.com/lbm2001",
+    linkedin: "https://www.linkedin.com/in/lukas-m-695b06195/",
+    scholar: "#",
+    email: "mailto:lukasbmueller@gmail.com",
+  },
 };
 
 export const nav: NavLink[] = [
-  { label: "About", href: "#about" },
-  { label: "Projects", href: "#work" },
-  { label: "Blog", href: "#blog" },
-  { label: "CV", href: "#cv" },
+  { label: "About", href: "/about" },
+  { label: "Projects", href: "/projects" },
+  { label: "Blog", href: "/blog" },
+  { label: "CV", href: "/cv" },
 ];
 
 export const projects: Project[] = [
   {
+    slug: "project-title-placeholder",
     idx: "01",
     title: "Project / Paper Title Placeholder",
     venue: "Venue · 2025",
@@ -56,6 +64,7 @@ export const projects: Project[] = [
     ],
   },
   {
+    slug: "second-project-placeholder",
     idx: "02",
     title: "Second Project Placeholder",
     venue: "Venue · 2024",
@@ -65,6 +74,7 @@ export const projects: Project[] = [
     links: [{ label: "Paper", href: "#" }],
   },
   {
+    slug: "third-project-placeholder",
     idx: "03",
     title: "Third Project Placeholder",
     venue: "Venue · 2023",
@@ -77,6 +87,7 @@ export const projects: Project[] = [
     ],
   },
   {
+    slug: "fourth-project-placeholder",
     idx: "04",
     title: "Fourth Project Placeholder",
     venue: "Venue · 2022",
@@ -89,26 +100,29 @@ export const projects: Project[] = [
 
 export const posts: Post[] = [
   {
+    slug: "blog-post-title-placeholder",
     date: "Jul 2025",
     cat: "Projects",
     title: "Blog Post Title Placeholder Goes Here",
     excerpt:
       "A short teaser line summarizing the post. Replace with the real excerpt.",
-    href: "#",
   },
   {
+    slug: "another-post-about-a-method",
     date: "May 2025",
     cat: "ML",
     title: "Another Post About a Method or Idea",
     excerpt:
       "One sentence describing what the reader will learn from this article.",
-    href: "#",
   },
   {
+    slug: "short-note-or-tutorial",
     date: "Feb 2025",
     cat: "Notes",
     title: "Short Note or Tutorial Placeholder",
     excerpt: "Teaser text placeholder for the third blog entry in the list.",
-    href: "#",
   },
 ];
+
+export const getProject = (slug: string) => projects.find((p) => p.slug === slug);
+export const getPost = (slug: string) => posts.find((p) => p.slug === slug);
