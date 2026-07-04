@@ -78,6 +78,78 @@ a {
   flex-shrink: 0;
 }
 
+/* Hamburger toggle — hidden on desktop, shown on phones (see @media below).
+   Two bars that cross into an X when the menu is open. */
+.nav-burger {
+  display: none;
+  position: relative;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  z-index: 7;
+}
+.nav-burger span {
+  position: absolute;
+  left: 5px;
+  right: 5px;
+  height: 1.5px;
+  background: var(--ink);
+  transition: transform 0.3s ease;
+}
+.nav-burger span:nth-child(1) {
+  top: 12px;
+}
+.nav-burger span:nth-child(2) {
+  top: 18px;
+}
+.nav-open .nav-burger span:nth-child(1) {
+  transform: translateY(3px) rotate(45deg);
+}
+.nav-open .nav-burger span:nth-child(2) {
+  transform: translateY(-3px) rotate(-45deg);
+}
+
+@media (max-width: 720px) {
+  .nav-burger {
+    display: block;
+  }
+  /* links drop into a full-width panel below the bar, revealed on toggle */
+  .nav-links {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+    padding: 4px 24px 12px;
+    background: rgba(255, 255, 255, 0.94);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+    opacity: 0;
+    transform: translateY(-8px);
+    pointer-events: none;
+    transition: opacity 0.25s ease, transform 0.25s ease;
+  }
+  .nav-open .nav-links {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+  }
+  .nav-links a {
+    padding: 14px 2px;
+    font-size: 16px;
+    border-top: 1px solid var(--border);
+  }
+  .nav-links a:first-child {
+    border-top: none;
+  }
+}
+
 /* ---- Hero (six learning demos ringed around the name) ---- */
 .hero {
   position: relative;
