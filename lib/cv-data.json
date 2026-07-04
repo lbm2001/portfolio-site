@@ -1,0 +1,149 @@
+{
+  "name": "Lukas Müller",
+  "location": "Frankfurt am Main, Germany",
+  "contacts": [
+    {
+      "label": "contact@lukasmueller.dev",
+      "href": "mailto:contact@lukasmueller.dev"
+    },
+    {
+      "label": "GitHub",
+      "href": "https://github.com/lbm2001"
+    },
+    {
+      "label": "LinkedIn",
+      "href": "https://www.linkedin.com/in/lukas-m-695b06195/"
+    }
+  ],
+  "sections": [
+    {
+      "title": "Education",
+      "entries": [
+        {
+          "title": "Bachelor of Science in Computer Science",
+          "dates": "Oct. 2023 – Present",
+          "org": "Technical University of Darmstadt",
+          "location": "Darmstadt, HE",
+          "bullets": [
+            "Current grade: 1.1 German scale (GPA: 3.9)",
+            "Exchange semester: Aarhus University, Denmark, Jan. 2026 – Jun. 2026",
+            "Elective courses: Robot Learning, Visual Computing, Markov Decision Theory, Machine Learning in Game Theory"
+          ]
+        },
+        {
+          "title": "Bachelor of Arts in Digital Business Management",
+          "dates": "Oct. 2019 – Sep. 2022",
+          "org": "Baden-Wuerttemberg Cooperative State University",
+          "location": "Mannheim, BW",
+          "bullets": [
+            "Final grade: 1.2 German scale (GPA: 3.8)",
+            "Thesis: Conception of a Strategy to Increase Data Quality for a Predictive Analytics Application"
+          ]
+        }
+      ],
+      "skills": []
+    },
+    {
+      "title": "Work Experience",
+      "entries": [
+        {
+          "title": "Working Student Machine Learning & Data Engineering",
+          "dates": "Aug. 2024 – Present",
+          "org": "Compredict GmbH",
+          "location": "Darmstadt, HE",
+          "bullets": [
+            "Implemented a contrastive timestamp-embedding model in Keras and integrated it into a production Python package for time-series analysis and visualization",
+            "Developed Python packages for data quality and data labeling for high-frequency time-series data, including core logic, tests, and documentation",
+            "Built unit and integration tests for data pipelines in MWAA and FastAPI services to improve reliability of ML systems"
+          ]
+        },
+        {
+          "title": "Working Student Bioinformatics Research & Development",
+          "dates": "Oct. 2022 – Sep. 2023",
+          "org": "BioNTech SE",
+          "location": "Mainz, RP",
+          "bullets": [
+            "Developed a data pipeline transferring local research files to AWS (S3/Glue/Redshift) and making them accessible in a data warehouse",
+            "Extended a bioinformatics feature pipeline used for downstream machine learning workflows"
+          ]
+        },
+        {
+          "title": "Cooperative Education Student",
+          "dates": "Aug. 2019 – Sep. 2022",
+          "org": "Fresenius Group",
+          "location": "Bad Homburg, HE",
+          "bullets": [
+            "Completed internship rotations in Project Management, Business Intelligence, and Process Mining"
+          ]
+        }
+      ],
+      "skills": []
+    },
+    {
+      "title": "Projects",
+      "entries": [
+        {
+          "title": "Cavitation Experiment Database (Team Project)",
+          "dates": "Oct. 2025 – Mar. 2026",
+          "org": "TU Darmstadt (Chair of Fluid Systems)",
+          "location": "",
+          "bullets": [
+            "Built a TimescaleDB database replacing HDF5/JSON-based experimental data storage with a unified schema",
+            "Developed a documented Python API for ingestion and querying of experimental sensor and metadata",
+            "Set up unit/integration tests and GitLab CI/CD for linting, testing, and documentation deployment",
+            "Technologies: Python, PostgreSQL, TimescaleDB, GitLab CI/CD"
+          ]
+        },
+        {
+          "title": "MuJoPy",
+          "dates": "Sep. 2025",
+          "org": "Open Source (GitHub/PyPI)",
+          "location": "",
+          "bullets": [
+            "Built and published a Python package exposing MuJoCo models as robot graphs for ML workflows",
+            "Implemented robot-graph feature extraction and a Pytest-based test suite",
+            "Technologies: Python, MuJoCo, Pytest, PyPI"
+          ]
+        },
+        {
+          "title": "Large-Scale Robot Generation (Team Project)",
+          "dates": "Apr. 2025 – Sep. 2025",
+          "org": "Technical University of Darmstadt (Intelligent Autonomous Systems Group)",
+          "location": "",
+          "bullets": [
+            "Built an MPNN-based variational autoencoder learning latent representations of robot morphologies in MuJoCo",
+            "Implemented training and evaluation workflows in PyTorch with experiment tracking in Weights & Biases",
+            "Technologies: Python, PyTorch, MuJoCo, Weights & Biases"
+          ]
+        }
+      ],
+      "skills": []
+    },
+    {
+      "title": "Skills",
+      "entries": [],
+      "skills": [
+        {
+          "category": "Programming",
+          "items": "Python, SQL, C++, Java"
+        },
+        {
+          "category": "Data Engineering & Backend",
+          "items": "PostgreSQL, Apache Airflow/MWAA, FastAPI, AWS (Redshift/Glue/S3), Docker"
+        },
+        {
+          "category": "Machine Learning",
+          "items": "PyTorch, TensorFlow, Keras, Weights & Biases"
+        },
+        {
+          "category": "Testing & Tooling",
+          "items": "Pytest, GitLab CI/CD, Python packaging, Polars, Pandas"
+        },
+        {
+          "category": "Languages",
+          "items": "German (native), English (fluent), Spanish (basic)"
+        }
+      ]
+    }
+  ]
+}

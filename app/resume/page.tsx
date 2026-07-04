@@ -1,29 +1,24 @@
-import fs from "node:fs";
-import path from "node:path";
 import type { Metadata } from "next";
 import Nav from "@/components/Nav";
 import Footer from "@/components/Footer";
 import { profile, resumeDownloadName } from "@/lib/content";
-import { parseCv } from "@/lib/cv";
+import type { Cv } from "@/lib/cv";
+import cvData from "@/lib/cv-data.json";
 
 export const metadata: Metadata = {
   title: `Resume · ${profile.name}`,
 };
 
-// Read + parse resume.tex at BUILD time only. This guarantees the page is fully
-// prerendered — important on Cloudflare Workers (OpenNext), which has no
-// filesystem at runtime, so the fs read must never happen on-demand.
+// The CV is parsed from public/resume.tex into lib/cv-data.json at BUILD time
+// (scripts/gen-cv-data.mjs, run via the prebuild step). The page imports that
+// JSON statically — it never touches the filesystem at request time. This is
+// required on Cloudflare Workers (OpenNext), which has NO runtime filesystem:
+// reading the .tex during render threw "Internal Server Error" on re-render.
 export const dynamic = "force-static";
 
-// Parsed at build time from the LaTeX source in public/.
-function loadCv() {
-  const tex = fs.readFileSync(path.join(process.cwd(), "public", "resume.tex"), "utf8");
-  return parseCv(tex);
-}
+const cv = cvData as Cv;
 
 export default function CvPage() {
-  const cv = loadCv();
-
   return (
     <main>
       <Nav />
