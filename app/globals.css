@@ -352,9 +352,15 @@ a {
   opacity: 0.4;
   transition: opacity 0.4s ease;
 }
-.mini-mobile:hover .mini-sim,
 .mini-mobile.is-running .mini-sim {
   opacity: 1;
+}
+/* hover-to-solid only where hover is real — otherwise a tap leaves a lingering
+   :hover on touch and the agent stays solid after training is stopped */
+@media (hover: hover) {
+  .mini-mobile:hover .mini-sim {
+    opacity: 1;
+  }
 }
 /* readout above the miniature — centred, sized to content */
 .mini-mobile .mini-hud {
