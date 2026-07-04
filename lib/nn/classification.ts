@@ -1,7 +1,6 @@
 // Classic "neural net hello world": two Gaussian point clouds that ARE linearly
 // separable, and a small MLP that finds a dividing line via plain gradient
-// descent. The decision boundary is rendered as a soft heatmap that sharpens
-// from a fuzzy blob into a clean split as training progresses.
+// descent.
 
 import type { NNTask } from "./types";
 import { MLP, type Sample } from "./mlp";
@@ -14,6 +13,10 @@ const DATA_Y1 = 1.3;
 // two well-separated blobs → a single straight boundary suffices
 const BLOB_A = { mx: -0.1, my: -0.7, sd: 0.22 };
 const BLOB_B = { mx: 1.1, my: 0.6, sd: 0.22 };
+// re-rolled each reset() so the cloud isn't identical every load — kept small
+// enough that the ~1.77-unit gap between centers (≈8sd) never collapses below
+// a cleanly separable margin.
+const CENTER_JITTER = 0.18;
 
 // standard normal via Box–Muller
 function randn(): number {
@@ -22,12 +25,22 @@ function randn(): number {
   return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
 }
 
+function jitteredBlob(b: { mx: number; my: number; sd: number }) {
+  return {
+    mx: b.mx + (Math.random() - 0.5) * 2 * CENTER_JITTER,
+    my: b.my + (Math.random() - 0.5) * 2 * CENTER_JITTER,
+    sd: b.sd,
+  };
+}
+
 function makeBlobs(n: number): Sample[] {
+  const a = jitteredBlob(BLOB_A);
+  const b = jitteredBlob(BLOB_B);
   const data: Sample[] = [];
   for (let i = 0; i < n; i++) {
-    const b = i % 2 === 0 ? BLOB_A : BLOB_B;
+    const blob = i % 2 === 0 ? a : b;
     data.push({
-      x: [b.mx + randn() * b.sd, b.my + randn() * b.sd],
+      x: [blob.mx + randn() * blob.sd, blob.my + randn() * blob.sd],
       y: [i % 2 === 0 ? 0 : 1],
     });
   }
@@ -35,7 +48,7 @@ function makeBlobs(n: number): Sample[] {
 }
 
 export class ClassificationTask implements NNTask {
-  readonly title = "Classifier · linear split · backprop";
+  readonly title = "Classification · Binary Cross-Entropy Loss";
   readonly netSizes = [2, 8, 8, 1];
   readonly lossType = "bce" as const;
   w = 0;
@@ -60,10 +73,9 @@ export class ClassificationTask implements NNTask {
   trainStep(): number {
     const batch: Sample[] = [];
     for (let i = 0; i < 16; i++) batch.push(this.data[(Math.random() * this.data.length) | 0]);
-    // low LR on purpose: the blobs are linearly separable, so a high rate solves
-    // them almost instantly — this paces the boundary sharpening to ~20s so it's
-    // watchable before the task resets with a fresh cloud.
-    const loss = this.net.trainStep(batch, 0.06, this.lossType);
+    // paced so the boundary visibly sweeps from a fuzzy blob into a clean split
+    // over ~6s at the panel's step rate (not a sub-second snap), then resets.
+    const loss = this.net.trainStep(batch, 0.05, this.lossType);
     this.stepCount++;
     if (this.stepCount % 40 === 0) {
       this.probe = this.data[(Math.random() * this.data.length) | 0];
@@ -76,7 +88,7 @@ export class ClassificationTask implements NNTask {
   }
 
   converged(loss: number, step: number): boolean {
-    return loss < 0.03 || step > 600;
+    return loss < 0.03 || step > 220;
   }
 
   private toPx(px: number, py: number): [number, number] {
@@ -99,17 +111,6 @@ export class ClassificationTask implements NNTask {
 
   draw(ctx: CanvasRenderingContext2D) {
     if (!this.net) return;
-    // soft region tint (kept faint so the boundary line reads clearly)
-    const cell = 6;
-    for (let cy = 0; cy < this.h; cy += cell) {
-      for (let cx = 0; cx < this.w; cx += cell) {
-        const p = this.pAt(cx + cell / 2, cy + cell / 2);
-        const alpha = 0.05 + 0.08 * Math.abs(p - 0.5) * 2;
-        ctx.fillStyle = p > 0.5 ? `rgba(225,45,26,${alpha})` : `rgba(17,17,17,${alpha})`;
-        ctx.fillRect(cx, cy, cell, cell);
-      }
-    }
-
     // solid decision boundary: the p = 0.5 iso-line via marching squares
     const gs = 9;
     ctx.strokeStyle = "#E12D1A";

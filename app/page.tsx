@@ -12,9 +12,9 @@ export default function Home() {
       <Nav />
       <Hero />
       <About />
+      <CvStrip />
       <Work />
       <Blog />
-      <CvStrip />
       <Footer />
     </main>
   );

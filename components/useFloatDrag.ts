@@ -1,10 +1,12 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export interface FloatParams {
-  ampX: number;
-  ampY: number;
-  freqX: number; // rad/sec
-  freqY: number;
+  towardX: number; // unit vector from this seat toward the hero centre
+  towardY: number;
+  ampMain: number; // sway amplitude along the toward-centre axis (the larger one)
+  ampCross: number; // sway amplitude perpendicular to it (smaller — keeps it organic)
+  freqMain: number; // rad/sec
+  freqCross: number;
   phase: number;
 }
 
@@ -15,10 +17,13 @@ const MOMENTUM_DECAY = 0.93; // per-frame velocity decay after release
 // Drives a panel's position: a gentle ambient drift (paused while hovered or
 // dragged) plus real pointer dragging with a bit of release momentum. The box
 // stays wherever it's dropped and keeps floating from there — it doesn't
-// spring back to its corner.
+// spring back to its corner. The ambient drift itself is elongated along each
+// seat's toward-centre axis (see FLOAT_PARAMS.towardX/Y) so the sway reads as
+// leaning toward the hero name rather than an arbitrary Lissajous wobble.
 export function useFloatDrag(params: FloatParams) {
   const ref = useRef<HTMLDivElement | null>(null);
   const wasDraggedRef = useRef(false);
+  const [revealed, setRevealed] = useState(false);
 
   useEffect(() => {
     const el = ref.current;
@@ -44,10 +49,18 @@ export function useFloatDrag(params: FloatParams) {
 
     const clamp = (v: number) => Math.max(-MAX_OFFSET, Math.min(MAX_OFFSET, v));
 
-    const computeFloat = (t: number) => ({
-      x: params.ampX * Math.sin(t * params.freqX + params.phase),
-      y: params.ampY * Math.sin(t * params.freqY + params.phase * 1.7),
-    });
+    // perpendicular to the toward-centre axis, for the smaller cross-sway
+    const crossX = -params.towardY;
+    const crossY = params.towardX;
+
+    const computeFloat = (t: number) => {
+      const main = params.ampMain * Math.sin(t * params.freqMain + params.phase);
+      const cross = params.ampCross * Math.sin(t * params.freqCross + params.phase * 1.7);
+      return {
+        x: main * params.towardX + cross * crossX,
+        y: main * params.towardY + cross * crossY,
+      };
+    };
 
     const frame = (now: number) => {
       const t = (now - t0) / 1000;
@@ -136,19 +149,37 @@ export function useFloatDrag(params: FloatParams) {
       el.removeEventListener("pointerup", onPointerUp);
       el.removeEventListener("pointercancel", onPointerUp);
     };
-  }, [params.ampX, params.ampY, params.freqX, params.freqY, params.phase]);
+  }, [
+    params.towardX,
+    params.towardY,
+    params.ampMain,
+    params.ampCross,
+    params.freqMain,
+    params.freqCross,
+    params.phase,
+  ]);
 
-  return { ref, wasDraggedRef };
+  // stagger each panel's entrance on load so all six don't pop in at once
+  useEffect(() => {
+    const delay = 60 + Math.random() * 900;
+    const t = window.setTimeout(() => setRevealed(true), delay);
+    return () => window.clearTimeout(t);
+  }, []);
+
+  return { ref, wasDraggedRef, revealed };
 }
 
 // six evenly-spaced seats on a ring around the name (see .mini-* in globals.css)
 export type Corner = "top" | "ur" | "lr" | "bot" | "ll" | "ul";
 
+// towardX/Y is the unit vector from each seat's rest position toward the hero
+// centre (derived from the .mini-* margins in globals.css), so ampMain leans
+// the sway that way instead of an arbitrary per-axis wobble.
 export const FLOAT_PARAMS: Record<Corner, FloatParams> = {
-  top: { ampX: 34, ampY: 26, freqX: 0.27, freqY: 0.21, phase: 0 },
-  ur: { ampX: -32, ampY: 28, freqX: 0.24, freqY: 0.23, phase: 1.0 },
-  lr: { ampX: -34, ampY: -26, freqX: 0.26, freqY: 0.2, phase: 2.1 },
-  bot: { ampX: 32, ampY: -28, freqX: 0.23, freqY: 0.22, phase: 3.1 },
-  ll: { ampX: 34, ampY: -26, freqX: 0.25, freqY: 0.19, phase: 4.2 },
-  ul: { ampX: 32, ampY: 28, freqX: 0.22, freqY: 0.24, phase: 5.2 },
+  top: { towardX: 0, towardY: 1, ampMain: 32, ampCross: 15, freqMain: 0.27, freqCross: 0.21, phase: 0 },
+  ur: { towardX: -0.94, towardY: 0.34, ampMain: 32, ampCross: 15, freqMain: 0.24, freqCross: 0.23, phase: 1.0 },
+  lr: { towardX: -0.98, towardY: -0.18, ampMain: 32, ampCross: 15, freqMain: 0.26, freqCross: 0.2, phase: 2.1 },
+  bot: { towardX: 0, towardY: -1, ampMain: 32, ampCross: 15, freqMain: 0.23, freqCross: 0.22, phase: 3.1 },
+  ll: { towardX: 0.98, towardY: -0.18, ampMain: 32, ampCross: 15, freqMain: 0.25, freqCross: 0.19, phase: 4.2 },
+  ul: { towardX: 0.94, towardY: 0.34, ampMain: 32, ampCross: 15, freqMain: 0.22, freqCross: 0.24, phase: 5.2 },
 };

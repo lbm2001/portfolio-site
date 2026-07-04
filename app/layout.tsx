@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
+import "katex/dist/katex.min.css";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Your Name — ML / Robotics",
+  title: "Lukas Müller · Robot Learning",
   description:
-    "Portfolio of an ML / robotics engineer. Hero features a live reinforcement-learning agent (ARS) learning to walk a valley in real time.",
+    "Portfolio page of an Machine Learning and Robot Learning Engineer.",
 };
 
 export default function RootLayout({

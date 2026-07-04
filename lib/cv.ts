@@ -1,5 +1,5 @@
 // A small, TARGETED parser for the "Jake Gutierrez" resume template that
-// public/cv.tex uses — NOT a general LaTeX parser. It understands exactly the
+// public/resume.tex uses — NOT a general LaTeX parser. It understands exactly the
 // custom commands that template defines:
 //   \begin{center} … name + \href contact links … \end{center}
 //   \section{Title}

@@ -10,16 +10,19 @@ const G = 10;
 const L = 1;
 const M = 1;
 const B = 0.08; // damping
-const MAX_TORQUE = 16; // enough authority to swing up and hold at the top
+const MAX_TORQUE = 25; // generous authority: ARS can drive up and hold within a few
+//                        generations, so the swing-up is learned in the ~5-10s a
+//                        viewer watches rather than staying stuck at the bottom
 const DT = 0.05;
-const MAX_STEPS = 220;
+const MAX_STEPS = 160; // shorter episodes → more ARS generations per second → faster
+//                        visible learning
 
 const clamp = (v: number, a: number, b: number) => (v < a ? a : v > b ? b : v);
 
 export class PendulumEnv implements RLEnv {
   readonly obsDim = 4;
   readonly actDim = 1;
-  readonly title = "Pendulum-v1 · swing-up · ARS";
+  readonly title = "Pendulum-v1 · ARS";
   w = 0;
   h = 0;
 
@@ -33,7 +36,12 @@ export class PendulumEnv implements RLEnv {
   }
 
   reset() {
-    this.th = Math.PI; // hanging straight down
+    // Start slightly off the bottom (not the exact hanging equilibrium). At the
+    // dead-bottom a near-zero policy produces zero torque and the rod never
+    // moves — "doing nothing" — and every ARS direction scores the same, so
+    // there's no gradient to climb. This small offset gives visible motion and a
+    // reward signal ARS can actually follow up toward the top.
+    this.th = Math.PI - 0.25;
     this.thd = 0;
     this.steps = 0;
   }
@@ -51,10 +59,15 @@ export class PendulumEnv implements RLEnv {
 
     // Reward is dominated by height so the pump-up isn't punished; a bonus for
     // being near the top rewards actually balancing there, and a tiny velocity
-    // term prefers a steady hold once up.
+    // term prefers a steady hold once up. The +1 offset keeps the per-step reward
+    // non-negative (0 hanging → up to 3.5 balanced) so the HUD "Return" climbs
+    // from 0 upward as it learns, instead of sitting at a clamped 000.
     const height = Math.cos(this.th); // +1 up, −1 down
-    const upright = height > 0.92 ? 1.5 : 0;
-    const reward = height + upright - 0.002 * this.thd * this.thd - 0.0005 * u * u;
+    // strong, slightly-wider bonus for being near the top so ARS is pulled toward
+    // a policy that actually holds it upright rather than just swinging through
+    const upright = height > 0.9 ? 2.5 : 0;
+    const reward =
+      height + 1 + upright - 0.0025 * this.thd * this.thd - 0.0005 * u * u;
     return { reward, done: this.steps >= MAX_STEPS };
   }
 

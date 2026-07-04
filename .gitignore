@@ -34,11 +34,11 @@ next-env.d.ts
 .dev.vars*
 !.dev.vars.example
 
-# CV: PDF is generated at build time by scripts/build-cv.sh from public/cv.tex
-/public/cv.pdf
-/public/cv.aux
-/public/cv.fdb_latexmk
-/public/cv.fls
-/public/cv.log
-/public/cv.out
-/public/cv.synctex.gz
+# Resume: PDF is generated at build time by scripts/build-cv.sh from public/resume.tex
+/public/resume.pdf
+/public/resume.aux
+/public/resume.fdb_latexmk
+/public/resume.fls
+/public/resume.log
+/public/resume.out
+/public/resume.synctex.gz

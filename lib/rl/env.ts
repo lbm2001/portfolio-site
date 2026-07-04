@@ -73,12 +73,14 @@ const PHASE_RATE = 6.2; // CPG clock (rad/s)
 // guarantees the walker actually steps forward; ARS learns residual corrections
 // (RESID_*) on top to travel further and stay balanced on the terrain. This is
 // the classic CPG + reinforcement-learning locomotion recipe.
-const HIP_AMP = 0.38; // hip swing amplitude (rad) — small enough that the stance
-//                       foot stays planted through the sweep
+const HIP_AMP = 0.2; // hip swing amplitude (rad) — deliberately small so the
+//                      untrained CPG barely shuffles in place; the policy has to
+//                      LEARN to add the swing that produces real forward travel
 const KNEE_MID = -0.22; // knee angle during stance (near straight → foot reaches)
 const KNEE_AMP = 1.2; // extra knee bend during swing (foot clears the ground)
 const KNEE_PHASE = Math.PI / 2; // knee lifts during the forward swing
-const RESID_HIP = 0.5; // policy authority over hip target (rad)
+const RESID_HIP = 0.72; // policy authority over hip target (rad) — larger now so
+//                         learning the hip swing dominates the base gait
 const RESID_KNEE = 0.7; // policy authority over knee target (rad)
 const FALL_ANGLE = 0.85;
 const SUBSTEPS = 5;
@@ -92,7 +94,7 @@ const clamp = (v: number, lo: number, hi: number) =>
 export class WalkerEnv implements RLEnv {
   readonly obsDim = OBS_DIM;
   readonly actDim = ACT_DIM;
-  readonly title = "BipedalWalker · flat ground · ARS";
+  readonly title = "BipedalWalker · ARS";
   w = 0;
   h = 0;
 
@@ -417,14 +419,7 @@ export class WalkerEnv implements RLEnv {
 
   draw(ctx: CanvasRenderingContext2D) {
     const w = this.w;
-    // light-red fill above the terrain line (valley interior tint)
-    ctx.beginPath();
-    ctx.moveTo(0, 0);
-    for (let x = 0; x <= w; x += 6) ctx.lineTo(x, this.terrainY(x));
-    ctx.lineTo(w, 0);
-    ctx.closePath();
-    ctx.fillStyle = "rgba(225, 45, 26, 0.04)";
-    ctx.fill();
+    // terrain line (the panel's hover background is applied in CSS, not drawn here)
     ctx.beginPath();
     for (let x = 0; x <= w; x += 6) {
       const ty = this.terrainY(x);

@@ -1,7 +1,7 @@
-import Link from "next/link";
 import type { Metadata } from "next";
 import Nav from "@/components/Nav";
 import Footer from "@/components/Footer";
+import PostRow from "@/components/PostRow";
 import { posts, profile } from "@/lib/content";
 
 export const metadata: Metadata = {
@@ -14,20 +14,15 @@ export default function BlogPage() {
       <Nav />
       <article className="page">
         <div className="page-head">
-          <div className="label-mono">Blog</div>
-          <h1 className="page-title">Writing & Notes</h1>
+          <div className="label-mono">Writing & Notes</div>
+          <h1 className="page-title">Blog</h1>
         </div>
 
-        {posts.map((b) => (
-          <Link key={b.slug} className="post" href={`/blog/${b.slug}`}>
-            <span className="post-date">{b.date}</span>
-            <span className="post-cat">{b.cat}</span>
-            <span className="post-body">
-              <span className="post-title">{b.title}</span>
-              <span className="post-excerpt">{b.excerpt}</span>
-            </span>
-          </Link>
-        ))}
+        {posts.length > 0 ? (
+          posts.map((b) => <PostRow key={b.slug} post={b} />)
+        ) : (
+          <p className="empty-note">Writing Coming Soon</p>
+        )}
       </article>
       <Footer />
     </main>

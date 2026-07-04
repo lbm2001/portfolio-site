@@ -10,9 +10,12 @@ import type { EnvFactory } from "@/lib/rl/types";
 const STEP_HZ = 48; // rendered-agent steps per second (real-time)
 const STEP_MS = 1000 / STEP_HZ;
 const MAX_STEPS_PER_FRAME = 4;
-const TRAIN_STEPS_PER_SEC = 260; // background ARS training — deliberately slow so
-//                                  convergence is watchable, not instant
-const TRAIN_CAP_PER_FRAME = 40; // don't binge-train after a stall / hidden tab
+const TRAIN_STEPS_PER_SEC = 1600; // background ARS training. Fast enough that several
+//                                   generations complete within ~5-10s, so the rendered
+//                                   agent visibly improves while a viewer watches.
+const TRAIN_CAP_PER_FRAME = 240; // don't binge-train after a stall / hidden tab
+const HUD_EVERY = 10; // only refresh the episode/return readout every N episodes so the
+//                       numbers tick at a readable pace instead of flickering every frame
 
 const pad = (n: number) => String(Math.max(0, Math.round(n))).padStart(3, "0");
 
@@ -20,23 +23,31 @@ export default function MiniDemo({
   make,
   corner,
   displayDisturb = 0,
+  showFall = false,
 }: {
   make: EnvFactory;
   corner: Corner;
   displayDisturb?: number;
+  showFall?: boolean;
 }) {
   const simRef = useRef<HTMLCanvasElement>(null);
   const chartRef = useRef<HTMLCanvasElement>(null);
   const statsRef = useRef<HTMLDivElement>(null);
+  const trainerRef = useRef<ARSTrainer | null>(null);
   const [title] = useState(() => make().title);
   const [running, setRunning] = useState(false);
   const runningRef = useRef(false);
-  const { ref: dragRef, wasDraggedRef } = useFloatDrag(FLOAT_PARAMS[corner]);
+  const { ref: dragRef, wasDraggedRef, revealed } = useFloatDrag(FLOAT_PARAMS[corner]);
 
   const toggle = () => {
     if (wasDraggedRef.current) return;
     runningRef.current = !runningRef.current;
     setRunning(runningRef.current);
+  };
+
+  const reset = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    trainerRef.current?.manualReset();
   };
 
   useEffect(() => {
@@ -52,7 +63,9 @@ export default function MiniDemo({
 
     const env = make();
     env.disturbAmp = displayDisturb;
+    env.showFall = showFall;
     const trainer = new ARSTrainer(make);
+    trainerRef.current = trainer;
     const first = sizeCanvas(sim);
     env.setSize(first.w, first.h);
     trainer.setSize(first.w, first.h);
@@ -62,6 +75,7 @@ export default function MiniDemo({
     let acc = 0; // real-time display-step accumulator (ms)
     let trainAcc = 0; // training-step accumulator (ms)
     let lastT = performance.now();
+    let lastHudEp = -HUD_EVERY; // force a first HUD paint
     const trainDur = 1000 / TRAIN_STEPS_PER_SEC;
 
     const frame = () => {
@@ -110,34 +124,54 @@ export default function MiniDemo({
           if (cctx && c.w > 0) drawSparkline(cctx, c.w, c.h, trainer.history);
         }
         if (statsRef.current) {
-          statsRef.current.textContent = `episode ${pad(trainer.episode)}   return ${pad(
-            trainer.genMean
-          )}   gen ${trainer.run}`;
+          const ep = trainer.episode;
+          if (ep < lastHudEp || ep - lastHudEp >= HUD_EVERY) {
+            lastHudEp = ep;
+            statsRef.current.textContent = `Episode ${pad(ep)}   Return ${pad(
+              trainer.genMean
+            )}   Gen ${trainer.run}`;
+          }
         }
       }
       raf = requestAnimationFrame(frame);
     };
     raf = requestAnimationFrame(frame);
-    return () => cancelAnimationFrame(raf);
-  }, [make, displayDisturb]);
+    return () => {
+      cancelAnimationFrame(raf);
+      trainerRef.current = null;
+    };
+  }, [make, displayDisturb, showFall]);
 
   return (
     <div
       ref={dragRef}
-      className={`mini mini-${corner}${running ? " is-running" : ""}`}
+      className={`mini mini-${corner}${running ? " is-running" : ""}${revealed ? "" : " mini-pre"}`}
       onClick={toggle}
     >
       <canvas ref={simRef} className="mini-sim" />
-      <div className="mini-meta">
-        <div className={running ? "mini-training" : "mini-training mini-paused"}>
-          {running ? "● TRAINING" : "○ CLICK TO TRAIN"}
+      <div className="mini-hud">
+        <div className="mini-meta">
+          <div className="mini-row">
+            <div className={running ? "mini-training" : "mini-training mini-paused"}>
+              {running ? "● TRAINING" : "○ CLICK FOR LIVE TRAINING"}
+            </div>
+            <button
+              type="button"
+              className="mini-reset"
+              onClick={reset}
+              aria-label="Reset training"
+              title="Reset training"
+            >
+              ↺
+            </button>
+          </div>
+          <div className="mini-title">{title}</div>
+          <div ref={statsRef} className="mini-stats">
+            Episode 000&nbsp;&nbsp;&nbsp;Return 000&nbsp;&nbsp;&nbsp;Gen 1
+          </div>
         </div>
-        <div className="mini-title">{title}</div>
-        <div ref={statsRef} className="mini-stats">
-          episode 000&nbsp;&nbsp;&nbsp;return 000&nbsp;&nbsp;&nbsp;gen 1
-        </div>
+        <canvas ref={chartRef} className="mini-chart" />
       </div>
-      <canvas ref={chartRef} className="mini-chart" />
     </div>
   );
 }

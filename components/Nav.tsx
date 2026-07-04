@@ -28,7 +28,6 @@ export default function Nav() {
   return (
     <nav className="nav" ref={navRef}>
       <Link className="nav-brand" href="/">
-        <span className="nav-logo">YN</span>
         <span className="nav-name">{profile.name}</span>
       </Link>
       <div className="nav-links">

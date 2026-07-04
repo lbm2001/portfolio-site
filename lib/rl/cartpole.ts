@@ -18,13 +18,14 @@ const TAU = 0.02;
 const X_LIMIT = 2.4;
 const TH_LIMIT = 0.21; // ~12°
 const MAX_STEPS = 220;
+const FALL_STEPS = 45; // display-only: steps the topple is shown before reset
 
 const clamp = (v: number, a: number, b: number) => (v < a ? a : v > b ? b : v);
 
 export class CartPoleEnv implements RLEnv {
   readonly obsDim = 4;
   readonly actDim = 1;
-  readonly title = "CartPole-v1 · balance · ARS";
+  readonly title = "CartPole-v1 · ARS";
   w = 0;
   h = 0;
 
@@ -33,6 +34,12 @@ export class CartPoleEnv implements RLEnv {
   th = 0; // pole angle from vertical
   thd = 0;
   steps = 0;
+  // Display-only: when set (on the rendered env, not the trainer's), a lost
+  // balance lets the pole topple all the way over before the episode resets,
+  // instead of cutting away the instant it passes the 12° limit.
+  showFall = false;
+  private fallen = false;
+  private fallT = 0;
 
   setSize(w: number, h: number) {
     this.w = w;
@@ -46,10 +53,12 @@ export class CartPoleEnv implements RLEnv {
     this.th = 0.05;
     this.thd = 0;
     this.steps = 0;
+    this.fallen = false;
+    this.fallT = 0;
   }
 
-  step(action: number[]): { reward: number; done: boolean } {
-    const force = clamp(action[0], -1, 1) * FORCE;
+  // one Euler step of the classic cart-pole dynamics under a horizontal force
+  private integrate(force: number) {
     const ct = Math.cos(this.th);
     const st = Math.sin(this.th);
     const temp = (force + PML * this.thd * this.thd * st) / MT;
@@ -59,14 +68,35 @@ export class CartPoleEnv implements RLEnv {
     this.xd += TAU * xacc;
     this.th += TAU * this.thd;
     this.thd += TAU * thacc;
+  }
+
+  step(action: number[]): { reward: number; done: boolean } {
+    // Toppling phase (rendered env only): no control, gravity swings the pole
+    // down. Runs for a beat so the fall is visible, then ends the episode.
+    if (this.fallen) {
+      this.integrate(0);
+      this.xd *= 0.98; // a little rolling friction so the cart doesn't run away
+      this.fallT++;
+      return { reward: 0, done: this.fallT >= FALL_STEPS };
+    }
+
+    const force = clamp(action[0], -1, 1) * FORCE;
+    this.integrate(force);
     this.steps++;
 
-    const done =
-      Math.abs(this.x) > X_LIMIT ||
-      Math.abs(this.th) > TH_LIMIT ||
-      this.steps >= MAX_STEPS;
     // +1 for every step it stays up
     const reward = 1;
+    if (Math.abs(this.th) > TH_LIMIT) {
+      // balance lost. On the rendered env, begin the visible topple; for the
+      // trainer, end the rollout immediately (dynamics unchanged from before).
+      if (this.showFall) {
+        this.fallen = true;
+        this.fallT = 0;
+        return { reward, done: false };
+      }
+      return { reward, done: true };
+    }
+    const done = Math.abs(this.x) > X_LIMIT || this.steps >= MAX_STEPS;
     return { reward, done };
   }
 

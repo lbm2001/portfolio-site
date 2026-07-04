@@ -4,6 +4,8 @@ import { notFound } from "next/navigation";
 import Nav from "@/components/Nav";
 import Footer from "@/components/Footer";
 import { projects, getProject, profile } from "@/lib/content";
+import { renderBody } from "@/lib/richtext";
+import AiDisclaimer from "@/components/AiDisclaimer";
 
 export function generateStaticParams() {
   return projects.map((p) => ({ slug: p.slug }));
@@ -33,7 +35,7 @@ export default async function ProjectPage({
       <Nav />
       <article className="page page-narrow">
         <Link className="back-link" href="/projects">
-          ← All projects
+          ← See all
         </Link>
         <div className="page-head">
           <div className="label-mono">{project.venue}</div>
@@ -41,6 +43,12 @@ export default async function ProjectPage({
         </div>
 
         <p className="section-lead">{project.blurb}</p>
+
+        {project.aiAssisted && <AiDisclaimer />}
+
+        {project.body && (
+          <div className="prose">{renderBody(project.body, project.figures)}</div>
+        )}
 
         <div className="work-tags" style={{ marginBottom: 28 }}>
           {project.tags.map((t) => (

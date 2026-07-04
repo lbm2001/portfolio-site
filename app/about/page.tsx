@@ -27,25 +27,34 @@ export default function AboutPage() {
 
         <div className="prose">
           <p>
-            Placeholder biography. Write a few paragraphs here about your
-            background, what you work on, and the ideas that connect your
-            projects. This copy is dummy text and can be replaced later.
+            My first robot was a Lego Mindstorms EV3 I got when I was 13, and I
+            spent far too long teaching it to drive toward the brightest spot in
+            my room. That interest went quiet for a while. I started out studying
+            Digital Business Management, until a data science and machine
+            learning course during Covid pulled me back in. I realized I cared
+            more about the programming than the business side, and wanted proper
+            foundations to build on, so I started over with a second bachelor in
+            computer science.
           </p>
           <p>
-            A second paragraph can go deeper — the problems you find most
-            interesting, the methods you reach for, and where you want to take
-            the work next.
+            Since then I've focused on machine learning, both in my studies and
+            as a working student, most recently at Compredict, building ML and
+            data engineering tools, and before that at BioNTech and Fresenius. I
+            think embodied AI is the next big step after LLMs, bringing this kind
+            of learning into the physical world, and that's the direction I want
+            to keep pushing. Away from the screen you'll usually find me
+            in the gym or on my bike.
           </p>
         </div>
 
         <div className="info-grid">
           <div className="info-cell">
-            <div className="k">Focus</div>
-            <div className="v">{profile.focus}</div>
-          </div>
-          <div className="info-cell">
             <div className="k">Field</div>
             <div className="v">{profile.field}</div>
+          </div>
+          <div className="info-cell">
+            <div className="k">Focus</div>
+            <div className="v">{profile.focus}</div>
           </div>
           <div className="info-cell">
             <div className="k">Location</div>

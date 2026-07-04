@@ -7,8 +7,8 @@ export default function About() {
   return (
     <section id="about" className="section">
       <div className="section-head">
-        <div className="label-mono">01 — About</div>
-        <Link href="/about">More about me →</Link>
+        <div className="label-mono">01 About</div>
+        <Link href="/about">More →</Link>
       </div>
       <div className="about-head">
         <div className="about-photo">
@@ -18,12 +18,12 @@ export default function About() {
       </div>
       <div className="info-grid">
         <div className="info-cell">
-          <div className="k">Focus</div>
-          <div className="v">{profile.focus}</div>
-        </div>
-        <div className="info-cell">
           <div className="k">Field</div>
           <div className="v">{profile.field}</div>
+        </div>
+        <div className="info-cell">
+          <div className="k">Focus</div>
+          <div className="v">{profile.focus}</div>
         </div>
         <div className="info-cell">
           <div className="k">Location</div>

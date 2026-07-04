@@ -55,17 +55,6 @@ a {
   gap: 11px;
   text-decoration: none;
 }
-.nav-logo {
-  width: 26px;
-  height: 26px;
-  border: 1.5px solid var(--red);
-  border-radius: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font: 700 11px var(--font-mono);
-  color: var(--ink);
-}
 .nav-name {
   font: 600 14px/1 var(--font-sans);
   color: var(--ink);
@@ -136,36 +125,41 @@ a {
   transition: opacity 0.5s ease;
   will-change: transform;
 }
+/* pre-reveal state: each panel fades in from here at a randomized delay
+   (see useFloatDrag) so the six don't all pop in at once on load */
+.mini.mini-pre {
+  opacity: 0;
+}
 .mini.is-dragging {
   cursor: grabbing;
   transition: none;
   opacity: 1;
   z-index: 5;
 }
-/* six seats evenly spaced on a ring (ellipse Rx≈420, Ry≈258) around the name.
+/* six seats evenly spaced on a ring (ellipse Rx≈476, Ry≈258) around the name.
    margins offset each panel's top-left from the hero centre. */
 .mini-top {
   margin-left: -124px;
-  margin-top: -368px;
+  margin-top: -336px;
 }
 .mini-ur {
-  margin-left: 240px;
+  margin-left: 352px;
   margin-top: -239px;
 }
 .mini-lr {
-  margin-left: 240px;
+  margin-left: 352px;
   margin-top: 19px;
 }
 .mini-bot {
   margin-left: -124px;
-  margin-top: 148px;
+  margin-top: 172px;
 }
 .mini-ll {
-  margin-left: -488px;
+  margin-left: -600px;
   margin-top: 19px;
 }
 .mini-ul {
-  margin-left: -488px;
+  margin-left: -600px;
   margin-top: -239px;
 }
 
@@ -186,16 +180,29 @@ a {
   width: 100%;
   height: 132px;
   display: block;
+  border-radius: 3px;
+  transition: background 0.3s ease;
 }
-/* details stay hidden until the node is hovered */
-.mini-meta,
-.mini-chart {
+/* The HUD (meta + loss/return chart) is absolutely positioned below the canvas so
+   it adds no height to the panel's hit area — this keeps the floating panels from
+   colliding via their invisible hover regions. It reveals + becomes interactive
+   only on hover. */
+.mini-hud {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 8px;
   opacity: 0;
+  pointer-events: none;
   transition: opacity 0.4s ease;
 }
-.mini:hover .mini-meta,
-.mini:hover .mini-chart {
+.mini:hover .mini-hud {
   opacity: 1;
+  pointer-events: auto;
 }
 .mini-meta {
   display: flex;
@@ -207,6 +214,26 @@ a {
   font: 600 10px var(--font-mono);
   color: var(--red);
   letter-spacing: 0.02em;
+}
+.mini-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.mini-reset {
+  font: 600 17px/1 var(--font-mono);
+  color: var(--red);
+  background: none;
+  border: none;
+  padding: 0 2px;
+  margin-top: -3px;
+  cursor: pointer;
+  opacity: 0.65;
+  transition: opacity 0.2s ease;
+}
+.mini-reset:hover {
+  opacity: 1;
 }
 .mini-title {
   font: 400 10px var(--font-mono);
@@ -288,8 +315,14 @@ a {
 
 .about-head {
   display: flex;
-  align-items: flex-start;
-  gap: 24px;
+  align-items: center;
+  gap: 56px;
+  margin-bottom: 44px;
+}
+/* inside the centered head the lead's own bottom margin would push it off-centre
+   relative to the photo — neutralize it (the head's margin-bottom spaces the box) */
+.about-head .section-lead {
+  margin: 0;
 }
 .about-photo {
   position: relative;
@@ -460,29 +493,17 @@ a {
   justify-content: space-between;
   gap: 24px;
   flex-wrap: wrap;
-  background: var(--bg-alt);
 }
 .cv-left {
   display: flex;
   align-items: baseline;
   gap: 20px;
 }
-.cv-num {
-  font: 700 40px/1 var(--font-sans);
-  letter-spacing: -0.03em;
-  color: var(--red);
-}
-.cv-k {
-  font: 600 10px var(--font-mono);
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--muted);
-  margin-bottom: 6px;
-}
 .cv-t {
   font: 600 22px/1.2 var(--font-sans);
   letter-spacing: -0.02em;
   color: var(--ink);
+  margin-top: 8px;
 }
 .cv-btn {
   font: 600 14px/1 var(--font-sans);
@@ -492,6 +513,13 @@ a {
   border-radius: 3px;
   text-decoration: none;
   white-space: nowrap;
+}
+.cv-download {
+  margin-top: 12px;
+  padding-top: 32px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: flex-start;
 }
 
 /* Footer */
@@ -571,7 +599,7 @@ a {
   color: var(--ink);
 }
 .prose {
-  max-width: 680px;
+  max-width: none;
   margin: 6px 0 34px;
 }
 .prose p {
@@ -581,6 +609,49 @@ a {
 }
 .prose .section-lead {
   margin-bottom: 22px;
+}
+.body-figure {
+  margin: 8px 0 30px;
+}
+.body-figure img {
+  width: 100%;
+  height: auto;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+}
+.body-figure figcaption {
+  font: 400 13px/1.55 var(--font-sans);
+  color: var(--muted);
+  margin-top: 10px;
+}
+.math-display {
+  overflow-x: auto;
+  margin: 4px 0 26px;
+  padding: 4px 0;
+}
+.math-display .katex-display {
+  margin: 0;
+}
+.math-inline .katex {
+  font-size: 1em;
+}
+@media (max-width: 520px) {
+  .math-display {
+    font-size: 0.82em;
+  }
+}
+.empty-note {
+  font: 400 16px/1.7 var(--font-sans);
+  color: var(--muted);
+}
+.ai-disclaimer {
+  font: 400 13px/1.6 var(--font-sans);
+  font-style: italic;
+  color: var(--muted);
+  border-left: 2px solid var(--border);
+  padding: 2px 0 2px 14px;
+  margin: 0 0 26px;
+  max-width: 680px;
 }
 .about-photo-lg {
   width: 160px;
@@ -609,20 +680,20 @@ a {
 
 /* ==== CV page (rendered from public/cv.tex) ==== */
 .cv-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 24px;
-  flex-wrap: wrap;
   margin-bottom: 44px;
 }
 .cv-contacts {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px 16px;
+  gap: 8px 0;
   margin-top: 14px;
   font: 500 13px var(--font-mono);
   color: var(--body-2);
+}
+.cv-contacts > * + *::before {
+  content: "·";
+  margin: 0 12px;
+  color: var(--muted);
 }
 .cv-contacts a {
   color: var(--red);
@@ -635,8 +706,8 @@ a {
   margin-bottom: 38px;
 }
 .cv-section-title {
-  font: 600 13px var(--font-mono);
-  letter-spacing: 0.14em;
+  font: 600 11px var(--font-mono);
+  letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--ink);
   margin: 0 0 18px;

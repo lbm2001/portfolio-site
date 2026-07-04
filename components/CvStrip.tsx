@@ -1,18 +1,17 @@
 import Link from "next/link";
 
-// Home preview: CV teaser linking to the full /cv page.
+// Home preview: résumé teaser linking to the full /resume page.
 export default function CvStrip() {
   return (
-    <section id="cv" className="cv">
+    <section id="resume" className="cv">
       <div className="cv-left">
-        <span className="cv-num">04</span>
         <div>
-          <div className="cv-k">Curriculum Vitae</div>
-          <div className="cv-t">Education, experience & skills</div>
+          <div className="label-mono">02 Resume</div>
+          <div className="cv-t">Education, Experience & Skills</div>
         </div>
       </div>
-      <Link className="cv-btn" href="/cv">
-        View CV →
+      <Link className="cv-btn" href="/resume">
+        View Resume →
       </Link>
     </section>
   );

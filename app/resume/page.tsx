@@ -3,21 +3,21 @@ import path from "node:path";
 import type { Metadata } from "next";
 import Nav from "@/components/Nav";
 import Footer from "@/components/Footer";
-import { profile } from "@/lib/content";
+import { profile, resumeDownloadName } from "@/lib/content";
 import { parseCv } from "@/lib/cv";
 
 export const metadata: Metadata = {
-  title: `CV · ${profile.name}`,
+  title: `Resume · ${profile.name}`,
 };
 
-// Read + parse cv.tex at BUILD time only. This guarantees the page is fully
+// Read + parse resume.tex at BUILD time only. This guarantees the page is fully
 // prerendered — important on Cloudflare Workers (OpenNext), which has no
 // filesystem at runtime, so the fs read must never happen on-demand.
 export const dynamic = "force-static";
 
 // Parsed at build time from the LaTeX source in public/.
 function loadCv() {
-  const tex = fs.readFileSync(path.join(process.cwd(), "public", "cv.tex"), "utf8");
+  const tex = fs.readFileSync(path.join(process.cwd(), "public", "resume.tex"), "utf8");
   return parseCv(tex);
 }
 
@@ -30,7 +30,7 @@ export default function CvPage() {
       <article className="page page-narrow cv-page">
         <div className="cv-header">
           <div>
-            <div className="label-mono">Curriculum Vitae</div>
+            <div className="label-mono">Resume</div>
             <h1 className="page-title">{cv.name || profile.name}</h1>
             <div className="cv-contacts">
               {cv.location && <span>{cv.location}</span>}
@@ -41,9 +41,6 @@ export default function CvPage() {
               ))}
             </div>
           </div>
-          <a className="cv-btn" href="/cv.pdf">
-            Download PDF ↓
-          </a>
         </div>
 
         {cv.sections.map((s) => (
@@ -84,6 +81,12 @@ export default function CvPage() {
             ))}
           </section>
         ))}
+
+        <div className="cv-download">
+          <a className="cv-btn" href="/resume.pdf" download={resumeDownloadName()}>
+            Download PDF ↓
+          </a>
+        </div>
       </article>
       <Footer />
     </main>

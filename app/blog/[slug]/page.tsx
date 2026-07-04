@@ -4,6 +4,8 @@ import { notFound } from "next/navigation";
 import Nav from "@/components/Nav";
 import Footer from "@/components/Footer";
 import { posts, getPost, profile } from "@/lib/content";
+import { renderBody } from "@/lib/richtext";
+import AiDisclaimer from "@/components/AiDisclaimer";
 
 export function generateStaticParams() {
   return posts.map((p) => ({ slug: p.slug }));
@@ -33,7 +35,7 @@ export default async function BlogPostPage({
       <Nav />
       <article className="page page-narrow">
         <Link className="back-link" href="/blog">
-          ← All posts
+          ← See all
         </Link>
         <div className="page-head">
           <div className="post-meta-row">
@@ -44,12 +46,17 @@ export default async function BlogPostPage({
         </div>
 
         <div className="prose">
-          <p className="section-lead">{post.excerpt}</p>
-          <p>
-            Placeholder article body. Write the full post here — this is dummy
-            copy standing in for the real content, which can be dropped in
-            later.
-          </p>
+          {post.body ? (
+            <>
+              <p className="section-lead">{post.excerpt}</p>
+              {post.aiAssisted && <AiDisclaimer />}
+              {renderBody(post.body)}
+            </>
+          ) : (
+            <p className="empty-note">
+              This post hasn’t been written yet — check back soon.
+            </p>
+          )}
         </div>
       </article>
       <Footer />

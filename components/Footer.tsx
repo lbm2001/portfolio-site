@@ -6,7 +6,6 @@ export default function Footer() {
       <span className="footer-copy">© 2026 {profile.name}</span>
       <div className="footer-links">
         <a href={profile.links.github}>GitHub</a>
-        <a href={profile.links.scholar}>Scholar</a>
         <a href={profile.links.linkedin}>LinkedIn</a>
         <a href={profile.links.email}>Email</a>
       </div>
