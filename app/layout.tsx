@@ -5,7 +5,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Lukas Müller · Robot Learning",
   description:
-    "Portfolio page of an Machine Learning and Robot Learning Engineer.",
+    "Making Robots learn.",
 };
 
 export default function RootLayout({
