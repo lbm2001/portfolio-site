@@ -38,7 +38,10 @@ export default async function ProjectPage({
           ← See all
         </Link>
         <div className="page-head">
-          <div className="label-mono">{project.venue}</div>
+          <div className="label-mono">
+            {project.venue}
+            {project.period && ` · ${project.period}`}
+          </div>
           <h1 className="page-title">{project.title}</h1>
         </div>
 

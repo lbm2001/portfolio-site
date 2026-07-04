@@ -78,6 +78,78 @@ a {
   flex-shrink: 0;
 }
 
+/* Hamburger toggle — hidden on desktop, shown on phones (see @media below).
+   Two bars that cross into an X when the menu is open. */
+.nav-burger {
+  display: none;
+  position: relative;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  z-index: 7;
+}
+.nav-burger span {
+  position: absolute;
+  left: 5px;
+  right: 5px;
+  height: 1.5px;
+  background: var(--ink);
+  transition: transform 0.3s ease;
+}
+.nav-burger span:nth-child(1) {
+  top: 12px;
+}
+.nav-burger span:nth-child(2) {
+  top: 18px;
+}
+.nav-open .nav-burger span:nth-child(1) {
+  transform: translateY(3px) rotate(45deg);
+}
+.nav-open .nav-burger span:nth-child(2) {
+  transform: translateY(-3px) rotate(-45deg);
+}
+
+@media (max-width: 720px) {
+  .nav-burger {
+    display: block;
+  }
+  /* links drop into a full-width panel below the bar, revealed on toggle */
+  .nav-links {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+    padding: 4px 24px 12px;
+    background: rgba(255, 255, 255, 0.94);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+    opacity: 0;
+    transform: translateY(-8px);
+    pointer-events: none;
+    transition: opacity 0.25s ease, transform 0.25s ease;
+  }
+  .nav-open .nav-links {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+  }
+  .nav-links a {
+    padding: 14px 2px;
+    font-size: 16px;
+    border-top: 1px solid var(--border);
+  }
+  .nav-links a:first-child {
+    border-top: none;
+  }
+}
+
 /* ---- Hero (six learning demos ringed around the name) ---- */
 .hero {
   position: relative;
@@ -250,9 +322,104 @@ a {
   display: block;
 }
 
+/* ---- Mobile stand-in: a miniature demo perched ON the name ----
+   Below 1180px the floating ring is replaced by one small live RL demo (cartpole
+   or walker) sitting on top of "Lukas Müller" — the name is its floor. Rendered
+   in bare mode (very-light-grey floor line; agent dropped to the canvas bottom
+   via groundFrac), placed just before the title in the flow and pulled down a
+   few px so the agent's feet rest on the letters. Kept small so the name stays
+   the centrepiece.
+
+   Like the desktop ring, the agent stays faint and only turns solid on hover;
+   on touch (no hover) tapping starts training and turns it solid, prompted by a
+   pulsing "○ TAP FOR LIVE TRAINING". The episode / return / gen numbers appear
+   only once it's running (tapped). Width tracks the measured name (--name-w) so
+   the floor line is exactly as wide as the title and the readout centres on it. */
+.mini-mobile {
+  display: none;
+  width: var(--name-w, 280px);
+  margin: 0 auto 7px; /* small gap between the floor line and the name below */
+  flex-direction: column;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+/* faint until hovered (desktop) or running (tapped) — mirrors the ring panels */
+.mini-mobile .mini-sim {
+  position: static;
+  width: 100%;
+  height: 56px;
+  border-radius: 0;
+  opacity: 0.4;
+  transition: opacity 0.4s ease;
+}
+.mini-mobile:hover .mini-sim,
+.mini-mobile.is-running .mini-sim {
+  opacity: 1;
+}
+/* readout above the miniature — centred, sized to content */
+.mini-mobile .mini-hud {
+  order: -1;
+  position: static;
+  width: max-content;
+  margin: 0 auto;
+  opacity: 1;
+  pointer-events: auto;
+  padding: 0 0 5px;
+  gap: 1px;
+}
+.mini-mobile .mini-meta {
+  align-items: center;
+  gap: 1px;
+}
+.mini-mobile .mini-row {
+  justify-content: center;
+}
+/* the tap hint pulses while idle to signal it's interactive on touch */
+.mini-mobile .mini-training {
+  font-size: 9px;
+}
+.mini-mobile:not(.is-running):not(:hover) .mini-training {
+  animation: mini-tap-pulse 1.6s ease-in-out infinite;
+}
+/* On devices with a real pointer (mouse/trackpad — e.g. a narrow desktop
+   window) there's no "tap", so drop the idle hint; hovering already turns the
+   agent solid, matching the ring. The hint stays on touch devices only. */
+@media (hover: hover) {
+  .mini-mobile:not(.is-running) .mini-training {
+    display: none;
+  }
+}
+@keyframes mini-tap-pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.mini-mobile .mini-stats {
+  text-align: center;
+  font-size: 9px;
+  color: rgba(17, 17, 17, 0.5);
+}
+/* numbers only once it's running (tapped) */
+.mini-mobile:not(.is-running) .mini-stats {
+  display: none;
+}
+/* keep the tap hint + numbers; drop the reset button, the title, the graph */
+.mini-mobile .mini-reset,
+.mini-mobile .mini-title,
+.mini-mobile .mini-chart {
+  display: none;
+}
+
 @media (max-width: 1180px) {
   .mini {
     display: none;
+  }
+  .mini-mobile {
+    display: flex;
   }
   .hero {
     min-height: 520px;
@@ -406,7 +573,7 @@ a {
   align-items: baseline;
   justify-content: space-between;
 }
-.work-idx {
+.work-period {
   font: 500 12px var(--font-mono);
   color: var(--red);
 }
