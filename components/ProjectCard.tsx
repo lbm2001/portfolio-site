@@ -7,7 +7,7 @@ export default function ProjectCard({ project: p }: { project: Project }) {
   return (
     <Link className="work-card" href={`/projects/${p.slug}`}>
       <span className="work-meta">
-        <span className="work-idx">{p.idx}</span>
+        {p.period && <span className="work-period">{p.period}</span>}
         <span className="work-venue">{p.venue}</span>
       </span>
       <span className="work-title">{p.title}</span>

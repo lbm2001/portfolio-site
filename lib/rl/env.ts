@@ -121,6 +121,10 @@ export class WalkerEnv implements RLEnv {
   disturbAmp = 0;
   startX = 0;
   standH = (L1 + L2) * 0.82; // hull height above terrain at standing
+  // Display-only layout knobs (used by the mobile mini): where the ground sits as
+  // a fraction of canvas height, and whether to draw the terrain line at all.
+  groundFrac = 0.8;
+  bare = false;
 
   setSize(w: number, h: number) {
     this.w = w;
@@ -132,7 +136,7 @@ export class WalkerEnv implements RLEnv {
   // constant) so the slope-based terms (slopeAt, SLOPE_TIP, the getObs slope
   // feature) all still work — they simply evaluate to zero on flat ground.
   terrainY(_x: number): number {
-    return this.h * 0.8;
+    return this.h * this.groundFrac;
   }
 
   slopeAt(x: number): number {
@@ -419,16 +423,29 @@ export class WalkerEnv implements RLEnv {
 
   draw(ctx: CanvasRenderingContext2D) {
     const w = this.w;
-    // terrain line (the panel's hover background is applied in CSS, not drawn here)
-    ctx.beginPath();
-    for (let x = 0; x <= w; x += 6) {
-      const ty = this.terrainY(x);
-      if (x === 0) ctx.moveTo(0, ty);
-      else ctx.lineTo(x, ty);
+    // floor line. In bare mode (mobile mini) it's a single very-light-grey rule —
+    // the page/name is the real surface; this just grounds the walker.
+    if (this.bare) {
+      // full-width in bare mode: the canvas is sized to the name, so this line
+      // runs exactly as wide as the title it sits on.
+      const ty = this.terrainY(0);
+      ctx.strokeStyle = "rgba(17,17,17,0.14)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(0, ty);
+      ctx.lineTo(w, ty);
+      ctx.stroke();
+    } else {
+      ctx.beginPath();
+      for (let x = 0; x <= w; x += 6) {
+        const ty = this.terrainY(x);
+        if (x === 0) ctx.moveTo(0, ty);
+        else ctx.lineTo(x, ty);
+      }
+      ctx.strokeStyle = "rgba(175, 28, 8, 0.13)";
+      ctx.lineWidth = 1.1;
+      ctx.stroke();
     }
-    ctx.strokeStyle = "rgba(175, 28, 8, 0.13)";
-    ctx.lineWidth = 1.1;
-    ctx.stroke();
     // walker: far leg (lighter), near leg (dark), then hull
     this.drawLeg(ctx, 1, "rgba(17,17,17,0.4)");
     this.drawLeg(ctx, 0, "#111");

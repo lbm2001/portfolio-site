@@ -19,9 +19,11 @@ export interface ProjectFigure {
 
 export interface Project {
   slug: string;
-  idx: string;
   title: string;
   venue: string;
+  /** Working period, shown in red in the meta line (e.g. "Apr–Sep 2025").
+   *  Projects are listed newest→oldest by start date. */
+  period?: string;
   blurb: string;
   tags: string[];
   links: ProjectLink[];
@@ -50,7 +52,7 @@ export interface Post {
 
 export const profile = {
   name: "Lukas Müller",
-  lead: "I'm a computer science student at TU Darmstadt, currently writing my bachelor thesis on robot learning. I want to get machines to learn how to act, right now through imitation learning.",
+  lead: "I am studying computer science, currently writing my bachelor thesis on robot learning. I want to get machines that learn to act, right now through imitation learning.",
   focus: "Imitation Learning",
   field: "Machine Learning & Robot Learning",
   location: "Frankfurt, Germany",
@@ -72,9 +74,9 @@ export const nav: NavLink[] = [
 export const projects: Project[] = [
   {
     slug: "ev-charging-mdp",
-    idx: "01",
     title: "Online vs. Optimal Electrical Vehicle Charging",
     venue: "Aarhus University",
+    period: "Jan–Jun 2026",
     blurb:
       "How close can a simple, computation-free charging rule get to the cost-optimal policy for an EV facing uncertain trips and fluctuating electricity prices?",
     tags: ["Markov Decision Processes", "Dynamic Programming", "EV Charging"],
@@ -119,6 +121,55 @@ It charges whenever the price is cheap relative to $\\rho_t$, and reaches the op
 {{figure:cost}}
 
 To test how far this holds, I added a negative-binomial trip-duration model for more realistic trips and a set of electricity-price models estimated from historical ENTSO-E data, then ran a sensitivity study across 28 configurations. The ranking is robust: Departure Urgency is the best heuristic in 22 of them, and the parameters that matter most are the penalty for unserved demand, the trip-duration model, and the departure profile. The takeaway is that for this model, a cheap online rule reasoning over price, charge, and time to the next departure captures much of what the exact optimal policy achieves.`,
+  },
+  {
+    slug: "mujopy",
+    title: "MuJoPy",
+    venue: "Open Source",
+    period: "Oct 2025",
+    blurb:
+      "A small Python package that gives pythonic, graph-structured access to MuJoCo models — the preprocessing layer from the robot-generation project, factored out into a standalone, pip-installable tool.",
+    tags: ["MuJoCo", "Python", "Robotics Tooling"],
+    links: [
+      { label: "Code", href: "https://github.com/lbm2001/mujopy" },
+      { label: "PyPI", href: "https://pypi.org/project/mujopy/" },
+    ],
+    aiAssisted: true,
+    body: `MuJoPy spun out of the robot-generation project below. Working with MuJoCo models usually means writing custom parsing logic every time you need to reach the bodies, joints and geoms of a robot. MuJoPy wraps MuJoCo's low-level structs in dataclasses — Body, Joint, Geom, MuJoPyModel — that expose model fields as plain Python properties and derive a navigable graph of the robot, so downstream tasks like feature extraction no longer need bespoke parsing. Each wrapper still exposes the raw struct through a mujoco_view attribute for direct access when needed, and the property system is extensible: you can register your own read-only properties on the model.
+
+On top of the wrapper, RobotGraph gives a concrete example of the abstraction the generation project relied on — it builds a NetworkX graph of the robot alongside a feature matrix driven by a feature-config file. This is exactly the layer that turned MuJoCo XML into the adjacency and feature matrices the VAE was trained on, pulled out into its own package so it can be reused on its own (pip install mujopy).`,
+  },
+  {
+    slug: "large-scale-robot-generation",
+    title: "Large Scale Robot Generation",
+    venue: "Technical University of Darmstadt",
+    period: "Apr–Sep 2025",
+    blurb:
+      "Can a variational autoencoder over robot graphs learn a continuous latent space of morphologies, so that thousands of diverse, physically plausible embodiments can be sampled directly from existing robot designs?",
+    tags: [
+      "Graph Neural Networks",
+      "Variational Autoencoder",
+      "Robot Morphology",
+      "MuJoCo",
+    ],
+    links: [
+      { label: "Code", href: "https://github.com/lbm2001/lascroge" },
+      { label: "Paper", href: "/projects/large-scale-robot-generation/paper.pdf" },
+    ],
+    aiAssisted: true,
+    body: `Cross-embodiment locomotion policies generalize better the more diverse the robots they are trained on, but the design space of embodiments grows exponentially with the number of components. Existing automated approaches are grammar-based: they assemble robots from a predefined library of parts, which requires prior knowledge to define that library, restricts designs to discrete combinations, and ignores the continuous physical parameters — mass, geometry, joint limits — of real systems. With Nurhak Yalcin, I built an end-to-end system that instead learns a generative model directly from existing robot designs: a variational autoencoder (VAE) implemented as a message-passing graph neural network (MPNN), so that novel, physically plausible embodiments can be sampled from a learned latent space.
+
+A robot is abstracted as an acyclic, undirected graph $\\mathcal{G} = (V, E)$ — effectively a kinematic tree — whose nodes are body parts (links or joints) and whose edges are their connections, with the continuous attributes of each part stored in a feature matrix $\\mathbf{X} \\in \\mathbb{R}^{n \\times d}$. The encoder is an MPNN that runs $T$ steps of message passing, updating node messages and hidden states as
+
+$$m_v^{t+1} = \\sum_{w \\in N(v)} M_t(h_v^t, h_w^t, e_{vw}), \\qquad h_v^{t+1} = U_t(h_v^t, m_v^{t+1})$$
+
+where in our case the learned functions $M_t$ and $U_t$ are realized by a GRU adapted to graphs. The graph representation $h_{\\mathcal{G}}$ — the sum over leaf-node states — is mapped by two linear layers to the mean $\\mu_{\\mathcal{G}}$ and variance $\\sigma_{\\mathcal{G}}^2$ of a latent distribution, from which we sample $z_{\\mathcal{G}} \\sim \\mathcal{N}(\\mu_{\\mathcal{G}}, \\sigma_{\\mathcal{G}}^2)$ using the reparametrization trick.
+
+The decoder reconstructs the graph autoregressively from $z_{\\mathcal{G}}$, expanding depth-first from the root. At each step it decides whether to add a node with probability $p_t = \\sigma\\!\\left(u^c \\cdot \\tau(W_1^c x_{i_t} + W_2^c z_{\\mathcal{G}} + W_3^c \\sum_k h_{k,i_t})\\right)$ and — departing from classification-based methods that pick parts from a vocabulary — directly regresses the new node's continuous feature vector $f_j = U^l \\tau(W_1^l z_{\\mathcal{G}} + W_2^l h_{i,j})$ along with a link/joint type. Training minimizes the decoder's topology, feature-regression and type losses together with a KL term pulling the latent distribution toward a standard Gaussian prior:
+
+$$\\mathcal{L}(\\mathcal{G}) = \\mathcal{L}_d(\\mathcal{G}) + \\beta\\, \\mathcal{L}_{KL}$$
+
+We validated the system on synthetic graphs and on real robots from the MuJoCo Menagerie. Trained only on quadrupeds, the VAE reconstructed the unseen Unitree Go2 exactly; trained jointly on quadrupeds and humanoids it recovered a close but imperfect structure, with continuous features reconstructed well in both cases, and sampling a random latent vector yielded valid, novel graph structures. Scaling to 17 robots preserved the structure but left a higher feature-regression error that longer training should reduce. A postprocessing pipeline back to MuJoCo XML and validation via policy transfer are the main next steps — the goal being a task-agnostic generator of the diverse embodiments that morphology-agnostic policies need. This was joint work with Nurhak Yalcin for the Robot Learning: Integrated Project at TU Darmstadt.`,
   },
 ];
 

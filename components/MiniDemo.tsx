@@ -69,6 +69,12 @@ export default function MiniDemo({
     const env = make();
     env.disturbAmp = displayDisturb;
     env.showFall = showFall;
+    if (isStatic) {
+      // perched-on-the-name mobile mini: drop the agent to the canvas floor and
+      // hide the env's own ground line so the page (the name) reads as the floor
+      env.bare = true;
+      env.groundFrac = 0.9;
+    }
     const trainer = new ARSTrainer(make);
     trainerRef.current = trainer;
     const first = sizeCanvas(sim);
@@ -145,7 +151,7 @@ export default function MiniDemo({
       cancelAnimationFrame(raf);
       trainerRef.current = null;
     };
-  }, [make, displayDisturb, showFall]);
+  }, [make, displayDisturb, showFall, isStatic]);
 
   return (
     <div
@@ -162,7 +168,11 @@ export default function MiniDemo({
         <div className="mini-meta">
           <div className="mini-row">
             <div className={running ? "mini-training" : "mini-training mini-paused"}>
-              {running ? "● TRAINING" : `○ ${isStatic ? "TAP" : "CLICK"} FOR LIVE TRAINING`}
+              {running
+                ? "● TRAINING"
+                : isStatic
+                  ? "○ TAP FOR LIVE TRAINING"
+                  : "○ CLICK FOR LIVE TRAINING"}
             </div>
             <button
               type="button"
