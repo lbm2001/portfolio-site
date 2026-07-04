@@ -42,6 +42,10 @@ export default function Hero() {
             Download Resume
           </a>
         </div>
+
+        {/* The floating ring is hidden below 1180px; on phones a single live
+            cartpole demo stands in for it, in normal flow under the name. */}
+        <MiniDemo make={makeCartPole} corner="top" variant="static" showFall />
       </div>
     </header>
   );

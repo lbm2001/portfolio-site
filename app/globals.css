@@ -250,9 +250,39 @@ a {
   display: block;
 }
 
+/* ---- Mobile stand-in: one live demo in normal flow under the name ----
+   Hidden on desktop (the floating ring covers it); revealed once the ring
+   drops out below 1180px. Not a `.mini`, so it escapes the ring's absolute
+   positioning and the display:none rule below. */
+.mini-mobile {
+  display: none;
+  width: 100%;
+  max-width: 320px;
+  margin-top: 14px;
+  flex-direction: column;
+  gap: 10px;
+  cursor: pointer;
+  text-align: left;
+  touch-action: manipulation;
+}
+.mini-mobile .mini-sim {
+  height: 150px;
+}
+/* HUD sits in normal flow (not hover-gated, not absolutely positioned) so it's
+   always readable on touch and contributes its own height. */
+.mini-mobile .mini-hud {
+  position: static;
+  opacity: 1;
+  pointer-events: auto;
+  padding-top: 0;
+}
+
 @media (max-width: 1180px) {
   .mini {
     display: none;
+  }
+  .mini-mobile {
+    display: flex;
   }
   .hero {
     min-height: 520px;

@@ -24,11 +24,15 @@ export default function MiniDemo({
   corner,
   displayDisturb = 0,
   showFall = false,
+  variant = "float",
 }: {
   make: EnvFactory;
   corner: Corner;
   displayDisturb?: number;
   showFall?: boolean;
+  // "float" is the draggable ring panel (desktop); "static" is the single
+  // in-flow demo shown below the name on mobile — no drag, HUD always visible.
+  variant?: "float" | "static";
 }) {
   const simRef = useRef<HTMLCanvasElement>(null);
   const chartRef = useRef<HTMLCanvasElement>(null);
@@ -37,6 +41,7 @@ export default function MiniDemo({
   const [title] = useState(() => make().title);
   const [running, setRunning] = useState(false);
   const runningRef = useRef(false);
+  const isStatic = variant === "static";
   const { ref: dragRef, wasDraggedRef, revealed } = useFloatDrag(FLOAT_PARAMS[corner]);
 
   const toggle = () => {
@@ -144,8 +149,12 @@ export default function MiniDemo({
 
   return (
     <div
-      ref={dragRef}
-      className={`mini mini-${corner}${running ? " is-running" : ""}${revealed ? "" : " mini-pre"}`}
+      ref={isStatic ? undefined : dragRef}
+      className={
+        isStatic
+          ? `mini-mobile${running ? " is-running" : ""}`
+          : `mini mini-${corner}${running ? " is-running" : ""}${revealed ? "" : " mini-pre"}`
+      }
       onClick={toggle}
     >
       <canvas ref={simRef} className="mini-sim" />
@@ -153,7 +162,7 @@ export default function MiniDemo({
         <div className="mini-meta">
           <div className="mini-row">
             <div className={running ? "mini-training" : "mini-training mini-paused"}>
-              {running ? "● TRAINING" : "○ CLICK FOR LIVE TRAINING"}
+              {running ? "● TRAINING" : `○ ${isStatic ? "TAP" : "CLICK"} FOR LIVE TRAINING`}
             </div>
             <button
               type="button"
