@@ -28,6 +28,15 @@ export class NNTrainer {
     return this.task.w > 0;
   }
 
+  manualReset() {
+    this.task.reset();
+    this.run++;
+    this.step = 0;
+    this.lastLoss = 0;
+    this.history = [];
+    this.acc = 0;
+  }
+
   advance(stepsPerFrame: number) {
     if (!this.ready()) return;
     for (let i = 0; i < stepsPerFrame; i++) {

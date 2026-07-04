@@ -2,7 +2,7 @@
 
 import MiniDemo from "@/components/MiniDemo";
 import MiniDemoNN from "@/components/MiniDemoNN";
-import { profile } from "@/lib/content";
+import { profile, resumeDownloadName } from "@/lib/content";
 import { WalkerEnv } from "@/lib/rl/env";
 import { CartPoleEnv } from "@/lib/rl/cartpole";
 import { PendulumEnv } from "@/lib/rl/pendulum";
@@ -27,19 +27,19 @@ export default function Hero() {
       <MiniDemoNN make={makeClassification} corner="ul" />
       <MiniDemoNN make={makeCurveFit} corner="ll" />
       <MiniDemoNN make={makeDigit} corner="bot" />
-      <MiniDemo make={makeCartPole} corner="top" />
+      <MiniDemo make={makeCartPole} corner="top" showFall />
       <MiniDemo make={makePendulum} corner="ur" />
       <MiniDemo make={makeWalker} corner="lr" displayDisturb={17} />
 
       <div className="hero-content">
-        <div className="hero-tag">{profile.tagline}</div>
         <h1>{profile.name}</h1>
+        <div className="hero-tag">{profile.field}</div>
         <div className="hero-cta">
           <a className="btn-primary" href={profile.links.email}>
-            Get in touch
+            Contact
           </a>
-          <a className="btn-outline" href="/cv.pdf">
-            Download CV
+          <a className="btn-outline" href="/resume.pdf" download={resumeDownloadName()}>
+            Download Resume
           </a>
         </div>
       </div>

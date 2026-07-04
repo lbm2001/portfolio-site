@@ -41,7 +41,7 @@ export class ARSTrainer {
   norm: RunningNorm;
 
   run = 1; // ARS generation (HUD "run")
-  episode = 1; // total training rollouts (HUD "episode")
+  episode = 0; // total training rollouts (HUD "episode")
   lastReturn = 0; // last single rollout return (raw, noisy)
   genMean = 0; // mean return of the most recent generation (smooth metric)
   history: number[] = []; // per-generation mean returns → sparkline / HUD
@@ -69,6 +69,21 @@ export class ARSTrainer {
 
   setSize(w: number, h: number) {
     this.env.setSize(w, h);
+  }
+
+  // Throw away everything learned and start training over from a fresh seed.
+  manualReset() {
+    this.seedWeights();
+    this.norm = new RunningNorm(this.obsDim);
+    this.run = 1;
+    this.episode = 0;
+    this.lastReturn = 0;
+    this.genMean = 0;
+    this.history = [];
+    this.params = new Float64Array(this.size);
+    this.active = false;
+    this.epReturn = 0;
+    this.newGeneration();
   }
 
   ready() {

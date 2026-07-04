@@ -22,6 +22,8 @@ export interface RLEnv {
   draw(ctx: CanvasRenderingContext2D): void;
   /** Optional display-only disturbance so the rendered agent stumbles/varies. */
   disturbAmp?: number;
+  /** Optional display-only flag: let the agent topple visibly before reset. */
+  showFall?: boolean;
 }
 
 export type EnvFactory = () => RLEnv;

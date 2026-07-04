@@ -74,7 +74,7 @@ function oneHot(label: number): number[] {
 const rnd = (a: number, b: number) => a + Math.random() * (b - a);
 
 export class DigitTask implements NNTask {
-  readonly title = "Digit recognizer · 28×28 · backprop";
+  readonly title = "Digit Recognizer · Cross-Entropy Loss";
   readonly netSizes = [N_IN, 32, 10];
   readonly lossType = "ce" as const;
   w = 0;
@@ -141,6 +141,10 @@ export class DigitTask implements NNTask {
   private newSample() {
     const label = (Math.random() * 10) | 0;
     this.sample = { vec: this.raster(label), label };
+    // Predict ONCE, when the digit is presented, and hold those bars until the
+    // next digit — otherwise the bar chart flickers every training step, which
+    // reads as hectic. Successive digits still show the net getting more confident.
+    this.probs = this.net.predict(this.sample.vec);
   }
 
   currentSample(): Sample {
@@ -153,15 +157,17 @@ export class DigitTask implements NNTask {
       const label = (Math.random() * 10) | 0;
       batch.push({ x: this.raster(label), y: oneHot(label) });
     }
-    const loss = this.net.trainStep(batch, 0.3, this.lossType);
+    const loss = this.net.trainStep(batch, 0.6, this.lossType);
     this.stepCount++;
-    if (this.stepCount % 12 === 0) this.newSample();
-    this.probs = this.net.predict(this.sample.vec);
+    // present a fresh digit ~once per second (probs are refreshed only here)
+    if (this.stepCount % 24 === 0) this.newSample();
     return loss;
   }
 
   converged(loss: number, step: number): boolean {
-    return loss < 0.1 || step > 800;
+    // low threshold so a lucky (noisy) mini-batch doesn't reset mid-learn; the
+    // step cap ends the cycle after ~11s if it never gets that confident.
+    return loss < 0.08 || step > 260;
   }
 
   draw(ctx: CanvasRenderingContext2D) {
