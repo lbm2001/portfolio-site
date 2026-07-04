@@ -33,12 +33,12 @@ export const profile = {
   focus: "RL & Imitation Learning",
   field: "Robotics",
   location: "Frankfurt, Germany",
-  email: "lukasbmueller@gmail.com",
+  email: "contact@lukasmueller.dev",
   links: {
     github: "https://github.com/lbm2001",
     linkedin: "https://www.linkedin.com/in/lukas-m-695b06195/",
     scholar: "#",
-    email: "mailto:lukasbmueller@gmail.com",
+    email: "mailto:contact@lukasmueller.dev",
   },
 };
 
