@@ -34,8 +34,9 @@ next-env.d.ts
 .dev.vars*
 !.dev.vars.example
 
-# Resume: PDF is generated at build time by scripts/build-cv.sh from public/resume.tex
-/public/resume.pdf
+# Resume: public/resume.pdf is committed (regenerated locally via scripts/build-cv.sh)
+# because the Cloudflare build environment has no latexmk. Only the LaTeX
+# byproducts below are ignored.
 /public/resume.aux
 /public/resume.fdb_latexmk
 /public/resume.fls
