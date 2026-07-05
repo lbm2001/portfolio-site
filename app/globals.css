@@ -324,64 +324,58 @@ a {
 
 /* ---- Small ring, tier 2: tablets + narrow desktop windows, still 6 demos ----
    Below 1180px, OR on any device without real hover (tablets like iPad, even in
-   wide landscape), the ring doesn't disappear — it re-forms as two bands: the
+   wide landscape), the ring doesn't disappear — it re-forms as two rows: the
    three RL demos (top/ur/lr) above the name, the three NN demos (ul/ll/bot)
-   below it. Placement uses ONLY the measured height of the name/tag/CTA block
-   (--content-half-h, set by Hero.tsx) — never its width — so a seat can never be
-   clipped by the hero's own edges on a narrow phone the way a left/right seat
-   tied to content *width* could be (there's much more vertical room than
-   horizontal on a phone). useFloatDrag scales ambient drift + drag roam to match
-   (identical media query), and the HUD is decluttered (no graph/title/reset) so
-   it still reads at the smaller size. */
+   below it, each row spread left-edge / centre / right-edge instead of bunched
+   near the middle, so the whole width of the screen is used and panels have
+   room to float in place. Left/right seats anchor to the *viewport* edge (via
+   `left`/`right`, not a margin computed from centre), so they always sit a fixed
+   buffer from the true edge regardless of viewport width. Vertical placement
+   uses ONLY the measured height of the name/tag/CTA block (--content-half-h, set
+   by Hero.tsx) plus the panel's own (possibly scaled) height — never width — so
+   a seat can never be clipped by content the way a width-based offset could be.
+   Panel size matches desktop (248px) down to a `min()` floor so it only shrinks
+   on the very smallest current iPad; the HUD (graph/title/reset) is untouched —
+   the only difference from desktop is tap-to-reveal instead of hover-to-reveal
+   (see the (hover:none) block below) and the CLICK→TAP wording. */
 @media (min-width: 601px) and (max-width: 1180px), (hover: none) {
   .mini {
-    width: 96px;
+    width: min(248px, 26vw);
   }
   .mini-sim {
-    height: 52px;
+    height: min(132px, 13.8vw);
   }
-  /* RL band, above the name */
   .mini-top,
   .mini-ur,
   .mini-lr {
-    margin-top: calc(-1 * (var(--content-half-h, 90px) + 80px));
+    margin-top: calc(-1 * (var(--content-half-h, 90px) + 28px + min(132px, 13.8vw)));
   }
-  .mini-top {
-    margin-left: -160px;
-  }
-  .mini-ur {
-    margin-left: -48px;
-  }
-  .mini-lr {
-    margin-left: 64px;
-  }
-  /* NN band, below the name */
   .mini-ul,
   .mini-ll,
   .mini-bot {
     margin-top: calc(var(--content-half-h, 90px) + 28px);
   }
+  /* left-edge seats */
+  .mini-top,
   .mini-ul {
-    margin-left: -160px;
+    left: 24px;
+    right: auto;
+    margin-left: 0;
   }
+  /* centred seats */
+  .mini-ur,
   .mini-ll {
-    margin-left: -48px;
+    margin-left: calc(-1 * (min(248px, 26vw) / 2));
   }
+  /* right-edge seats */
+  .mini-lr,
   .mini-bot {
-    margin-left: 64px;
-  }
-  .mini-training,
-  .mini-stats {
-    font-size: 9px;
-  }
-  /* the graph, title and reset button don't fit legibly at this size */
-  .mini-reset,
-  .mini-title,
-  .mini-chart {
-    display: none;
+    left: auto;
+    right: 24px;
+    margin-left: 0;
   }
   .hero {
-    min-height: 500px;
+    min-height: 720px;
   }
 }
 
@@ -389,19 +383,20 @@ a {
    Below 600px width, one random NN and one random RL demo are dropped (Hero.tsx
    marks them .mini-drop-sm; picked once per load, still mounted so resizing
    across this breakpoint doesn't need JS). The two survivors of each group sit
-   side by side, RL above the name and NN below — same band idea as tier 2, just
-   two panels per band instead of three, sized up since there's more room each.
-   Declared after tier 2 so these rules win on small phones (equal specificity,
-   later wins) without needing to fight tier 2's rules with !important. */
+   left-edge / right-edge (same edge-anchoring idea as tier 2, just two panels
+   per row instead of three), sized up since there's more room each. HUD stays
+   decluttered (no graph/title/reset) — these panels are still small enough that
+   the full HUD wouldn't fit legibly. Declared after tier 2 so these rules win on
+   small phones (equal specificity, later wins) without needing !important. */
 @media (max-width: 600px) {
   .mini-drop-sm {
     display: none;
   }
   .mini {
-    width: 124px;
+    width: 140px;
   }
   .mini-sim {
-    height: 64px;
+    height: 72px;
   }
   .mini-training,
   .mini-stats {
@@ -413,27 +408,31 @@ a {
     display: none;
   }
   .mini-sm-rl1,
-  .mini-sm-rl2 {
-    margin-top: calc(-1 * (var(--content-half-h, 90px) + 92px));
+  .mini-sm-rl2,
+  .mini-sm-nn1,
+  .mini-sm-nn2 {
+    left: auto;
+    right: auto;
+    margin-left: 0;
   }
-  .mini-sm-rl1 {
-    margin-left: -132px;
-  }
+  .mini-sm-rl1,
   .mini-sm-rl2 {
-    margin-left: 8px;
+    margin-top: calc(-1 * (var(--content-half-h, 90px) + 100px));
   }
   .mini-sm-nn1,
   .mini-sm-nn2 {
     margin-top: calc(var(--content-half-h, 90px) + 28px);
   }
+  .mini-sm-rl1,
   .mini-sm-nn1 {
-    margin-left: -132px;
+    left: 20px;
   }
+  .mini-sm-rl2,
   .mini-sm-nn2 {
-    margin-left: 8px;
+    right: 20px;
   }
   .hero {
-    min-height: 520px;
+    min-height: 500px;
   }
 }
 
