@@ -30,6 +30,9 @@ export function useFloatDrag(params: FloatParams) {
     if (!el) return;
 
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    // In the touch/narrow "grid" layout the panels sit in flow, so drift + drag
+    // are switched off here and the page scrolls normally (see .mini-grid).
+    const gridMedia = window.matchMedia("(max-width: 1180px), (hover: none)");
 
     let raf = 0;
     const t0 = performance.now();
@@ -63,6 +66,12 @@ export function useFloatDrag(params: FloatParams) {
     };
 
     const frame = (now: number) => {
+      // grid layout: clear any leftover float transform and skip drift entirely
+      if (gridMedia.matches) {
+        if (el.style.transform) el.style.transform = "";
+        raf = requestAnimationFrame(frame);
+        return;
+      }
       const t = (now - t0) / 1000;
       if (!dragging) {
         if (!reduceMotion && !hovering) {
@@ -90,6 +99,7 @@ export function useFloatDrag(params: FloatParams) {
     };
 
     const onPointerDown = (e: PointerEvent) => {
+      if (gridMedia.matches) return; // no dragging in grid layout — let it scroll
       if ((e.target as HTMLElement).closest("button")) return;
       dragging = true;
       wasDraggedRef.current = false;

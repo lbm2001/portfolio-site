@@ -322,79 +322,113 @@ a {
   display: block;
 }
 
-/* ---- Mobile stand-in: a miniature demo perched ON the name ----
-   Below 1180px the floating ring is replaced by one small live RL demo (cartpole
-   or walker) sitting on top of "Lukas Müller" — the name is its floor. Rendered
-   in bare mode (very-light-grey floor line; agent dropped to the canvas bottom
-   via groundFrac), placed just before the title in the flow and pulled down a
-   few px so the agent's feet rest on the letters. Kept small so the name stays
-   the centrepiece.
+/* ---- Mobile / touch: the six demos re-flow into a tappable grid ----
+   The six panels live in a `.mini-grid` wrapper. On desktop it is
+   `display: contents`, so the panels stay effective children of `.hero` and
+   float on their ring (positioned + dragged by useFloatDrag as before). When the
+   viewport is narrow OR the device has no real hover (tablets like iPad, even in
+   wide landscape) the wrapper becomes a real grid and each `.mini` drops its
+   absolute ring seat to sit in a cell; useFloatDrag turns its drift/drag off in
+   this mode (matchMedia) so the page scrolls normally. Each panel stays faint
+   until hovered (desktop) or tapped (touch → is-running), with its HUD pared to
+   the pulsing tap hint + title + (on tap) the numbers. CLICK/TAP swaps by device. */
+.mini-grid {
+  display: contents;
+}
 
-   Like the desktop ring, the agent stays faint and only turns solid on hover;
-   on touch (no hover) tapping starts training and turns it solid, prompted by a
-   pulsing "○ TAP FOR LIVE TRAINING". The episode / return / gen numbers appear
-   only once it's running (tapped). Width tracks the measured name (--name-w) so
-   the floor line is exactly as wide as the title and the readout centres on it. */
-.mini-mobile {
-  display: none;
-  width: var(--name-w, 280px);
-  margin: 0 auto 7px; /* small gap between the floor line and the name below */
-  flex-direction: column;
-  cursor: pointer;
-  touch-action: manipulation;
+@media (max-width: 1180px), (hover: none) {
+  .mini-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 22px 16px;
+    width: 100%;
+    max-width: 440px;
+    margin: 30px auto 0;
+  }
+  /* panels leave the ring: in-flow grid cells, no drag/float/seat offsets */
+  .mini-grid .mini {
+    position: relative;
+    left: auto;
+    top: auto;
+    margin: 0;
+    width: auto;
+    opacity: 1; /* fade only the sim, not the readout */
+    cursor: pointer;
+    touch-action: auto;
+    z-index: auto;
+    will-change: auto;
+  }
+  .mini-grid .mini.mini-pre {
+    opacity: 0; /* keep the staggered entrance fade */
+  }
+  /* faint until running (tapped); hover-to-solid is added for pointers below */
+  .mini-grid .mini .mini-sim {
+    height: 62px;
+    opacity: 0.4;
+    transition: opacity 0.35s ease;
+  }
+  .mini-grid .mini.is-running .mini-sim {
+    opacity: 1;
+  }
+  /* HUD in normal flow below the sim, compact and centred */
+  .mini-grid .mini .mini-hud {
+    position: static;
+    opacity: 1;
+    pointer-events: auto;
+    padding-top: 6px;
+    gap: 3px;
+  }
+  .mini-grid .mini .mini-meta {
+    align-items: center;
+    gap: 2px;
+    text-align: center;
+  }
+  .mini-grid .mini .mini-row {
+    justify-content: center;
+  }
+  .mini-grid .mini .mini-training,
+  .mini-grid .mini .mini-stats {
+    font-size: 9px;
+  }
+  .mini-grid .mini .mini-title {
+    text-align: center;
+  }
+  /* idle: pulsing tap hint, no numbers. running: numbers + steady label. */
+  .mini-grid .mini:not(.is-running) .mini-stats {
+    display: none;
+  }
+  .mini-grid .mini:not(.is-running) .mini-training {
+    animation: mini-tap-pulse 1.6s ease-in-out infinite;
+  }
+  /* drop the reset button and the reward/loss graph on the small panels */
+  .mini-grid .mini .mini-reset,
+  .mini-grid .mini .mini-chart {
+    display: none;
+  }
+  .hero {
+    min-height: auto;
+  }
 }
-/* faint until hovered (desktop) or running (tapped) — mirrors the ring panels */
-.mini-mobile .mini-sim {
-  position: static;
-  width: 100%;
-  height: 56px;
-  border-radius: 0;
-  opacity: 0.4;
-  transition: opacity 0.4s ease;
-}
-.mini-mobile.is-running .mini-sim {
-  opacity: 1;
-}
-/* hover-to-solid only where hover is real — otherwise a tap leaves a lingering
-   :hover on touch and the agent stays solid after training is stopped */
+/* hover-to-solid only where hover is real (avoids sticky :hover after a tap) */
 @media (hover: hover) {
-  .mini-mobile:hover .mini-sim {
+  .mini-grid .mini:hover .mini-sim {
     opacity: 1;
   }
 }
-/* readout above the miniature — centred, sized to content */
-.mini-mobile .mini-hud {
-  order: -1;
-  position: static;
-  width: max-content;
-  margin: 0 auto;
-  opacity: 1;
-  pointer-events: auto;
-  padding: 0 0 5px;
-  gap: 1px;
+
+/* CLICK on pointer devices, TAP on touch — only the verb changes */
+.verb-tap {
+  display: none;
 }
-.mini-mobile .mini-meta {
-  align-items: center;
-  gap: 1px;
-}
-.mini-mobile .mini-row {
-  justify-content: center;
-}
-/* the tap hint pulses while idle to signal it's interactive on touch */
-.mini-mobile .mini-training {
-  font-size: 9px;
-}
-.mini-mobile:not(.is-running):not(:hover) .mini-training {
-  animation: mini-tap-pulse 1.6s ease-in-out infinite;
-}
-/* On devices with a real pointer (mouse/trackpad — e.g. a narrow desktop
-   window) there's no "tap", so drop the idle hint; hovering already turns the
-   agent solid, matching the ring. The hint stays on touch devices only. */
-@media (hover: hover) {
-  .mini-mobile:not(.is-running) .mini-training {
+@media (hover: none) {
+  .verb-click {
     display: none;
   }
+  .verb-tap {
+    display: inline;
+  }
 }
+
 @keyframes mini-tap-pulse {
   0%,
   100% {
@@ -402,33 +436,6 @@ a {
   }
   50% {
     opacity: 1;
-  }
-}
-.mini-mobile .mini-stats {
-  text-align: center;
-  font-size: 9px;
-  color: rgba(17, 17, 17, 0.5);
-}
-/* numbers only once it's running (tapped) */
-.mini-mobile:not(.is-running) .mini-stats {
-  display: none;
-}
-/* keep the tap hint + numbers; drop the reset button, the title, the graph */
-.mini-mobile .mini-reset,
-.mini-mobile .mini-title,
-.mini-mobile .mini-chart {
-  display: none;
-}
-
-@media (max-width: 1180px) {
-  .mini {
-    display: none;
-  }
-  .mini-mobile {
-    display: flex;
-  }
-  .hero {
-    min-height: 520px;
   }
 }
 .hero h1 {
