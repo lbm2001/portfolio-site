@@ -8,31 +8,31 @@
 //   Skills:  \textbf{Category}{: comma list} \\
 // If the .tex's command set changes, this parser needs a matching tweak.
 
-export interface CvContact {
+export interface ResumeContact {
   label: string;
   href: string;
 }
-export interface CvEntry {
+export interface ResumeEntry {
   title: string;
   dates: string;
   org: string;
   location: string;
   bullets: string[];
 }
-export interface CvSkill {
+export interface ResumeSkill {
   category: string;
   items: string;
 }
-export interface CvSection {
+export interface ResumeSection {
   title: string;
-  entries: CvEntry[];
-  skills: CvSkill[]; // used only by the Skills section
+  entries: ResumeEntry[];
+  skills: ResumeSkill[]; // used only by the Skills section
 }
-export interface Cv {
+export interface Resume {
   name: string;
   location: string;
-  contacts: CvContact[];
-  sections: CvSection[];
+  contacts: ResumeContact[];
+  sections: ResumeSection[];
 }
 
 // ---- LaTeX → plain text cleanup ---------------------------------------------
@@ -85,14 +85,14 @@ function readArgs(src: string, from: number, count: number): { args: string[]; e
 
 // ---- Parser -----------------------------------------------------------------
 
-export function parseCv(tex: string): Cv {
+export function parseResume(tex: string): Resume {
   // strip full-line comments so % inside them never confuses us
   const src = tex.replace(/(^|[^\\])%.*$/gm, "$1");
 
   // --- header (name + contacts) from the \begin{center} … \end{center} block
   let name = "";
   let location = "";
-  const contacts: CvContact[] = [];
+  const contacts: ResumeContact[] = [];
   const center = src.match(/\\begin\{center\}([\s\S]*?)\\end\{center\}/);
   if (center) {
     const block = center[1];
@@ -113,7 +113,7 @@ export function parseCv(tex: string): Cv {
   }
 
   // --- sections
-  const sections: CvSection[] = [];
+  const sections: ResumeSection[] = [];
   const sectionRe = /\\section\{([^}]*)\}/g;
   const heads: { title: string; index: number }[] = [];
   let sm: RegExpExecArray | null;
@@ -125,7 +125,7 @@ export function parseCv(tex: string): Cv {
     const start = heads[h].index;
     const end = h + 1 < heads.length ? heads[h + 1].index : src.length;
     const body = src.slice(start, end);
-    const section: CvSection = { title: heads[h].title, entries: [], skills: [] };
+    const section: ResumeSection = { title: heads[h].title, entries: [], skills: [] };
 
     if (/^skills$/i.test(heads[h].title)) {
       // Skills: lines like  \textbf{Category}{: item, item} \\
@@ -141,7 +141,7 @@ export function parseCv(tex: string): Cv {
     }
 
     // Regular sections: walk \resumeSubheading / \resumeItem in order.
-    let cur: CvEntry | null = null;
+    let cur: ResumeEntry | null = null;
     const tokenRe = /\\resume(Subheading|Item)\b/g;
     let tm: RegExpExecArray | null;
     while ((tm = tokenRe.exec(body))) {

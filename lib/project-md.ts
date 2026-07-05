@@ -1,6 +1,6 @@
 // A small, TARGETED parser for the `portfolio.md` file each project repo holds:
 // a YAML-ish frontmatter block delimited by `---`, followed by a Markdown body.
-// Like lib/cv.ts, this is NOT a general YAML parser — it understands exactly the
+// Like lib/resume.ts, this is NOT a general YAML parser — it understands exactly the
 // keys the portfolio uses (scalars, an inline `tags` list, and a `links` list of
 // {label, href}). Keeping it hand-rolled avoids a YAML dependency in the build.
 //

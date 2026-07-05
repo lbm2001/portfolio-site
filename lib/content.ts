@@ -66,7 +66,7 @@ export const nav: NavLink[] = [
 // Projects are pulled from each project's GitHub repo at BUILD time by
 // scripts/gen-projects-data.mjs (run in the prebuild step) into
 // lib/projects-data.json, imported at the top of this file as a static module —
-// same pattern as the CV (lib/cv-data.json). Nothing is fetched at request time.
+// same pattern as the résumé (lib/resume-data.json). Nothing is fetched at request time.
 // Edit a repo's portfolio.md / About / topics to change what shows here.
 export const projects = projectsData as Project[];
 

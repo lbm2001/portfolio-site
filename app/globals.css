@@ -726,8 +726,8 @@ a {
   max-width: 560px;
 }
 
-/* CV strip */
-.cv {
+/* Resume strip */
+.resume {
   padding: 54px 56px;
   border-bottom: 1px solid var(--border);
   display: flex;
@@ -736,18 +736,18 @@ a {
   gap: 24px;
   flex-wrap: wrap;
 }
-.cv-left {
+.resume-left {
   display: flex;
   align-items: baseline;
   gap: 20px;
 }
-.cv-t {
+.resume-t {
   font: 600 22px/1.2 var(--font-sans);
   letter-spacing: -0.02em;
   color: var(--ink);
   margin-top: 8px;
 }
-.cv-btn {
+.resume-btn {
   font: 600 14px/1 var(--font-sans);
   color: #fff;
   background: var(--ink);
@@ -756,7 +756,7 @@ a {
   text-decoration: none;
   white-space: nowrap;
 }
-.cv-download {
+.resume-download {
   margin-top: 12px;
   padding-top: 32px;
   border-top: 1px solid var(--border);
@@ -790,7 +790,7 @@ a {
 @media (max-width: 720px) {
   .section,
   .nav,
-  .cv,
+  .resume,
   .footer {
     padding-left: 24px;
     padding-right: 24px;
@@ -809,7 +809,7 @@ a {
   }
 }
 
-/* ==== Inner pages (about / projects / blog / cv) ==== */
+/* ==== Inner pages (about / projects / blog / resume) ==== */
 .page {
   max-width: 1100px;
   margin: 0 auto;
@@ -991,11 +991,11 @@ a {
   margin-bottom: 14px;
 }
 
-/* ==== CV page (rendered from public/cv.tex) ==== */
-.cv-header {
+/* ==== Resume page (rendered from public/resume.tex) ==== */
+.resume-header {
   margin-bottom: 44px;
 }
-.cv-contacts {
+.resume-contacts {
   display: flex;
   flex-wrap: wrap;
   gap: 8px 0;
@@ -1003,22 +1003,22 @@ a {
   font: 500 13px var(--font-mono);
   color: var(--body-2);
 }
-.cv-contacts > * + *::before {
+.resume-contacts > * + *::before {
   content: "·";
   margin: 0 12px;
   color: var(--muted);
 }
-.cv-contacts a {
+.resume-contacts a {
   color: var(--red);
   text-decoration: none;
 }
-.cv-contacts a:hover {
+.resume-contacts a:hover {
   text-decoration: underline;
 }
-.cv-section {
+.resume-section {
   margin-bottom: 38px;
 }
-.cv-section-title {
+.resume-section-title {
   font: 600 11px var(--font-mono);
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -1027,61 +1027,61 @@ a {
   padding-bottom: 8px;
   border-bottom: 1px solid var(--border);
 }
-.cv-entry {
+.resume-entry {
   margin-bottom: 22px;
 }
-.cv-entry-row {
+.resume-entry-row {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 18px;
 }
-.cv-entry-title {
+.resume-entry-title {
   font: 600 16px/1.35 var(--font-sans);
   color: var(--ink);
 }
-.cv-entry-dates {
+.resume-entry-dates {
   flex-shrink: 0;
   font: 500 12px var(--font-mono);
   color: var(--muted);
 }
-.cv-entry-sub {
+.resume-entry-sub {
   margin-top: 2px;
   font: 400 14px var(--font-sans);
   font-style: italic;
   color: var(--body-2);
 }
-.cv-entry-sub span:last-child {
+.resume-entry-sub span:last-child {
   flex-shrink: 0;
   font-style: normal;
   font-family: var(--font-mono);
   font-size: 12px;
   color: var(--muted);
 }
-.cv-bullets {
+.resume-bullets {
   margin: 10px 0 0;
   padding-left: 18px;
 }
-.cv-bullets li {
+.resume-bullets li {
   font: 400 14.5px/1.6 var(--font-sans);
   color: var(--body);
   margin-bottom: 4px;
 }
-.cv-skills {
+.resume-skills {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
-.cv-skill {
+.resume-skill {
   display: grid;
   grid-template-columns: 190px 1fr;
   gap: 16px;
 }
-.cv-skill-cat {
+.resume-skill-cat {
   font: 600 14px var(--font-sans);
   color: var(--ink);
 }
-.cv-skill-items {
+.resume-skill-items {
   font: 400 14px/1.5 var(--font-sans);
   color: var(--body);
 }
@@ -1093,12 +1093,12 @@ a {
   .page-title {
     font-size: 34px;
   }
-  .cv-skill {
+  .resume-skill {
     grid-template-columns: 1fr;
     gap: 2px;
   }
-  .cv-entry-dates,
-  .cv-entry-sub span:last-child {
+  .resume-entry-dates,
+  .resume-entry-sub span:last-child {
     display: none;
   }
 }

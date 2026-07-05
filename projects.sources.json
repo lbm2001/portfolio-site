@@ -1,6 +1,6 @@
 {
-  "assetDir": "assets",
-  "file": "portfolio.md",
+  "dir": "portfolio",
+  "file": "README.md",
   "projects": [
     { "slug": "ev-charging-mdp", "repo": "lbm2001/au-mdt" },
     { "slug": "mujopy", "repo": "lbm2001/mujopy" },

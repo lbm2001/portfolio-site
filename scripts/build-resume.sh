@@ -3,11 +3,16 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# 1) Always regenerate the parsed CV data the /resume page imports. Node is
+# 0) Best-effort: pull the résumé source (public/resume.tex + public/resume.pdf)
+#    from the private repo in resume.source.json. With no GITHUB_TOKEN or an
+#    unreachable repo it keeps the committed public/resume.*, so the build never fails.
+node --experimental-strip-types scripts/gen-resume-source.mjs
+
+# 1) Always regenerate the parsed résumé data the /resume page imports. Node is
 #    present in every build env; this keeps LaTeX parsing at build time and out of
 #    the request path (Cloudflare Workers has no runtime filesystem, so reading the
 #    .tex during render throws "Internal Server Error").
-node --experimental-strip-types scripts/gen-cv-data.mjs
+node --experimental-strip-types scripts/gen-resume-data.mjs
 
 # 1b) Refresh project data from each project's GitHub repo (see
 #     projects.sources.json). Best-effort: with no GITHUB_TOKEN, or if a repo is

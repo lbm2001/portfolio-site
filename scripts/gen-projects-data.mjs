@@ -1,19 +1,27 @@
 #!/usr/bin/env node
 // Pulls each project's data straight from its GitHub repo at BUILD time and
 // writes lib/projects-data.json, which lib/content.ts imports as a static module
-// (same pattern as gen-cv-data.mjs / lib/cv-data.json). Doing this at build time
+// (same pattern as gen-resume-data.mjs / lib/resume-data.json). Doing this at build time
 // keeps ALL fetching out of the request path: Cloudflare Workers (OpenNext) has
 // no runtime filesystem or reliable outbound fetch during render, so the site
 // serves a fully static, pre-fetched snapshot.
 //
-// Per repo (see projects.sources.json) it reads:
+// Everything a project exposes to the site lives in ONE self-contained
+// `portfolio/` directory in its repo (dir + file are set in projects.sources.json):
+//   portfolio/README.md      frontmatter + Markdown body (GitHub renders it when
+//                            you open the folder)
+//   portfolio/assets/*.png   images the README references relatively
+//   portfolio/paper.pdf      an optional paper linked from the frontmatter
+//
+// Per repo it reads:
 //   - GitHub repo metadata:  description -> blurb (fallback), topics -> tags
 //                            (fallback), html_url -> the "Code" link.
-//   - `portfolio.md`:        YAML frontmatter (title/venue/period/blurb/tags/
-//                            links/aiAssisted) + a Markdown body.
-//   - referenced assets:     images the body links relatively and an optional
-//                            `paper` are downloaded into public/projects/<slug>/
-//                            and the body's paths are rewritten to /projects/...
+//   - portfolio/README.md:   frontmatter (title/venue/period/blurb/tags/links/
+//                            aiAssisted) + a Markdown body.
+//   - referenced assets:     images and paper links that are RELATIVE to the
+//                            README are resolved inside portfolio/, downloaded
+//                            into public/projects/<slug>/, and the body's paths
+//                            are rewritten to /projects/...
 //
 // ROBUST BY DESIGN: this NEVER fails the build. If the token is missing or a
 // repo/file can't be fetched, the previous entry from the committed
@@ -77,10 +85,14 @@ function topicToTag(t) {
   return t.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-async function buildOne(source, assetDir, file) {
+async function buildOne(source, dir, file) {
   const { slug, repo } = source;
+  // Resolve a path written RELATIVE to the README (which lives in `dir/`) to its
+  // location in the repo, e.g. dir="portfolio" + "assets/x.png" -> "portfolio/assets/x.png".
+  const inDir = (rel) => (dir ? `${dir}/${rel}` : rel);
+
   const meta = await ghJson(`https://api.github.com/repos/${repo}`);
-  const mdText = (await ghFile(repo, file)).toString("utf8");
+  const mdText = (await ghFile(repo, inDir(file))).toString("utf8");
   const fmParsed = parseProjectMd(mdText);
 
   const publicDir = path.join(root, "public", "projects", slug);
@@ -95,7 +107,7 @@ async function buildOne(source, assetDir, file) {
   for (const rel of assets) {
     const base = path.basename(rel);
     try {
-      const bytes = await ghFile(repo, rel);
+      const bytes = await ghFile(repo, inDir(rel));
       fs.writeFileSync(path.join(publicDir, base), bytes);
       body = body.split(`](${rel}`).join(`](/projects/${slug}/${base}`);
     } catch (e) {
@@ -104,13 +116,13 @@ async function buildOne(source, assetDir, file) {
   }
 
   // Links: Code (repo) is always first, then the frontmatter links. If a link's
-  // href is a repo-relative path (e.g. a paper PDF), download it too.
+  // href is relative (e.g. a paper PDF inside portfolio/), download it too.
   const links = [{ label: "Code", href: meta.html_url }];
   for (const lk of fmParsed.links || []) {
     if (!/^https?:|^\//.test(lk.href)) {
       const base = path.basename(lk.href);
       try {
-        const bytes = await ghFile(repo, lk.href);
+        const bytes = await ghFile(repo, inDir(lk.href));
         fs.writeFileSync(path.join(publicDir, base), bytes);
         links.push({ label: lk.label, href: `/projects/${slug}/${base}` });
         continue;
@@ -151,7 +163,7 @@ async function main() {
   const out = [];
   for (const source of config.projects) {
     try {
-      out.push(await buildOne(source, config.assetDir, config.file));
+      out.push(await buildOne(source, config.dir, config.file));
       console.log(`gen-projects-data: fetched ${source.slug} <- ${source.repo}`);
     } catch (e) {
       console.warn(

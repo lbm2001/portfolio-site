@@ -3,7 +3,7 @@ import Hero from "@/components/Hero";
 import About from "@/components/About";
 import Work from "@/components/Work";
 import Blog from "@/components/Blog";
-import CvStrip from "@/components/CvStrip";
+import ResumeStrip from "@/components/ResumeStrip";
 import Footer from "@/components/Footer";
 
 export default function Home() {
@@ -12,7 +12,7 @@ export default function Home() {
       <Nav />
       <Hero />
       <About />
-      <CvStrip />
+      <ResumeStrip />
       <Work />
       <Blog />
       <Footer />
