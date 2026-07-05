@@ -1,17 +1,17 @@
 #!/usr/bin/env node
-// Pulls the résumé source (resume.tex + resume.pdf) from a PRIVATE GitHub repo at
-// BUILD time and writes them into public/, so the committed copies never have to
-// hold the real résumé. Runs BEFORE gen-resume-data.mjs (see build-resume.sh),
-// which then parses the freshly-pulled public/resume.tex into lib/resume-data.json.
+// Pulls the résumé (resume.tex + resume.pdf) from the PRIVATE source repo in
+// resume.source.json at BUILD time and writes them into public/. That repo is the
+// SINGLE SOURCE OF TRUTH — this project keeps NO committed copy of the résumé —
+// so this step is REQUIRED: if the token is missing or the fetch fails, it errors
+// and fails the build rather than proceeding without a résumé.
 //
-// Same private-repo fetch pattern as gen-projects-data.mjs: read a token from the
-// env or a gitignored dotfile and hit the GitHub Contents API (which serves raw
-// bytes of private files). The source repo/paths live in resume.source.json:
+// Runs BEFORE gen-resume-data.mjs (see build-resume.sh), which parses the
+// freshly-pulled public/resume.tex into lib/resume-data.json.
+//
+// Same private-repo fetch as gen-projects-data.mjs: read a token from the env or a
+// gitignored dotfile and hit the GitHub Contents API (serves raw bytes of private
+// files). The source repo/paths live in resume.source.json:
 //   { repo, dir, tex, pdf }  ->  <repo>/<dir>/<tex> and <repo>/<dir>/<pdf>
-//
-// ROBUST BY DESIGN: this NEVER fails the build. With no token, or if the repo /
-// files can't be fetched, the committed public/resume.tex and public/resume.pdf
-// are kept, so the build always has a last-known résumé and works offline.
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,7 +40,7 @@ async function ghFile(repo, filePath) {
     headers: {
       Accept: "application/vnd.github.raw",
       "User-Agent": "portfolio-build",
-      ...(TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {}),
+      Authorization: `Bearer ${TOKEN}`,
     },
   });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText} for ${repo}/${filePath}`);
@@ -52,26 +52,23 @@ async function main() {
   const dir = cfg.dir ? `${cfg.dir}/` : "";
 
   if (!TOKEN) {
-    console.warn("gen-resume-source: no GITHUB_TOKEN found — keeping committed public/resume.*");
-    return;
+    throw new Error(
+      `no GITHUB_TOKEN found — it is REQUIRED to fetch the résumé from ${cfg.repo} ` +
+        `(this repo keeps no committed copy). Set GITHUB_TOKEN in the environment or in .dev.vars.`,
+    );
   }
 
-  // Each file is best-effort and independent: a failure keeps the committed copy.
+  // Both files are required: a failure fails the build (there is no fallback).
   for (const key of ["tex", "pdf"]) {
     const name = cfg[key];
     if (!name) continue;
-    const out = path.join(root, "public", name);
-    try {
-      const bytes = await ghFile(cfg.repo, `${dir}${name}`);
-      fs.writeFileSync(out, bytes);
-      console.log(`gen-resume-source: fetched public/${name} <- ${cfg.repo}/${dir}${name}`);
-    } catch (e) {
-      console.warn(`gen-resume-source: ${name} failed (${e.message}) — keeping committed public/${name}`);
-    }
+    const bytes = await ghFile(cfg.repo, `${dir}${name}`);
+    fs.writeFileSync(path.join(root, "public", name), bytes);
+    console.log(`gen-resume-source: fetched public/${name} <- ${cfg.repo}/${dir}${name}`);
   }
 }
 
 main().catch((e) => {
-  // Even an unexpected error must not break the build — keep last-known résumé.
-  console.warn(`gen-resume-source: unexpected error (${e.message}) — keeping committed public/resume.*`);
+  console.error(`gen-resume-source: ${e.message}`);
+  process.exit(1);
 });

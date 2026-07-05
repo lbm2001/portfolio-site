@@ -34,9 +34,12 @@ next-env.d.ts
 .dev.vars*
 !.dev.vars.example
 
-# Resume: public/resume.pdf is committed (regenerated locally via scripts/build-cv.sh)
-# because the Cloudflare build environment has no latexmk. Only the LaTeX
-# byproducts below are ignored.
+# Resume: fetched at build time from the private source repo in resume.source.json
+# (scripts/gen-resume-source.mjs) — NOT committed here. The parsed lib/resume-data.json
+# stays committed so `next dev` and typecheck work without a fetch.
+/public/resume.tex
+/public/resume.pdf
+# LaTeX byproducts from the optional local latexmk recompile.
 /public/resume.aux
 /public/resume.fdb_latexmk
 /public/resume.fls

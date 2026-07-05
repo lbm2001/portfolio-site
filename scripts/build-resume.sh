@@ -3,9 +3,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# 0) Best-effort: pull the résumé source (public/resume.tex + public/resume.pdf)
-#    from the private repo in resume.source.json. With no GITHUB_TOKEN or an
-#    unreachable repo it keeps the committed public/resume.*, so the build never fails.
+# 0) REQUIRED: pull the résumé (public/resume.tex + public/resume.pdf) from the
+#    private source repo in resume.source.json. That repo is the single source of
+#    truth — this project keeps no committed copy — so a missing GITHUB_TOKEN or a
+#    failed fetch fails the build here (rather than later, cryptically, at parse).
 node --experimental-strip-types scripts/gen-resume-source.mjs
 
 # 1) Always regenerate the parsed résumé data the /resume page imports. Node is
@@ -20,12 +21,13 @@ node --experimental-strip-types scripts/gen-resume-data.mjs
 #     never fails and always has last-known data.
 node --experimental-strip-types scripts/gen-projects-data.mjs
 
-# 2) Best-effort: compile public/resume.tex -> public/resume.pdf when latexmk is
-#    available. Cloudflare's build image has no latexmk, so the committed
-#    public/resume.pdf is served there instead. A scratch build dir keeps LaTeX
-#    byproducts (.aux, .log, .fls, ...) out of public/.
+# 2) Optional: recompile public/resume.tex -> public/resume.pdf when latexmk is
+#    available (refreshes the PDF from the just-fetched .tex). Cloudflare's build
+#    image has no latexmk, so the public/resume.pdf fetched in step 0 is served
+#    there as-is. A scratch build dir keeps LaTeX byproducts (.aux, .log, ...) out
+#    of public/.
 if ! command -v latexmk >/dev/null 2>&1; then
-  echo "warning: latexmk not found, skipping resume PDF build (using committed public/resume.pdf)" >&2
+  echo "note: latexmk not found, serving the resume.pdf fetched from the source repo" >&2
   exit 0
 fi
 
