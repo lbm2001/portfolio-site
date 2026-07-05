@@ -1,0 +1,123 @@
+// A small, TARGETED parser for the `portfolio.md` file each project repo holds:
+// a YAML-ish frontmatter block delimited by `---`, followed by a Markdown body.
+// Like lib/cv.ts, this is NOT a general YAML parser — it understands exactly the
+// keys the portfolio uses (scalars, an inline `tags` list, and a `links` list of
+// {label, href}). Keeping it hand-rolled avoids a YAML dependency in the build.
+//
+// Frontmatter shape (all fields optional except title):
+//   ---
+//   title: Project Title
+//   venue: Some Lab
+//   period: Apr–Sep 2025
+//   blurb: One-sentence teaser (falls back to the repo's GitHub description).
+//   aiAssisted: true
+//   tags:
+//     - Graph Neural Networks
+//     - MuJoCo
+//   links:
+//     - label: PyPI
+//       href: https://pypi.org/project/mujopy/
+//   ---
+//   Markdown body...
+
+export interface ProjectMdLink {
+  label: string;
+  href: string;
+}
+export interface ProjectMd {
+  title?: string;
+  venue?: string;
+  period?: string;
+  blurb?: string;
+  aiAssisted?: boolean;
+  tags?: string[];
+  links?: ProjectMdLink[];
+  body: string;
+}
+
+function stripQuotes(s: string): string {
+  const t = s.trim();
+  if (
+    (t.startsWith('"') && t.endsWith('"')) ||
+    (t.startsWith("'") && t.endsWith("'"))
+  ) {
+    return t.slice(1, -1);
+  }
+  return t;
+}
+
+export function parseProjectMd(raw: string): ProjectMd {
+  // Normalize newlines; split off the frontmatter block if present.
+  const src = raw.replace(/\r\n/g, "\n").replace(/^﻿/, "");
+  const fm = /^---\n([\s\S]*?)\n---\n?/.exec(src);
+  if (!fm) return { body: src.trim() };
+
+  const block = fm[1];
+  const body = src.slice(fm[0].length).trim();
+  const out: ProjectMd = { body };
+
+  const lines = block.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.trim() || line.trim().startsWith("#")) continue;
+
+    const kv = /^([A-Za-z][\w]*):\s*(.*)$/.exec(line);
+    if (!kv) continue;
+    const key = kv[1];
+    const value = kv[2].trim();
+
+    // `tags` / `links` may be an inline value or a following indented list.
+    if (key === "tags") {
+      const tags: string[] = [];
+      // inline JSON-ish array: tags: [a, b]
+      const inline = value.match(/^\[(.*)\]$/);
+      if (inline) {
+        for (const t of inline[1].split(","))
+          if (t.trim()) tags.push(stripQuotes(t));
+      }
+      // indented "- item" lines
+      while (i + 1 < lines.length && /^\s*-\s+/.test(lines[i + 1])) {
+        tags.push(stripQuotes(lines[++i].replace(/^\s*-\s+/, "")));
+      }
+      if (tags.length) out.tags = tags;
+      continue;
+    }
+
+    if (key === "links") {
+      const links: ProjectMdLink[] = [];
+      // indented list of "- label: X" then "  href: Y" (order-insensitive)
+      while (i + 1 < lines.length && /^\s*-\s+/.test(lines[i + 1])) {
+        const first = lines[++i].replace(/^\s*-\s+/, "");
+        const cur: Partial<ProjectMdLink> = {};
+        const apply = (s: string) => {
+          const m = /^(label|href):\s*(.*)$/.exec(s.trim());
+          if (m) cur[m[1] as "label" | "href"] = stripQuotes(m[2]);
+        };
+        apply(first);
+        while (
+          i + 1 < lines.length &&
+          /^\s+\w+:/.test(lines[i + 1]) &&
+          !/^\s*-\s+/.test(lines[i + 1])
+        ) {
+          apply(lines[++i]);
+        }
+        if (cur.label && cur.href) links.push(cur as ProjectMdLink);
+      }
+      if (links.length) out.links = links;
+      continue;
+    }
+
+    if (key === "aiAssisted") {
+      out.aiAssisted = /^(true|yes|1)$/i.test(value);
+      continue;
+    }
+
+    const clean = stripQuotes(value);
+    if (key === "title") out.title = clean;
+    else if (key === "venue") out.venue = clean;
+    else if (key === "period") out.period = clean;
+    else if (key === "blurb") out.blurb = clean;
+  }
+
+  return out;
+}

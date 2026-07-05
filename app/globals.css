@@ -335,8 +335,10 @@ a {
        extend that far sideways at any height within its own box. That's what
        lets them hover near the name's own vertical level, like desktop's ring,
        rather than being pushed into a top/bottom band.
-   Panel size matches desktop (248px) down to a `min()` floor so it only shrinks
-   on the very smallest current iPad; the HUD (graph/title/reset) is untouched —
+   Panel size is scaled down from desktop's 248px — a panel that large next to a
+   comparatively narrow name/button column leaves no real breathing room on a
+   tablet-width screen no matter the buffer, so tablet trades exact size parity
+   with desktop for genuine clearance. The HUD (graph/title/reset) is untouched —
    the only difference from desktop is tap-to-reveal instead of hover-to-reveal
    (see the (hover:none) block below) and the CLICK→TAP wording.
 
@@ -344,20 +346,23 @@ a {
    (tapped/trained), its full HUD — title, stats, the loss/return graph — unfolds
    *downward*, toward the name, adding ~110px below the canvas. Left uncounted, a
    revealed top panel's HUD lands right on the title (the original bug here).
-   bot doesn't need this: its HUD unfolds further away from the content. */
+   bot doesn't need this: its HUD unfolds further away from the content. Side
+   seats get a generous 32px clearance from the content's measured edge, plus a
+   further 20px vertical nudge away from its own vertical centre, so they read as
+   floating near the name rather than pressed up against the buttons/tagline. */
 @media (min-width: 601px) and (max-width: 1180px), (hover: none) {
   .mini {
-    width: min(248px, 22vw);
+    width: min(190px, 15vw);
   }
   .mini-sim {
-    height: min(132px, 11.66vw);
+    height: min(101px, 7.98vw);
   }
   .mini-top,
   .mini-bot {
-    margin-left: calc(-1 * (min(248px, 22vw) / 2));
+    margin-left: calc(-1 * (min(190px, 15vw) / 2));
   }
   .mini-top {
-    margin-top: calc(-1 * (var(--content-half-h, 90px) + 150px + min(132px, 11.66vw)));
+    margin-top: calc(-1 * (var(--content-half-h, 90px) + 150px + min(101px, 7.98vw)));
   }
   .mini-bot {
     margin-top: calc(var(--content-half-h, 90px) + 40px);
@@ -365,22 +370,22 @@ a {
   /* right-side seats */
   .mini-ur,
   .mini-lr {
-    margin-left: calc(var(--content-half-w, 160px) + 16px);
+    margin-left: calc(var(--content-half-w, 160px) + 32px);
   }
   /* left-side seats */
   .mini-ul,
   .mini-ll {
-    margin-left: calc(-1 * (var(--content-half-w, 160px) + 16px + min(248px, 22vw)));
+    margin-left: calc(-1 * (var(--content-half-w, 160px) + 32px + min(190px, 15vw)));
   }
-  /* upper side seats hover just above the name's vertical level */
+  /* upper side seats hover above the name's vertical level, with a bit of air */
   .mini-ur,
   .mini-ul {
-    margin-top: calc(-1 * min(132px, 11.66vw));
+    margin-top: calc(-1 * (min(101px, 7.98vw) + 20px));
   }
-  /* lower side seats hover just below it */
+  /* lower side seats hover below it, same extra air */
   .mini-lr,
   .mini-ll {
-    margin-top: 0;
+    margin-top: 20px;
   }
   .hero {
     min-height: 860px;
@@ -846,6 +851,77 @@ a {
 }
 .prose .section-lead {
   margin-bottom: 22px;
+}
+/* Markdown block elements (bodies are GitHub-flavored Markdown, see richtext) */
+.prose h2 {
+  font: 700 22px/1.3 var(--font-sans);
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  margin: 34px 0 12px;
+}
+.prose h3 {
+  font: 700 17px/1.35 var(--font-sans);
+  color: var(--ink);
+  margin: 26px 0 10px;
+}
+.prose ul,
+.prose ol {
+  margin: 0 0 18px;
+  padding-left: 24px;
+}
+.prose li {
+  font: 400 16px/1.7 var(--font-sans);
+  color: var(--body);
+  margin: 0 0 6px;
+}
+.prose a {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.prose strong {
+  font-weight: 700;
+  color: var(--ink);
+}
+.prose code {
+  font: 400 0.9em var(--font-mono);
+  background: rgba(0, 0, 0, 0.05);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.prose pre {
+  background: rgba(0, 0, 0, 0.04);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 14px 16px;
+  overflow-x: auto;
+  margin: 0 0 20px;
+}
+.prose pre code {
+  background: none;
+  padding: 0;
+}
+.prose blockquote {
+  border-left: 3px solid var(--border);
+  margin: 0 0 20px;
+  padding: 2px 0 2px 16px;
+  color: var(--muted);
+}
+.prose table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 22px;
+  font: 400 14px/1.5 var(--font-sans);
+}
+.prose th,
+.prose td {
+  border: 1px solid var(--border);
+  padding: 8px 12px;
+  text-align: left;
+}
+.prose th {
+  font-weight: 700;
+  color: var(--ink);
 }
 .body-figure {
   margin: 8px 0 30px;

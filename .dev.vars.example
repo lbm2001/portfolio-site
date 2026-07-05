@@ -1,0 +1,11 @@
+# Copy to .dev.vars (gitignored) and fill in for local builds/deploys.
+#
+# GITHUB_TOKEN is used ONLY at build time by scripts/gen-projects-data.mjs to
+# pull each project's portfolio.md + metadata (and assets) from its GitHub repo,
+# including private repos. Use a fine-grained personal access token with
+# read-only "Contents" + "Metadata" permission, scoped to just the project repos
+# (and any private CV repo). Never expose it to the client — it is only read by
+# the Node build scripts, never bundled into the site.
+#
+# Without it, the build falls back to the committed lib/projects-data.json.
+GITHUB_TOKEN=

@@ -1,0 +1,9 @@
+{
+  "assetDir": "assets",
+  "file": "portfolio.md",
+  "projects": [
+    { "slug": "ev-charging-mdp", "repo": "lbm2001/au-mdt" },
+    { "slug": "mujopy", "repo": "lbm2001/mujopy" },
+    { "slug": "large-scale-robot-generation", "repo": "lbm2001/lascroge" }
+  ]
+}

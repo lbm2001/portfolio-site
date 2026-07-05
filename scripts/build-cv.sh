@@ -9,6 +9,12 @@ cd "$(dirname "$0")/.."
 #    .tex during render throws "Internal Server Error").
 node --experimental-strip-types scripts/gen-cv-data.mjs
 
+# 1b) Refresh project data from each project's GitHub repo (see
+#     projects.sources.json). Best-effort: with no GITHUB_TOKEN, or if a repo is
+#     unreachable, it keeps the committed lib/projects-data.json so the build
+#     never fails and always has last-known data.
+node --experimental-strip-types scripts/gen-projects-data.mjs
+
 # 2) Best-effort: compile public/resume.tex -> public/resume.pdf when latexmk is
 #    available. Cloudflare's build image has no latexmk, so the committed
 #    public/resume.pdf is served there instead. A scratch build dir keeps LaTeX
