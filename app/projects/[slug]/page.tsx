@@ -50,7 +50,7 @@ export default async function ProjectPage({
         {project.aiAssisted && <AiDisclaimer />}
 
         {project.body && (
-          <div className="prose">{renderBody(project.body, project.figures)}</div>
+          <div className="prose">{renderBody(project.body)}</div>
         )}
 
         <div className="work-tags" style={{ marginBottom: 28 }}>

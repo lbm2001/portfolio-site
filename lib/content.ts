@@ -52,8 +52,8 @@ export interface Post {
 
 export const profile = {
   name: "Lukas Müller",
-  lead: "I am studying computer science, currently writing my bachelor thesis on robot learning. I want to get machines that learn to act, right now through imitation learning.",
-  focus: "Imitation Learning",
+  lead: "Building the next generation of intelligent machines. My current focus is on Vision-Language-Action models that enable robots to learn from demonstrations.",
+  focus: "Imitation Learning, VLAs",
   field: "Machine Learning & Robot Learning",
   location: "Frankfurt, Germany",
   email: "contact@lukasmueller.dev",

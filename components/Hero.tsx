@@ -72,16 +72,17 @@ export default function Hero() {
     setDropRL(Math.floor(Math.random() * RL_DEMOS.length));
   }, []);
 
-  // Publish the rendered half-height of the name/tag/CTA block as
-  // --content-half-h, so the mobile/tablet ring (globals.css) can place its
-  // seats a safe, measured distance above/below it — no collision regardless of
-  // how the title wraps on a given device or font. Only height matters: seats
-  // stack in bands above/below the content and are horizontally self-centred, so
-  // they never depend on (and can't be clipped by) the content's width.
+  // Publish the rendered half-width/half-height of the name/tag/CTA block as
+  // --content-half-w / --content-half-h, so the tablet ring can place seats a
+  // safe, measured distance away on whichever axis matters for that seat: top/
+  // bottom seats clear it vertically (height), and the tablet tier's left/right
+  // "side" seats clear it horizontally (width) — same principle either way, no
+  // collision regardless of how the title wraps on a given device or font.
   useEffect(() => {
     const measure = () => {
       const r = contentRef.current?.getBoundingClientRect();
       if (r && heroRef.current) {
+        heroRef.current.style.setProperty("--content-half-w", `${Math.round(r.width / 2)}px`);
         heroRef.current.style.setProperty("--content-half-h", `${Math.round(r.height / 2)}px`);
       }
     };

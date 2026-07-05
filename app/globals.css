@@ -324,62 +324,63 @@ a {
 
 /* ---- Small ring, tier 2: tablets + narrow desktop windows, still 6 demos ----
    Below 1180px, OR on any device without real hover (tablets like iPad, even in
-   wide landscape), the ring doesn't disappear — it re-forms as two rows: the
-   three RL demos (top/ur/lr) above the name, the three NN demos (ul/ll/bot)
-   below it, each row spread left-edge / centre / right-edge instead of bunched
-   near the middle, so the whole width of the screen is used and panels have
-   room to float in place. Left/right seats anchor to the *viewport* edge (via
-   `left`/`right`, not a margin computed from centre), so they always sit a fixed
-   buffer from the true edge regardless of viewport width. Vertical placement
-   uses ONLY the measured height of the name/tag/CTA block (--content-half-h, set
-   by Hero.tsx) plus the panel's own (possibly scaled) height — never width — so
-   a seat can never be clipped by content the way a width-based offset could be.
+   wide landscape), the ring doesn't disappear — it re-forms as the SAME hexagon
+   shape as desktop (top/bot directly above/below the name, ur/lr/ul/ll as side
+   seats), just measurement-based instead of hardcoded, so it can't collide:
+     - top/bot clear the name vertically, using the measured content half-height
+       (--content-half-h, set by Hero.tsx) — same idea as tier 1 below.
+     - ur/lr/ul/ll clear the name *horizontally* instead (--content-half-w): once
+       a seat is fully to the left or right of the content's bounding box, it can
+       sit at ANY vertical position without colliding, since content doesn't
+       extend that far sideways at any height within its own box. That's what
+       lets them hover near the name's own vertical level, like desktop's ring,
+       rather than being pushed into a top/bottom band.
    Panel size matches desktop (248px) down to a `min()` floor so it only shrinks
    on the very smallest current iPad; the HUD (graph/title/reset) is untouched —
    the only difference from desktop is tap-to-reveal instead of hover-to-reveal
    (see the (hover:none) block below) and the CLICK→TAP wording.
 
-   The top row's clearance from the content has to cover more than just the
-   canvas: once a top-row panel is revealed (tapped/trained), its full HUD —
-   title, stats, the loss/return graph — unfolds *downward*, i.e. toward the
-   name, adding ~110px below the canvas. Left uncounted, a revealed top-row
-   panel's HUD lands right on top of the title (the original bug here). The
-   bottom row doesn't need this: its HUD unfolds further away from the content. */
+   top's clearance has to cover more than just the canvas: once revealed
+   (tapped/trained), its full HUD — title, stats, the loss/return graph — unfolds
+   *downward*, toward the name, adding ~110px below the canvas. Left uncounted, a
+   revealed top panel's HUD lands right on the title (the original bug here).
+   bot doesn't need this: its HUD unfolds further away from the content. */
 @media (min-width: 601px) and (max-width: 1180px), (hover: none) {
   .mini {
-    width: min(248px, 26vw);
+    width: min(248px, 22vw);
   }
   .mini-sim {
-    height: min(132px, 13.8vw);
+    height: min(132px, 11.66vw);
   }
   .mini-top,
-  .mini-ur,
-  .mini-lr {
-    margin-top: calc(-1 * (var(--content-half-h, 90px) + 150px + min(132px, 13.8vw)));
+  .mini-bot {
+    margin-left: calc(-1 * (min(248px, 22vw) / 2));
   }
-  .mini-ul,
-  .mini-ll,
+  .mini-top {
+    margin-top: calc(-1 * (var(--content-half-h, 90px) + 150px + min(132px, 11.66vw)));
+  }
   .mini-bot {
     margin-top: calc(var(--content-half-h, 90px) + 40px);
   }
-  /* left-edge seats */
-  .mini-top,
-  .mini-ul {
-    left: 24px;
-    right: auto;
-    margin-left: 0;
-  }
-  /* centred seats */
+  /* right-side seats */
   .mini-ur,
-  .mini-ll {
-    margin-left: calc(-1 * (min(248px, 26vw) / 2));
+  .mini-lr {
+    margin-left: calc(var(--content-half-w, 160px) + 16px);
   }
-  /* right-edge seats */
+  /* left-side seats */
+  .mini-ul,
+  .mini-ll {
+    margin-left: calc(-1 * (var(--content-half-w, 160px) + 16px + min(248px, 22vw)));
+  }
+  /* upper side seats hover just above the name's vertical level */
+  .mini-ur,
+  .mini-ul {
+    margin-top: calc(-1 * min(132px, 11.66vw));
+  }
+  /* lower side seats hover just below it */
   .mini-lr,
-  .mini-bot {
-    left: auto;
-    right: 24px;
-    margin-left: 0;
+  .mini-ll {
+    margin-top: 0;
   }
   .hero {
     min-height: 860px;
@@ -393,10 +394,16 @@ a {
    left-edge / right-edge (same edge-anchoring idea as tier 2). HUD stays
    decluttered (no graph/title/reset) — these panels are still small enough that
    the full HUD wouldn't fit legibly; even so, its revealed tap-hint/stats still
-   unfold a little below the canvas, so the top row's clearance below reserves
-   room for that too (same reasoning as tier 2, just a smaller allowance since
-   there's much less HUD content here). Declared after tier 2 so these rules win
-   on small phones (equal specificity, later wins) without needing !important. */
+   unfold a little below the canvas, so the top row needs some clearance for
+   that too (same reasoning as tier 2, just a smaller allowance since there's
+   much less HUD content here). The bottom row is given the SAME total reach
+   from centre (rather than just its own smaller minimum) purely so the two rows
+   sit symmetrically either side of the name — otherwise, since top legitimately
+   needs more room than bottom, a shared hero height left extra dead space
+   stacked on one side (below) rather than split evenly; hero's min-height is
+   sized to that shared reach, snug rather than padded with unused room.
+   Declared after tier 2 so these rules win on small phones (equal specificity,
+   later wins) without needing !important. */
 @media (max-width: 600px) {
   .mini-drop-sm {
     display: none;
@@ -428,9 +435,11 @@ a {
   .mini-sm-rl2 {
     margin-top: calc(-1 * (var(--content-half-h, 90px) + 137px));
   }
+  /* margin-top + panel height (56px) reaches the same 137px total as the top
+     row above, so both rows sit the same distance from the name */
   .mini-sm-nn1,
   .mini-sm-nn2 {
-    margin-top: calc(var(--content-half-h, 90px) + 36px);
+    margin-top: calc(var(--content-half-h, 90px) + 81px);
   }
   .mini-sm-rl1,
   .mini-sm-nn1 {
@@ -441,7 +450,7 @@ a {
     right: 20px;
   }
   .hero {
-    min-height: 560px;
+    min-height: 540px;
   }
 }
 

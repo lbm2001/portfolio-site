@@ -1,80 +1,104 @@
+import { marked } from "marked";
+import type { Tokens } from "marked";
 import katex from "katex";
-import Image from "next/image";
 
-export interface Figure {
-  id: string;
-  src: string;
-  alt: string;
-  caption: string;
-  width: number;
-  height: number;
+// Renders a Markdown article body (project write-ups + blog posts) to HTML at
+// build time. Standard GitHub-flavored Markdown — headings, bold/italic, lists,
+// links, code, blockquotes, tables — so a file renders the SAME on GitHub and on
+// the site (these bodies live in each project's repo as `portfolio.md`). On top
+// of plain Markdown we add two extensions:
+//   $..$ / $$..$$        -> inline / display math (KaTeX, rendered at build)
+//   ![alt](src "caption") -> a <figure> with the title as its <figcaption>,
+//                            when the image is alone on its own line (a normal
+//                            inline image mid-sentence still renders as <img>).
+// Output classes (math-inline, math-display, body-figure) match app/globals.css.
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
-// Renders inline `$..$` math segments within a line of text, keeping the
-// surrounding plain text untouched.
-function renderInline(text: string): React.ReactNode[] {
-  return text.split(/(\$[^$]+\$)/g).map((part, i) => {
-    if (part.length > 2 && part.startsWith("$") && part.endsWith("$")) {
-      const html = katex.renderToString(part.slice(1, -1), {
-        throwOnError: false,
-      });
-      return (
-        <span
-          key={i}
-          className="math-inline"
-          dangerouslySetInnerHTML={{ __html: html }}
-        />
-      );
-    }
-    return part;
-  });
-}
-
-// Renders a plain-text article body into paragraphs, with support for two
-// block-level markers on their own blank-line-separated block:
-//   $$ ... $$            -> a centered display equation (KaTeX, build-time)
-//   {{figure:some-id}}   -> the Figure with that id from the `figures` list
-// Everything else becomes a <p>, with inline `$..$` math rendered within it.
-export function renderBody(body: string, figures?: Figure[]): React.ReactNode {
-  return body
-    .trim()
-    .split(/\n\s*\n/)
-    .map((block, i) => {
-      const trimmed = block.trim();
-
-      const figureMatch = trimmed.match(/^\{\{figure:([\w-]+)\}\}$/);
-      if (figureMatch) {
-        const fig = figures?.find((f) => f.id === figureMatch[1]);
-        if (!fig) return null;
-        return (
-          <figure key={i} className="body-figure">
-            <Image
-              src={fig.src}
-              alt={fig.alt}
-              width={fig.width}
-              height={fig.height}
-              sizes="(max-width: 760px) 100vw, 680px"
-            />
-            <figcaption>{fig.caption}</figcaption>
-          </figure>
-        );
-      }
-
-      const mathMatch = trimmed.match(/^\$\$([\s\S]+)\$\$$/);
-      if (mathMatch) {
-        const html = katex.renderToString(mathMatch[1].trim(), {
-          throwOnError: false,
-          displayMode: true,
-        });
-        return (
-          <div
-            key={i}
-            className="math-display"
-            dangerouslySetInnerHTML={{ __html: html }}
-          />
-        );
-      }
-
-      return <p key={i}>{renderInline(trimmed)}</p>;
+const blockMath = {
+  name: "blockMath",
+  level: "block" as const,
+  start(src: string) {
+    const i = src.indexOf("$$");
+    return i < 0 ? undefined : i;
+  },
+  tokenizer(src: string) {
+    const m = /^\$\$([\s\S]+?)\$\$/.exec(src);
+    if (m) return { type: "blockMath", raw: m[0], text: m[1].trim() };
+  },
+  renderer(token: Tokens.Generic) {
+    const html = katex.renderToString(token.text as string, {
+      displayMode: true,
+      throwOnError: false,
     });
+    return `<div class="math-display">${html}</div>\n`;
+  },
+};
+
+const inlineMath = {
+  name: "inlineMath",
+  level: "inline" as const,
+  start(src: string) {
+    const i = src.indexOf("$");
+    return i < 0 ? undefined : i;
+  },
+  tokenizer(src: string) {
+    const m = /^\$([^\n$]+?)\$/.exec(src);
+    if (m) return { type: "inlineMath", raw: m[0], text: m[1].trim() };
+  },
+  renderer(token: Tokens.Generic) {
+    const html = katex.renderToString(token.text as string, {
+      throwOnError: false,
+    });
+    return `<span class="math-inline">${html}</span>`;
+  },
+};
+
+// A standalone image line becomes a captioned <figure>; the optional Markdown
+// title ("...") is the caption. Kept block-level so we never emit an (invalid)
+// <figure> nested inside a <p>.
+const figure = {
+  name: "figure",
+  level: "block" as const,
+  start(src: string) {
+    const m = /(^|\n)!\[/.exec(src);
+    return m ? m.index + (m[1] ? 1 : 0) : undefined;
+  },
+  tokenizer(src: string) {
+    const m = /^!\[([^\]]*)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)[ \t]*(?:\n|$)/.exec(src);
+    if (m)
+      return {
+        type: "figure",
+        raw: m[0],
+        alt: m[1],
+        href: m[2],
+        caption: m[3] || "",
+      };
+  },
+  renderer(token: Tokens.Generic) {
+    const cap = token.caption
+      ? `<figcaption>${escapeHtml(token.caption as string)}</figcaption>`
+      : "";
+    return `<figure class="body-figure"><img src="${token.href}" alt="${escapeHtml(
+      token.alt as string,
+    )}" />${cap}</figure>\n`;
+  },
+};
+
+marked.use({ gfm: true, extensions: [blockMath, inlineMath, figure] });
+
+/** Markdown body -> HTML string, rendered at build time. */
+export function renderMarkdown(md: string): string {
+  return marked.parse(md, { async: false }) as string;
+}
+
+/** Convenience wrapper returning the rendered body as a React element. */
+export function renderBody(body: string): React.ReactNode {
+  return <div dangerouslySetInnerHTML={{ __html: renderMarkdown(body) }} />;
 }
