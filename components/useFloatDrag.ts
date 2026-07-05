@@ -13,6 +13,11 @@ export interface FloatParams {
 const DRAG_THRESHOLD = 4; // px of movement before a press counts as a drag, not a click
 const MAX_OFFSET = 200; // px — keeps a dragged box discoverable rather than lost off-screen
 const MOMENTUM_DECAY = 0.93; // per-frame velocity decay after release
+// Below 1180px (or on any device without real hover — tablets included) the ring
+// itself shrinks (see globals.css); ambient drift and drag roam shrink with it so
+// the sway/throw stays proportional to the smaller seats instead of swamping them.
+const MOBILE_SCALE = 0.3;
+const MOBILE_QUERY = "(max-width: 1180px), (hover: none)";
 
 // Drives a panel's position: a gentle ambient drift (paused while hovered or
 // dragged) plus real pointer dragging with a bit of release momentum. The box
@@ -30,9 +35,7 @@ export function useFloatDrag(params: FloatParams) {
     if (!el) return;
 
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    // In the touch/narrow "grid" layout the panels sit in flow, so drift + drag
-    // are switched off here and the page scrolls normally (see .mini-grid).
-    const gridMedia = window.matchMedia("(max-width: 1180px), (hover: none)");
+    const mobileMedia = window.matchMedia(MOBILE_QUERY);
 
     let raf = 0;
     const t0 = performance.now();
@@ -50,15 +53,19 @@ export function useFloatDrag(params: FloatParams) {
     let pointerId: number | null = null;
     let frozenFloat = { x: 0, y: 0 };
 
-    const clamp = (v: number) => Math.max(-MAX_OFFSET, Math.min(MAX_OFFSET, v));
+    const clamp = (v: number) => {
+      const max = mobileMedia.matches ? MAX_OFFSET * MOBILE_SCALE : MAX_OFFSET;
+      return Math.max(-max, Math.min(max, v));
+    };
 
     // perpendicular to the toward-centre axis, for the smaller cross-sway
     const crossX = -params.towardY;
     const crossY = params.towardX;
 
     const computeFloat = (t: number) => {
-      const main = params.ampMain * Math.sin(t * params.freqMain + params.phase);
-      const cross = params.ampCross * Math.sin(t * params.freqCross + params.phase * 1.7);
+      const scale = mobileMedia.matches ? MOBILE_SCALE : 1;
+      const main = params.ampMain * scale * Math.sin(t * params.freqMain + params.phase);
+      const cross = params.ampCross * scale * Math.sin(t * params.freqCross + params.phase * 1.7);
       return {
         x: main * params.towardX + cross * crossX,
         y: main * params.towardY + cross * crossY,
@@ -66,12 +73,6 @@ export function useFloatDrag(params: FloatParams) {
     };
 
     const frame = (now: number) => {
-      // grid layout: clear any leftover float transform and skip drift entirely
-      if (gridMedia.matches) {
-        if (el.style.transform) el.style.transform = "";
-        raf = requestAnimationFrame(frame);
-        return;
-      }
       const t = (now - t0) / 1000;
       if (!dragging) {
         if (!reduceMotion && !hovering) {
@@ -99,7 +100,6 @@ export function useFloatDrag(params: FloatParams) {
     };
 
     const onPointerDown = (e: PointerEvent) => {
-      if (gridMedia.matches) return; // no dragging in grid layout — let it scroll
       if ((e.target as HTMLElement).closest("button")) return;
       dragging = true;
       wasDraggedRef.current = false;

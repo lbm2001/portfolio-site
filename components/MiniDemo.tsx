@@ -24,15 +24,11 @@ export default function MiniDemo({
   corner,
   displayDisturb = 0,
   showFall = false,
-  variant = "float",
 }: {
   make: EnvFactory;
   corner: Corner;
   displayDisturb?: number;
   showFall?: boolean;
-  // "float" is the draggable ring panel (desktop); "static" is the single
-  // in-flow demo shown below the name on mobile — no drag, HUD always visible.
-  variant?: "float" | "static";
 }) {
   const simRef = useRef<HTMLCanvasElement>(null);
   const chartRef = useRef<HTMLCanvasElement>(null);
@@ -41,7 +37,6 @@ export default function MiniDemo({
   const [title] = useState(() => make().title);
   const [running, setRunning] = useState(false);
   const runningRef = useRef(false);
-  const isStatic = variant === "static";
   const { ref: dragRef, wasDraggedRef, revealed } = useFloatDrag(FLOAT_PARAMS[corner]);
 
   const toggle = () => {
@@ -69,12 +64,6 @@ export default function MiniDemo({
     const env = make();
     env.disturbAmp = displayDisturb;
     env.showFall = showFall;
-    if (isStatic) {
-      // perched-on-the-name mobile mini: drop the agent to the canvas floor and
-      // hide the env's own ground line so the page (the name) reads as the floor
-      env.bare = true;
-      env.groundFrac = 0.9;
-    }
     const trainer = new ARSTrainer(make);
     trainerRef.current = trainer;
     const first = sizeCanvas(sim);
@@ -151,16 +140,12 @@ export default function MiniDemo({
       cancelAnimationFrame(raf);
       trainerRef.current = null;
     };
-  }, [make, displayDisturb, showFall, isStatic]);
+  }, [make, displayDisturb, showFall]);
 
   return (
     <div
-      ref={isStatic ? undefined : dragRef}
-      className={
-        isStatic
-          ? `mini-mobile${running ? " is-running" : ""}`
-          : `mini mini-${corner}${running ? " is-running" : ""}${revealed ? "" : " mini-pre"}`
-      }
+      ref={dragRef}
+      className={`mini mini-${corner}${running ? " is-running" : ""}${revealed ? "" : " mini-pre"}`}
       onClick={toggle}
     >
       <canvas ref={simRef} className="mini-sim" />

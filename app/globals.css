@@ -322,96 +322,84 @@ a {
   display: block;
 }
 
-/* ---- Mobile / touch: the six demos re-flow into a tappable grid ----
-   The six panels live in a `.mini-grid` wrapper. On desktop it is
-   `display: contents`, so the panels stay effective children of `.hero` and
-   float on their ring (positioned + dragged by useFloatDrag as before). When the
-   viewport is narrow OR the device has no real hover (tablets like iPad, even in
-   wide landscape) the wrapper becomes a real grid and each `.mini` drops its
-   absolute ring seat to sit in a cell; useFloatDrag turns its drift/drag off in
-   this mode (matchMedia) so the page scrolls normally. Each panel stays faint
-   until hovered (desktop) or tapped (touch → is-running), with its HUD pared to
-   the pulsing tap hint + title + (on tap) the numbers. CLICK/TAP swaps by device. */
-.mini-grid {
-  display: contents;
-}
-
+/* ---- Small ring: the same six-panel ring, scaled down ----
+   Below 1180px OR on any device without real hover (tablets like iPad, even in
+   wide landscape) the ring doesn't disappear — it shrinks. Panels and seat
+   offsets shrink proportionally (useFloatDrag scales ambient drift + drag roam
+   to match, via the identical media query), so the whole "six demos floating
+   around the name" composition survives on a phone, just smaller. The HUD is
+   decluttered (no graph/title/reset) so it still reads at the smaller size. */
 @media (max-width: 1180px), (hover: none) {
-  .mini-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 22px 16px;
-    width: 100%;
-    max-width: 440px;
-    margin: 30px auto 0;
+  .mini {
+    width: 96px;
   }
-  /* panels leave the ring: in-flow grid cells, no drag/float/seat offsets */
-  .mini-grid .mini {
-    position: relative;
-    left: auto;
-    top: auto;
-    margin: 0;
-    width: auto;
-    opacity: 1; /* fade only the sim, not the readout */
-    cursor: pointer;
-    touch-action: auto;
-    z-index: auto;
-    will-change: auto;
+  .mini-sim {
+    height: 52px;
   }
-  .mini-grid .mini.mini-pre {
-    opacity: 0; /* keep the staggered entrance fade */
+  .mini-top {
+    margin-left: -48px;
+    margin-top: -168px;
   }
-  /* faint until running (tapped); hover-to-solid is added for pointers below */
-  .mini-grid .mini .mini-sim {
-    height: 62px;
-    opacity: 0.4;
-    transition: opacity 0.35s ease;
+  .mini-ur {
+    margin-left: 57px;
+    margin-top: -120px;
   }
-  .mini-grid .mini.is-running .mini-sim {
-    opacity: 1;
+  .mini-lr {
+    margin-left: 57px;
+    margin-top: 10px;
   }
-  /* HUD in normal flow below the sim, compact and centred */
-  .mini-grid .mini .mini-hud {
-    position: static;
-    opacity: 1;
-    pointer-events: auto;
-    padding-top: 6px;
-    gap: 3px;
+  .mini-bot {
+    margin-left: -48px;
+    margin-top: 86px;
   }
-  .mini-grid .mini .mini-meta {
-    align-items: center;
-    gap: 2px;
-    text-align: center;
+  .mini-ll {
+    margin-left: -153px;
+    margin-top: 10px;
   }
-  .mini-grid .mini .mini-row {
-    justify-content: center;
+  .mini-ul {
+    margin-left: -153px;
+    margin-top: -120px;
   }
-  .mini-grid .mini .mini-training,
-  .mini-grid .mini .mini-stats {
+  .mini-training,
+  .mini-stats {
     font-size: 9px;
   }
-  .mini-grid .mini .mini-title {
-    text-align: center;
-  }
-  /* idle: pulsing tap hint, no numbers. running: numbers + steady label. */
-  .mini-grid .mini:not(.is-running) .mini-stats {
-    display: none;
-  }
-  .mini-grid .mini:not(.is-running) .mini-training {
-    animation: mini-tap-pulse 1.6s ease-in-out infinite;
-  }
-  /* drop the reset button and the reward/loss graph on the small panels */
-  .mini-grid .mini .mini-reset,
-  .mini-grid .mini .mini-chart {
+  /* the graph, title and reset button don't fit legibly at this size */
+  .mini-reset,
+  .mini-title,
+  .mini-chart {
     display: none;
   }
   .hero {
-    min-height: auto;
+    min-height: 480px;
   }
 }
-/* hover-to-solid only where hover is real (avoids sticky :hover after a tap) */
-@media (hover: hover) {
-  .mini-grid .mini:hover .mini-sim {
+
+/* Touch devices (no real hover): the HUD reveals on tap (is-running) instead of
+   hover, prompted by a pulsing "○ TAP FOR LIVE TRAINING"; numbers stay hidden
+   until then. Real-hover devices (incl. a narrow desktop window) keep the
+   original hover-to-reveal behaviour and always show the numbers on hover. */
+@media (hover: none) {
+  .mini.is-running {
+    opacity: 1;
+  }
+  .mini.is-running .mini-hud {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .mini:not(.is-running) .mini-stats {
+    display: none;
+  }
+  .mini:not(.is-running) .mini-training {
+    animation: mini-tap-pulse 1.6s ease-in-out infinite;
+  }
+}
+@keyframes mini-tap-pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
     opacity: 1;
   }
 }
@@ -426,16 +414,6 @@ a {
   }
   .verb-tap {
     display: inline;
-  }
-}
-
-@keyframes mini-tap-pulse {
-  0%,
-  100% {
-    opacity: 0.4;
-  }
-  50% {
-    opacity: 1;
   }
 }
 .hero h1 {

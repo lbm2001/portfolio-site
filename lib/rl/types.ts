@@ -24,12 +24,6 @@ export interface RLEnv {
   disturbAmp?: number;
   /** Optional display-only flag: let the agent topple visibly before reset. */
   showFall?: boolean;
-  /** Optional display-only: the ground height as a fraction of the canvas (so a
-   *  demo can sit the agent near the bottom). Defaults per env. */
-  groundFrac?: number;
-  /** Optional display-only: suppress the env's own ground/track line, e.g. when
-   *  something else (the page) is meant to read as the floor. */
-  bare?: boolean;
 }
 
 export type EnvFactory = () => RLEnv;

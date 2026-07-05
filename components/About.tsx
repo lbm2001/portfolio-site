@@ -31,7 +31,9 @@ export default function About() {
         </div>
         <div className="info-cell">
           <div className="k">Email</div>
-          <div className="v">{profile.email}</div>
+          <div className="v">
+            <a href={profile.links.email}>{profile.email}</a>
+          </div>
         </div>
       </div>
     </section>

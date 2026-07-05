@@ -38,10 +38,6 @@ export class CartPoleEnv implements RLEnv {
   // balance lets the pole topple all the way over before the episode resets,
   // instead of cutting away the instant it passes the 12° limit.
   showFall = false;
-  // Display-only layout knobs (used by the mobile mini): where the track sits as
-  // a fraction of canvas height, and whether to draw it at all.
-  groundFrac = 0.72;
-  bare = false;
   private fallen = false;
   private fallT = 0;
 
@@ -111,35 +107,23 @@ export class CartPoleEnv implements RLEnv {
   draw(ctx: CanvasRenderingContext2D) {
     const w = this.w;
     const h = this.h;
-    const gy = h * this.groundFrac;
+    const gy = h * 0.72;
     const sx = Math.min(w * 0.16, 120);
     const cx = w / 2 + this.x * sx;
-    // floor line. In bare mode (mobile mini) it's a single very-light-grey rule —
-    // the page/name is the real surface; this just grounds the agent.
-    if (this.bare) {
-      // full-width in bare mode: the canvas is sized to the name, so this line
-      // runs exactly as wide as the title it sits on.
-      ctx.strokeStyle = "rgba(17,17,17,0.14)";
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(0, gy);
-      ctx.lineTo(w, gy);
-      ctx.stroke();
-    } else {
-      ctx.strokeStyle = "rgba(17,17,17,0.16)";
-      ctx.lineWidth = 1.4;
-      ctx.beginPath();
-      ctx.moveTo(w * 0.1, gy);
-      ctx.lineTo(w * 0.9, gy);
-      ctx.stroke();
-      ctx.strokeStyle = "rgba(17,17,17,0.1)";
-      ctx.beginPath();
-      ctx.moveTo(w / 2, gy - 5);
-      ctx.lineTo(w / 2, gy + 5);
-      ctx.stroke();
-    }
-    // cart — thickness/wheels/pole scale with canvas height, so the mobile mini
-    // reads as a slimmer, less bulky cart while the desktop ring is unchanged.
+    // track
+    ctx.strokeStyle = "rgba(17,17,17,0.16)";
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(w * 0.1, gy);
+    ctx.lineTo(w * 0.9, gy);
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(17,17,17,0.1)";
+    ctx.beginPath();
+    ctx.moveTo(w / 2, gy - 5);
+    ctx.lineTo(w / 2, gy + 5);
+    ctx.stroke();
+    // cart — thickness/wheels/pole scale with canvas height, so the smaller ring
+    // panels (see globals.css) get a naturally slimmer cart, no extra flags needed.
     const cw = Math.min(56, w * 0.22);
     const chh = Math.min(24, h * 0.24);
     const wheelInset = cw * 0.22;

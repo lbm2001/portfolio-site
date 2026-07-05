@@ -22,6 +22,18 @@ const makeDigit = () => new DigitTask();
 export default function Hero() {
   return (
     <header className="hero">
+      {/* Six live learning demos ringed around the name — neural nets on the left
+          arc, RL agents on the right. Drag them; click/tap one to train. Below
+          1180px (or on any device without real hover, e.g. a tablet) the whole
+          ring scales down proportionally instead of disappearing — see the
+          matching breakpoint in globals.css and useFloatDrag's MOBILE_SCALE. */}
+      <MiniDemoNN make={makeClassification} corner="ul" />
+      <MiniDemoNN make={makeCurveFit} corner="ll" />
+      <MiniDemoNN make={makeDigit} corner="bot" />
+      <MiniDemo make={makeCartPole} corner="top" showFall />
+      <MiniDemo make={makePendulum} corner="ur" />
+      <MiniDemo make={makeWalker} corner="lr" displayDisturb={17} />
+
       <div className="hero-content">
         <h1>{profile.name}</h1>
         <div className="hero-tag">{profile.field}</div>
@@ -33,20 +45,6 @@ export default function Hero() {
             Download Resume
           </a>
         </div>
-      </div>
-
-      {/* Six live learning demos — neural nets + RL agents. On desktop this
-          wrapper is display:contents and the panels float on a ring around the
-          name (drag them; click to train). On touch / narrow screens the wrapper
-          becomes a grid and the panels sit as a tidy, tappable gallery below the
-          name (see .mini-grid). */}
-      <div className="mini-grid">
-        <MiniDemoNN make={makeClassification} corner="ul" />
-        <MiniDemoNN make={makeCurveFit} corner="ll" />
-        <MiniDemoNN make={makeDigit} corner="bot" />
-        <MiniDemo make={makeCartPole} corner="top" showFall />
-        <MiniDemo make={makePendulum} corner="ur" />
-        <MiniDemo make={makeWalker} corner="lr" displayDisturb={17} />
       </div>
     </header>
   );
