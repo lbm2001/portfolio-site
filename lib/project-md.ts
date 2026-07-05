@@ -1,11 +1,20 @@
 // A small, TARGETED parser for the `portfolio.md` file each project repo holds:
-// a YAML-ish frontmatter block delimited by `---`, followed by a Markdown body.
-// Like lib/resume.ts, this is NOT a general YAML parser — it understands exactly the
-// keys the portfolio uses (scalars, an inline `tags` list, and a `links` list of
-// {label, href}). Keeping it hand-rolled avoids a YAML dependency in the build.
+// a YAML-ish frontmatter block followed by a Markdown body. Like lib/resume.ts,
+// this is NOT a general YAML parser — it understands exactly the keys the portfolio
+// uses (scalars, an inline `tags` list, and a `links` list of {label, href}).
+// Keeping it hand-rolled avoids a YAML dependency in the build.
 //
-// Frontmatter shape (all fields optional except title):
-//   ---
+// The frontmatter block can be delimited two ways:
+//   1) an HTML comment  <!-- ... -->  — hidden when GitHub renders the README, so
+//      the repo page shows only the body (extra dashes like <!--- ... ---> are OK), or
+//   2) a `---` YAML fence — which GitHub renders as a table at the top of the file.
+//
+// Every field is optional. title/blurb/tags fall back to the repo's GitHub name /
+// description / topics (see gen-projects-data.mjs), so they can be omitted here and
+// defined on GitHub instead; venue/period/aiAssisted/links have no GitHub fallback.
+//
+// Frontmatter shape:
+//   <!--
 //   title: Project Title
 //   venue: Some Lab
 //   period: Apr–Sep 2025
@@ -17,7 +26,7 @@
 //   links:
 //     - label: PyPI
 //       href: https://pypi.org/project/mujopy/
-//   ---
+//   -->
 //   Markdown body...
 
 export interface ProjectMdLink {
@@ -47,13 +56,27 @@ function stripQuotes(s: string): string {
 }
 
 export function parseProjectMd(raw: string): ProjectMd {
-  // Normalize newlines; split off the frontmatter block if present.
+  // Normalize newlines; split off the frontmatter block if present. It may be an
+  // HTML comment (<!-- ... -->, hidden on GitHub) or a --- fence; try the comment
+  // first since a leading comment is unambiguous.
   const src = raw.replace(/\r\n/g, "\n").replace(/^﻿/, "");
-  const fm = /^---\n([\s\S]*?)\n---\n?/.exec(src);
-  if (!fm) return { body: src.trim() };
+  const comment = /^<!--[\s\S]*?-->[ \t]*\n?/.exec(src);
+  const fence = /^---\n([\s\S]*?)\n---\n?/.exec(src);
 
-  const block = fm[1];
-  const body = src.slice(fm[0].length).trim();
+  let block: string;
+  let body: string;
+  if (comment) {
+    // Drop the <!-- and --> markers (plus any extra dashes) to get the raw
+    // key/value lines. Non-`key: value` lines (e.g. stray dashes) are ignored below.
+    block = comment[0].replace(/^<!--+/, "").replace(/--+>[ \t]*\n?$/, "");
+    body = src.slice(comment[0].length).trim();
+  } else if (fence) {
+    block = fence[1];
+    body = src.slice(fence[0].length).trim();
+  } else {
+    return { body: src.trim() };
+  }
+
   const out: ProjectMd = { body };
 
   const lines = block.split("\n");

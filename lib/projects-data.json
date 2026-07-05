@@ -14,6 +14,10 @@
       {
         "label": "Code",
         "href": "https://github.com/lbm2001/au-mdt"
+      },
+      {
+        "label": "Paper",
+        "href": "https://github.com/lbm2001/au-mdt/releases/download/paper-latest/paper.pdf"
       }
     ],
     "aiAssisted": true,
@@ -59,10 +63,6 @@
       {
         "label": "Code",
         "href": "https://github.com/lbm2001/lascroge"
-      },
-      {
-        "label": "Paper",
-        "href": "/projects/large-scale-robot-generation/paper.pdf"
       }
     ],
     "aiAssisted": true,
