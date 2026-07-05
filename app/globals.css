@@ -322,43 +322,53 @@ a {
   display: block;
 }
 
-/* ---- Small ring: the same six-panel ring, scaled down ----
-   Below 1180px OR on any device without real hover (tablets like iPad, even in
-   wide landscape) the ring doesn't disappear — it shrinks. Panels and seat
-   offsets shrink proportionally (useFloatDrag scales ambient drift + drag roam
-   to match, via the identical media query), so the whole "six demos floating
-   around the name" composition survives on a phone, just smaller. The HUD is
-   decluttered (no graph/title/reset) so it still reads at the smaller size. */
-@media (max-width: 1180px), (hover: none) {
+/* ---- Small ring, tier 2: tablets + narrow desktop windows, still 6 demos ----
+   Below 1180px, OR on any device without real hover (tablets like iPad, even in
+   wide landscape), the ring doesn't disappear — it re-forms as two bands: the
+   three RL demos (top/ur/lr) above the name, the three NN demos (ul/ll/bot)
+   below it. Placement uses ONLY the measured height of the name/tag/CTA block
+   (--content-half-h, set by Hero.tsx) — never its width — so a seat can never be
+   clipped by the hero's own edges on a narrow phone the way a left/right seat
+   tied to content *width* could be (there's much more vertical room than
+   horizontal on a phone). useFloatDrag scales ambient drift + drag roam to match
+   (identical media query), and the HUD is decluttered (no graph/title/reset) so
+   it still reads at the smaller size. */
+@media (min-width: 601px) and (max-width: 1180px), (hover: none) {
   .mini {
     width: 96px;
   }
   .mini-sim {
     height: 52px;
   }
+  /* RL band, above the name */
+  .mini-top,
+  .mini-ur,
+  .mini-lr {
+    margin-top: calc(-1 * (var(--content-half-h, 90px) + 80px));
+  }
   .mini-top {
-    margin-left: -48px;
-    margin-top: -168px;
+    margin-left: -160px;
   }
   .mini-ur {
-    margin-left: 57px;
-    margin-top: -120px;
+    margin-left: -48px;
   }
   .mini-lr {
-    margin-left: 57px;
-    margin-top: 10px;
+    margin-left: 64px;
   }
+  /* NN band, below the name */
+  .mini-ul,
+  .mini-ll,
   .mini-bot {
-    margin-left: -48px;
-    margin-top: 86px;
-  }
-  .mini-ll {
-    margin-left: -153px;
-    margin-top: 10px;
+    margin-top: calc(var(--content-half-h, 90px) + 28px);
   }
   .mini-ul {
-    margin-left: -153px;
-    margin-top: -120px;
+    margin-left: -160px;
+  }
+  .mini-ll {
+    margin-left: -48px;
+  }
+  .mini-bot {
+    margin-left: 64px;
   }
   .mini-training,
   .mini-stats {
@@ -371,7 +381,59 @@ a {
     display: none;
   }
   .hero {
-    min-height: 480px;
+    min-height: 500px;
+  }
+}
+
+/* ---- Small ring, tier 1: small phones collapse to 4 demos, shown larger ----
+   Below 600px width, one random NN and one random RL demo are dropped (Hero.tsx
+   marks them .mini-drop-sm; picked once per load, still mounted so resizing
+   across this breakpoint doesn't need JS). The two survivors of each group sit
+   side by side, RL above the name and NN below — same band idea as tier 2, just
+   two panels per band instead of three, sized up since there's more room each.
+   Declared after tier 2 so these rules win on small phones (equal specificity,
+   later wins) without needing to fight tier 2's rules with !important. */
+@media (max-width: 600px) {
+  .mini-drop-sm {
+    display: none;
+  }
+  .mini {
+    width: 124px;
+  }
+  .mini-sim {
+    height: 64px;
+  }
+  .mini-training,
+  .mini-stats {
+    font-size: 9px;
+  }
+  .mini-reset,
+  .mini-title,
+  .mini-chart {
+    display: none;
+  }
+  .mini-sm-rl1,
+  .mini-sm-rl2 {
+    margin-top: calc(-1 * (var(--content-half-h, 90px) + 92px));
+  }
+  .mini-sm-rl1 {
+    margin-left: -132px;
+  }
+  .mini-sm-rl2 {
+    margin-left: 8px;
+  }
+  .mini-sm-nn1,
+  .mini-sm-nn2 {
+    margin-top: calc(var(--content-half-h, 90px) + 28px);
+  }
+  .mini-sm-nn1 {
+    margin-left: -132px;
+  }
+  .mini-sm-nn2 {
+    margin-left: 8px;
+  }
+  .hero {
+    min-height: 520px;
   }
 }
 

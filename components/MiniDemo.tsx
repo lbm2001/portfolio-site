@@ -24,11 +24,18 @@ export default function MiniDemo({
   corner,
   displayDisturb = 0,
   showFall = false,
+  dropSmall = false,
+  smallSlot,
 }: {
   make: EnvFactory;
   corner: Corner;
   displayDisturb?: number;
   showFall?: boolean;
+  // Small-mobile (≤600px) layout only: dropSmall hides this panel there (one
+  // random RL demo is dropped each load); smallSlot places the survivors in the
+  // compact 2-up band instead of their normal ring corner. See globals.css.
+  dropSmall?: boolean;
+  smallSlot?: string;
 }) {
   const simRef = useRef<HTMLCanvasElement>(null);
   const chartRef = useRef<HTMLCanvasElement>(null);
@@ -145,7 +152,7 @@ export default function MiniDemo({
   return (
     <div
       ref={dragRef}
-      className={`mini mini-${corner}${running ? " is-running" : ""}${revealed ? "" : " mini-pre"}`}
+      className={`mini mini-${corner}${running ? " is-running" : ""}${revealed ? "" : " mini-pre"}${dropSmall ? " mini-drop-sm" : ""}${smallSlot ? ` mini-sm-${smallSlot}` : ""}`}
       onClick={toggle}
     >
       <canvas ref={simRef} className="mini-sim" />

@@ -19,9 +19,16 @@ const pad = (n: number) => String(Math.max(0, Math.round(n))).padStart(3, "0");
 export default function MiniDemoNN({
   make,
   corner,
+  dropSmall = false,
+  smallSlot,
 }: {
   make: NNTaskFactory;
   corner: Corner;
+  // Small-mobile (≤600px) layout only: dropSmall hides this panel there (one
+  // random NN demo is dropped each load); smallSlot places the survivors in the
+  // compact 2-up band instead of their normal ring corner. See globals.css.
+  dropSmall?: boolean;
+  smallSlot?: string;
 }) {
   const simRef = useRef<HTMLCanvasElement>(null);
   const chartRef = useRef<HTMLCanvasElement>(null);
@@ -115,7 +122,7 @@ export default function MiniDemoNN({
   return (
     <div
       ref={dragRef}
-      className={`mini mini-${corner}${running ? " is-running" : ""}${revealed ? "" : " mini-pre"}`}
+      className={`mini mini-${corner}${running ? " is-running" : ""}${revealed ? "" : " mini-pre"}${dropSmall ? " mini-drop-sm" : ""}${smallSlot ? ` mini-sm-${smallSlot}` : ""}`}
       onClick={toggleRun}
     >
       <canvas ref={simRef} className="mini-sim" />
