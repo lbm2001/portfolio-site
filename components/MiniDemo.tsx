@@ -168,11 +168,14 @@ export default function MiniDemo({
         <div className="mini-meta">
           <div className="mini-row">
             <div className={running ? "mini-training" : "mini-training mini-paused"}>
-              {running
-                ? "● TRAINING"
-                : isStatic
-                  ? "○ TAP FOR LIVE TRAINING"
-                  : "○ CLICK FOR LIVE TRAINING"}
+              {running ? (
+                "● TRAINING"
+              ) : (
+                <>
+                  <span className="verb-click">○ CLICK FOR LIVE TRAINING</span>
+                  <span className="verb-tap">○ TAP FOR LIVE TRAINING</span>
+                </>
+              )}
             </div>
             <button
               type="button"
