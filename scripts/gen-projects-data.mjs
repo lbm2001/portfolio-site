@@ -7,7 +7,7 @@
 // serves a fully static, pre-fetched snapshot.
 //
 // Everything a project exposes to the site lives in ONE self-contained
-// `portfolio/` directory in its repo (dir + file are set in projects.sources.json):
+// `portfolio/` directory in its repo (dir + file are set in config/projects.sources.json):
 //   portfolio/README.md      frontmatter + Markdown body (GitHub renders it when
 //                            you open the folder)
 //   portfolio/assets/*.png   images the README references relatively
@@ -163,7 +163,7 @@ async function buildOne(source, dir, file) {
 
 async function main() {
   const config = JSON.parse(
-    fs.readFileSync(path.join(root, "projects.sources.json"), "utf8"),
+    fs.readFileSync(path.join(root, "config", "projects.sources.json"), "utf8"),
   );
   const existing = readExisting();
   const byslug = Object.fromEntries(existing.map((p) => [p.slug, p]));

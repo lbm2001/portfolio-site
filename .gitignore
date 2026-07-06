@@ -34,7 +34,7 @@ next-env.d.ts
 .dev.vars*
 !.dev.vars.example
 
-# Resume: fetched at build time from the private source repo in resume.source.json
+# Resume: fetched at build time from the private source repo in config/resume.source.json
 # (scripts/gen-resume-source.mjs) — NOT committed here. The parsed lib/resume-data.json
 # stays committed so `next dev` and typecheck work without a fetch.
 /public/resume.tex
@@ -47,7 +47,7 @@ next-env.d.ts
 /public/resume.out
 /public/resume.synctex.gz
 
-# Blog post images fetched at build time from the blog repo (blog.sources.json)
+# Blog post images fetched at build time from the blog repo (config/blog.sources.json)
 # by scripts/gen-blog-data.mjs. The parsed lib/posts-data.json stays committed so
 # `next dev` and typecheck work without a fetch.
 /public/blog/

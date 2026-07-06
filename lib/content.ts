@@ -71,7 +71,7 @@ export const nav: NavLink[] = [
 // Edit a repo's portfolio.md / About / topics to change what shows here.
 export const projects = projectsData as Project[];
 
-// Blog posts are pulled from the single blog repo (blog.sources.json) at BUILD
+// Blog posts are pulled from the single blog repo (config/blog.sources.json) at BUILD
 // time by scripts/gen-blog-data.mjs (run in the prebuild step) into
 // lib/posts-data.json, imported above as a static module — same pattern as
 // projects. Nothing is fetched at request time; posts are sorted newest-first by

@@ -7,7 +7,7 @@
 // serves a fully static, pre-fetched snapshot.
 //
 // Unlike projects (one repo each, listed explicitly), the blog is ONE repo with
-// MANY posts. blog.sources.json gives { repo, dir, file }; this script LISTS the
+// MANY posts. config/blog.sources.json gives { repo, dir, file }; this script LISTS the
 // `dir/` directory and treats every subfolder as a post — so you publish a post
 // by committing a new `posts/<slug>/index.md` to the blog repo, with no edit here.
 //
@@ -122,7 +122,7 @@ async function buildOne(repo, dir, file, slug) {
 }
 
 async function main() {
-  const cfg = JSON.parse(fs.readFileSync(path.join(root, "blog.sources.json"), "utf8"));
+  const cfg = JSON.parse(fs.readFileSync(path.join(root, "config", "blog.sources.json"), "utf8"));
   const { repo, dir, file } = cfg;
 
   if (!TOKEN) {

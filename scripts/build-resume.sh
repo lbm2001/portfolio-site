@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 # 0) REQUIRED: pull the résumé (public/resume.tex + public/resume.pdf) from the
-#    private source repo in resume.source.json. That repo is the single source of
+#    private source repo in config/resume.source.json. That repo is the single source of
 #    truth — this project keeps no committed copy — so a missing GITHUB_TOKEN or a
 #    failed fetch fails the build here (rather than later, cryptically, at parse).
 node --experimental-strip-types scripts/gen-resume-source.mjs
@@ -16,12 +16,12 @@ node --experimental-strip-types scripts/gen-resume-source.mjs
 node --experimental-strip-types scripts/gen-resume-data.mjs
 
 # 1b) Refresh project data from each project's GitHub repo (see
-#     projects.sources.json). Best-effort: with no GITHUB_TOKEN, or if a repo is
+#     config/projects.sources.json). Best-effort: with no GITHUB_TOKEN, or if a repo is
 #     unreachable, it keeps the committed lib/projects-data.json so the build
 #     never fails and always has last-known data.
 node --experimental-strip-types scripts/gen-projects-data.mjs
 
-# 1c) Refresh blog posts from the single blog repo (see blog.sources.json).
+# 1c) Refresh blog posts from the single blog repo (see config/blog.sources.json).
 #     Best-effort like projects: with no GITHUB_TOKEN, or if the repo is
 #     unreachable, it keeps the committed lib/posts-data.json. An EMPTY blog repo
 #     is a valid result and writes [] (the /blog page shows "Writing Coming Soon").

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Pulls the résumé (resume.tex + resume.pdf) from the PRIVATE source repo in
-// resume.source.json at BUILD time and writes them into public/. That repo is the
+// config/resume.source.json at BUILD time and writes them into public/. That repo is the
 // SINGLE SOURCE OF TRUTH — this project keeps NO committed copy of the résumé —
 // so this step is REQUIRED: if the token is missing or the fetch fails, it errors
 // and fails the build rather than proceeding without a résumé.
@@ -10,7 +10,7 @@
 //
 // Same private-repo fetch as gen-projects-data.mjs: read a token from the env or a
 // gitignored dotfile and hit the GitHub Contents API (serves raw bytes of private
-// files). The source repo/paths live in resume.source.json:
+// files). The source repo/paths live in config/resume.source.json:
 //   { repo, dir, tex, pdf }  ->  <repo>/<dir>/<tex> and <repo>/<dir>/<pdf>
 import fs from "node:fs";
 import path from "node:path";
@@ -48,7 +48,7 @@ async function ghFile(repo, filePath) {
 }
 
 async function main() {
-  const cfg = JSON.parse(fs.readFileSync(path.join(root, "resume.source.json"), "utf8"));
+  const cfg = JSON.parse(fs.readFileSync(path.join(root, "config", "resume.source.json"), "utf8"));
   const dir = cfg.dir ? `${cfg.dir}/` : "";
 
   if (!TOKEN) {
