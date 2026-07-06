@@ -1,4 +1,5 @@
 import projectsData from "./projects-data.json";
+import postsData from "./posts-data.json";
 
 export interface NavLink {
   label: string;
@@ -15,7 +16,7 @@ export interface Project {
   title: string;
   venue: string;
   /** Working period, shown in red in the meta line (e.g. "Apr–Sep 2025").
-   *  Projects are listed newest→oldest by start date. */
+   *  Projects are listed newest→oldest by the period's start; "Ongoing" pins to the top. */
   period?: string;
   blurb: string;
   tags: string[];
@@ -70,26 +71,22 @@ export const nav: NavLink[] = [
 // Edit a repo's portfolio.md / About / topics to change what shows here.
 export const projects = projectsData as Project[];
 
-export const posts: Post[] = [
-  // No posts written yet. Add entries here as you write them, e.g.:
-  // {
-  //   slug: "my-first-post",
-  //   date: "Jul 2026",
-  //   cat: "ML",
-  //   title: "My First Post",
-  //   excerpt: "One-line teaser shown in the list and atop the article.",
-  //   body: `First paragraph.\n\nSecond paragraph — blank lines separate paragraphs.`,
-  // },
-];
+// Blog posts are pulled from the single blog repo (blog.sources.json) at BUILD
+// time by scripts/gen-blog-data.mjs (run in the prebuild step) into
+// lib/posts-data.json, imported above as a static module — same pattern as
+// projects. Nothing is fetched at request time; posts are sorted newest-first by
+// the generator. Publish a post by adding posts/<slug>/index.md to the blog repo.
+// An empty blog repo yields [], and the blog page shows "Writing Coming Soon".
+export const posts = postsData as Post[];
 
 export const getProject = (slug: string) => projects.find((p) => p.slug === slug);
 export const getPost = (slug: string) => posts.find((p) => p.slug === slug);
 
 // Save-as filename for the resume PDF download, stamped with the current
-// month/year (e.g. resume_lukas_mueller_07_2026.pdf). The served asset stays
+// month/year (e.g. resume-lukas-mueller-072026.pdf). The served asset stays
 // /resume.pdf — the browser's `download` attribute renames it on save.
 export function resumeDownloadName() {
   const d = new Date();
   const month = String(d.getMonth() + 1).padStart(2, "0");
-  return `resume_lukas_mueller_${month}_${d.getFullYear()}.pdf`;
+  return `resume-lukas-mueller-${month}${d.getFullYear()}.pdf`;
 }

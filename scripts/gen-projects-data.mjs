@@ -85,6 +85,21 @@ function topicToTag(t) {
   return t.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+// Sort key for ordering projects newest-first by the START of their working
+// period. A period of "Ongoing" (active work) sorts ABOVE every dated project;
+// otherwise we key on the first month + year in the string, so a range like
+// "Jan–Jun 2026" keys on its start (Jan 2026) and a single "Oct 2025" on itself.
+// Larger key => listed earlier; a finite sentinel avoids NaN when entries tie.
+const ONGOING = Number.MAX_SAFE_INTEGER;
+function periodKey(s) {
+  if (!s) return 0;
+  if (/ongoing/i.test(s)) return ONGOING;
+  const year = s.match(/\d{4}/)?.[0];
+  const month = s.match(/[A-Za-z]{3,}/)?.[0]; // first month token (start of a range)
+  const t = Date.parse(`1 ${month || "Jan"} ${year || ""}`.trim());
+  return Number.isNaN(t) ? 0 : t;
+}
+
 async function buildOne(source, dir, file) {
   const { slug, repo } = source;
   // Resolve a path written RELATIVE to the README (which lives in `dir/`) to its
@@ -177,6 +192,8 @@ async function main() {
     console.warn("gen-projects-data: nothing fetched — leaving file untouched");
     return;
   }
+  // Newest-first by period start; "Ongoing" projects pinned to the top.
+  out.sort((a, b) => periodKey(b.period) - periodKey(a.period));
   fs.writeFileSync(OUT, JSON.stringify(out, null, 2) + "\n");
   console.log(`gen-projects-data: wrote lib/projects-data.json (${out.length} projects)`);
 }

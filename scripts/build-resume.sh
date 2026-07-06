@@ -21,6 +21,12 @@ node --experimental-strip-types scripts/gen-resume-data.mjs
 #     never fails and always has last-known data.
 node --experimental-strip-types scripts/gen-projects-data.mjs
 
+# 1c) Refresh blog posts from the single blog repo (see blog.sources.json).
+#     Best-effort like projects: with no GITHUB_TOKEN, or if the repo is
+#     unreachable, it keeps the committed lib/posts-data.json. An EMPTY blog repo
+#     is a valid result and writes [] (the /blog page shows "Writing Coming Soon").
+node --experimental-strip-types scripts/gen-blog-data.mjs
+
 # 2) Optional: recompile public/resume.tex -> public/resume.pdf when latexmk is
 #    available (refreshes the PDF from the just-fetched .tex). Cloudflare's build
 #    image has no latexmk, so the public/resume.pdf fetched in step 0 is served
