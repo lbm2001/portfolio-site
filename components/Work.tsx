@@ -11,7 +11,7 @@ export default function Work() {
         <Link href="/projects">See all →</Link>
       </div>
       <div className="work-grid">
-        {projects.map((p) => (
+        {projects.slice(0, 2).map((p) => (
           <ProjectCard key={p.slug} project={p} />
         ))}
       </div>

@@ -18,7 +18,7 @@ export default function ProjectsPage() {
           <h1 className="page-title">Projects</h1>
         </div>
 
-        <div className="work-grid">
+        <div className="work-grid work-list">
           {projects.map((p) => (
             <ProjectCard key={p.slug} project={p} />
           ))}

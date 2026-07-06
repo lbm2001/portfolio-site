@@ -643,6 +643,12 @@ a {
   color: inherit;
   min-height: 200px;
 }
+.work-list {
+  grid-template-columns: 1fr;
+}
+.work-list .work-card {
+  min-height: 0;
+}
 .work-meta {
   display: flex;
   align-items: baseline;
