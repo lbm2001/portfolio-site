@@ -2,7 +2,7 @@
   "dir": "portfolio",
   "file": "README.md",
   "projects": [
-    { "slug": "ev-charging-mdp", "repo": "lbm2001/au-mdt" },
+    { "slug": "ev-charging-optimal-vs-heuristics", "repo": "lbm2001/au-mdt" },
     { "slug": "mujopy", "repo": "lbm2001/mujopy" },
     { "slug": "large-scale-robot-generation", "repo": "lbm2001/lascroge" },
     { "slug": "easy-eda-visualizations", "repo": "lbm2001/easy_eda_visualizations"},

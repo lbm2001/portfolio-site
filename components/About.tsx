@@ -11,10 +11,17 @@ export default function About() {
         <Link href="/about">More →</Link>
       </div>
       <div className="about-head">
-        <div className="about-photo">
-          <Image src="/photo.jpg" alt={profile.name} fill sizes="112px" />
+        <div className="about-photo about-photo-lg">
+          <Image src="/photo.jpg" alt={profile.name} fill sizes="160px" />
         </div>
-        <p className="section-lead">{profile.lead}</p>
+        <p className="section-lead text-pretty">
+            {profile.lead.map((line, index) => (
+              <span key={index}>
+                {line}
+                {index < profile.lead.length - 1 && <br />}
+              </span>
+            ))}
+          </p>
       </div>
       <div className="info-grid">
         <div className="info-cell">
