@@ -633,6 +633,7 @@ a {
   border-left: 1px solid var(--border);
 }
 .work-card {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -642,6 +643,10 @@ a {
   text-decoration: none;
   color: inherit;
   min-height: 200px;
+}
+.work-card-overlay {
+  position: absolute;
+  inset: 0;
 }
 .work-list {
   grid-template-columns: 1fr;
@@ -685,6 +690,7 @@ a {
   padding: 3px 10px;
 }
 .work-links {
+  position: relative;
   display: flex;
   gap: 14px;
 }
@@ -693,6 +699,7 @@ a {
   color: var(--ink);
   border-bottom: 1.5px solid var(--red);
   padding-bottom: 1px;
+  text-decoration: none;
 }
 
 /* Blog */

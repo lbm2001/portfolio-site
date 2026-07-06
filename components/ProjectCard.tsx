@@ -1,11 +1,19 @@
 import Link from "next/link";
 import type { Project } from "@/lib/content";
 
-// A single project entry in the selected-work grid, linking to its detail page.
+// A single project entry in the selected-work grid. The card itself links to
+// its detail page (via a stretched overlay link so it doesn't wrap the whole
+// card in an <a>), while the Code/Paper/etc. links jump straight to their
+// target and sit above the overlay so they stay independently clickable.
 // Shared by the home preview (Work) and the projects index page.
 export default function ProjectCard({ project: p }: { project: Project }) {
   return (
-    <Link className="work-card" href={`/projects/${p.slug}`}>
+    <div className="work-card">
+      <Link
+        className="work-card-overlay"
+        href={`/projects/${p.slug}`}
+        aria-label={p.title}
+      />
       <span className="work-meta">
         {p.period && <span className="work-period">{p.period}</span>}
         <span className="work-venue">{p.venue}</span>
@@ -21,11 +29,11 @@ export default function ProjectCard({ project: p }: { project: Project }) {
       </span>
       <span className="work-links">
         {p.links.map((lk) => (
-          <span key={lk.label} className="work-link">
+          <a key={lk.label} className="work-link" href={lk.href}>
             {lk.label}
-          </span>
+          </a>
         ))}
       </span>
-    </Link>
+    </div>
   );
 }
