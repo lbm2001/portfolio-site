@@ -538,7 +538,7 @@ a {
 
 /* ---- Sections ---- */
 .section {
-  padding: 80px 56px;
+  padding: 54px 56px;
   border-bottom: 1px solid var(--border);
 }
 .label-mono {
