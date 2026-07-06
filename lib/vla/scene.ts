@@ -1,13 +1,15 @@
 // Canvas renderers for the VLA hero. Two flavors of the same scene:
 //  - paintScene: the design-styled display renderer (Demonstration + Rollout
-//    boxes) — floor line, pedestal, grey links, accent blocks, trail.
-//  - paintSilhouette: the flattened high-contrast version (white bg, grey arm,
-//    red/black blocks) that gets downsampled to 16x16 and fed to the model.
-//    Training samples and live rollout inference BOTH go through this exact
-//    renderer, so the policy never sees a distribution it wasn't trained on.
+//    boxes) — floor line, pedestal, grey links, colored blocks, trail.
+//  - paintSilhouette: the flattened high-contrast version (white bg, grey
+//    arm, blocks in their own colors) that gets downsampled to 32x32 and fed
+//    to the model. Training samples and live rollout inference BOTH go
+//    through this exact renderer, so the policy never sees a distribution it
+//    wasn't trained on.
 // Both map the y-up unit workspace of geometry.ts onto y-down canvas pixels.
 
-import { BASE, BLACK_BLOCK, BLOCK, L1, L2, RED_BLOCK } from "./geometry";
+import { BASE, BLOCK, L1, L2 } from "./geometry";
+import { COLORS, type Layout } from "./examples";
 
 export interface SceneMap {
   X: (x: number) => number;
@@ -17,7 +19,7 @@ export interface SceneMap {
 }
 
 // One isotropic scale for both axes (links must not stretch); sized so the
-// fully extended arm (0.75 units) stays inside the canvas when upright.
+// fully extended arm stays inside the canvas when upright.
 export function sceneMap(W: number, H: number): SceneMap {
   const S = 0.8 * H;
   const floorY = 0.86 * H;
@@ -32,30 +34,30 @@ export function sceneMap(W: number, H: number): SceneMap {
 /** End-effector position in canvas pixels (for the rollout trail). */
 export function effectorPx(W: number, H: number, a1: number, a2: number) {
   const m = sceneMap(W, H);
-  const j1x = BASE.x + Math.cos(a1) * L1;
-  const j1y = BASE.y + Math.sin(a1) * L1;
-  const ex = j1x + Math.cos(a1 + a2) * L2;
-  const ey = j1y + Math.sin(a1 + a2) * L2;
+  const ex = BASE.x + Math.cos(a1) * L1 + Math.cos(a1 + a2) * L2;
+  const ey = BASE.y + Math.sin(a1) * L1 + Math.sin(a1 + a2) * L2;
   return { x: m.X(ex), y: m.Y(ey) };
 }
 
 export interface PaintOpts {
   a1: number;
   a2: number;
+  /** The 8-block scene layout to draw. */
+  layout: Layout;
   accent: string;
   /** Recent end-effector positions (canvas px); drawn only when provided. */
   trail?: { x: number; y: number }[] | null;
   /** Normalized loss in [0,1] — drives trail jitter/opacity. */
   lossNorm?: number;
-  /** Which block (if any) is held at the gripper instead of on the floor. */
-  carry?: "red" | "black" | null;
+  /** COLORS index of the block held at the gripper (its floor spot empties). */
+  carry?: number | null;
 }
 
 export function paintScene(
   ctx: CanvasRenderingContext2D,
   W: number,
   H: number,
-  { a1, a2, accent, trail, lossNorm = 0, carry }: PaintOpts
+  { a1, a2, layout, accent, trail, lossNorm = 0, carry }: PaintOpts
 ) {
   const m = sceneMap(W, H);
   const bx = m.X(BASE.x);
@@ -67,7 +69,7 @@ export function paintScene(
   const ex = m.X(BASE.x + Math.cos(a1) * L1 + Math.cos(a1 + a2) * L2);
   const ey = m.Y(BASE.y + Math.sin(a1) * L1 + Math.sin(a1 + a2) * L2);
 
-  // floor line — full width, connects through to both blocks
+  // floor line — full width
   ctx.strokeStyle = "#e6e6e6";
   ctx.lineWidth = 1.5;
   ctx.beginPath();
@@ -94,14 +96,13 @@ export function paintScene(
 
   // blocks first — the WHOLE arm draws over them so the reach into a block
   // and the grip on a carried one stay visible
-  const flatBox = (cx: number, fill: string) => {
-    ctx.fillStyle = fill;
-    ctx.fillRect(m.X(cx) - box / 2, m.floorY - box, box, box);
-  };
-  if (carry !== "black") flatBox(BLACK_BLOCK.x, "#1c1c1c");
-  if (carry !== "red") flatBox(RED_BLOCK.x, accent);
-  if (carry) {
-    ctx.fillStyle = carry === "red" ? accent : "#1c1c1c";
+  for (const b of layout) {
+    if (b.color === carry) continue; // carried block leaves its floor spot
+    ctx.fillStyle = COLORS[b.color].hex;
+    ctx.fillRect(m.X(b.x) - box / 2, m.floorY - box, box, box);
+  }
+  if (carry !== null && carry !== undefined) {
+    ctx.fillStyle = COLORS[carry].hex;
     ctx.fillRect(ex - box / 2, ey - box / 2, box, box);
   }
 
@@ -143,28 +144,27 @@ export function paintScene(
   ctx.fill();
 }
 
+// Blocks render a touch larger in the model's-eye view: at 32x32 a
+// display-size block is ~2px wide — the boost keeps each color's pixels
+// clearly present after the downsample without changing the display scene.
+const SIL_BLOCK = BLOCK * 1.3;
+
 /**
- * The model's-eye view: white background, red/black target blocks, grey arm.
- * Two grey tones + a dark effector dot keep the two links distinguishable
- * after the 16x16 downsample — the network has to regress joint angles from
- * this image alone. No floor, grid or trail: only task-relevant pixels.
+ * The model's-eye view: white background, the 8 colored blocks at their
+ * layout positions, grey arm. Two grey link tones + a dark effector dot keep
+ * the pose readable after the 32x32 downsample — the network has to regress
+ * joint angles AND localize the named color from this image alone.
  */
 export function paintSilhouette(
   ctx: CanvasRenderingContext2D,
   size: number,
   a1: number,
-  a2: number
+  a2: number,
+  layout: Layout,
+  carry?: number | null
 ) {
   const m = sceneMap(size, size);
-  const box = BLOCK * m.S;
-
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, size, size);
-
-  ctx.fillStyle = "#e12d1a";
-  ctx.fillRect(m.X(RED_BLOCK.x) - box / 2, m.floorY - box, box, box);
-  ctx.fillStyle = "#1c1c1c";
-  ctx.fillRect(m.X(BLACK_BLOCK.x) - box / 2, m.floorY - box, box, box);
+  const box = SIL_BLOCK * m.S;
 
   const bx = m.X(BASE.x);
   const by = m.Y(BASE.y);
@@ -173,15 +173,30 @@ export function paintSilhouette(
   const ex = m.X(BASE.x + Math.cos(a1) * L1 + Math.cos(a1 + a2) * L2);
   const ey = m.Y(BASE.y + Math.sin(a1) * L1 + Math.sin(a1 + a2) * L2);
 
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, size, size);
+
+  // blocks at their floor spots — the carried one leaves its spot and is
+  // redrawn at the gripper, so the model's-eye view matches the lifted demo
+  for (const b of layout) {
+    if (b.color === carry) continue;
+    ctx.fillStyle = COLORS[b.color].hex;
+    ctx.fillRect(m.X(b.x) - box / 2, m.floorY - box, box, box);
+  }
+  if (carry !== null && carry !== undefined) {
+    ctx.fillStyle = COLORS[carry].hex;
+    ctx.fillRect(ex - box / 2, ey - box / 2, box, box);
+  }
+
   ctx.lineCap = "round";
   ctx.strokeStyle = "#666666";
-  ctx.lineWidth = size * 0.08;
+  ctx.lineWidth = size * 0.04;
   ctx.beginPath();
   ctx.moveTo(bx, by);
   ctx.lineTo(j1x, j1y);
   ctx.stroke();
   ctx.strokeStyle = "#aaaaaa";
-  ctx.lineWidth = size * 0.06;
+  ctx.lineWidth = size * 0.03;
   ctx.beginPath();
   ctx.moveTo(j1x, j1y);
   ctx.lineTo(ex, ey);

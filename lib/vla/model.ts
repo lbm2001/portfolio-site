@@ -1,101 +1,128 @@
-// VLA network definition + tokenizer. TensorFlow.js is passed in (and only
-// ever loaded via dynamic import in trainer.ts) so this module stays
-// SSR-safe and the ~1MB tfjs bundle is fetched lazily on "Start Training".
+// VLA network definition. TensorFlow.js is passed in (and only ever loaded
+// via dynamic import in trainer.ts) so this module stays SSR-safe and the
+// ~1MB tfjs bundle is fetched lazily on "Start Training".
+//
+// Vision: a real 3-layer CNN over the 32x32 scene (conv → pool → conv →
+// pool → strided conv), not a single patch projection — the policy must
+// tell the two blocks in a scene apart by color AND regress both joint
+// angles.
+// Language: a bag-of-embeddings — embed each token, then mean-pool across
+// the sequence (robust to WHERE the color word appears — free user text at
+// inference; word order carries no signal for this task, so a recurrent
+// reader isn't needed and costs meaningfully more to run/compile). An
+// auxiliary color-classification head on the pooled language vector shapes
+// it to be color-decodable and powers the live "decoded target" readout.
+// Because the head is LINEAR and pooling is a mean, the decoded color's
+// logit is an exact average of each token's own dot-product contribution —
+// trainer.ts's tokenContributions() reads that off directly for the live
+// per-token bars, no extra sub-model or forward pass required.
 
 import type * as tfType from "@tensorflow/tfjs";
+import { MAX_SEQ_LEN, VOCAB_SIZE, COLORS } from "./examples";
 
 export type TF = typeof tfType;
 
-export const VOCAB: Record<string, number> = {
-  "<pad>": 0,
-  pick: 1,
-  up: 2,
-  the: 3,
-  red: 4,
-  black: 5,
-  block: 6,
-  reach: 7,
-  grasp: 8,
-  let: 9,
-  robot: 10,
-  for: 11,
-};
-export const MAX_SEQ_LEN = 8;
+export const IMG_SIZE = 32;
 
-/** Pure tokenizer: lowercase, strip punctuation, pad/truncate to MAX_SEQ_LEN. */
-export function tokenize(sentence: string): number[] {
-  const words = sentence
-    .toLowerCase()
-    .replace(/[^a-z ]/g, "")
-    .split(" ")
-    .filter(Boolean);
-  const tokens = new Array<number>(MAX_SEQ_LEN).fill(0);
-  for (let i = 0; i < Math.min(words.length, MAX_SEQ_LEN); i++) {
-    tokens[i] = VOCAB[words[i]] || 0;
-  }
-  return tokens;
+/** Adam learning rate. Bumped from the GRU-era 0.004 now that the language
+    branch is a much smaller bag-of-embeddings — the network has fewer
+    parameters and a simpler loss surface, so it tolerates (and benefits
+    from) a faster step size for quicker convergence. */
+export const LEARNING_RATE = 0.007;
+/** Weight of the auxiliary color-classification loss vs. the action MSE. */
+export const COLOR_LOSS_WEIGHT = 0.3;
+
+export interface VLAModels {
+  /** Main policy: [vision, tokens] → [action Δθ (2), color softmax]. */
+  model: tfType.LayersModel;
 }
 
-/**
- * Multi-input VLA graph: 16x16 RGB pixels are chunked into 4x4 spatial
- * patches (conv stride = kernel, the ViT-style patch embedding), the token
- * sequence goes through a learned embedding; both flatten into a fused
- * bottleneck that regresses two joint-velocity outputs. Adam at a high LR +
- * MSE so behavioral cloning visibly converges within ~10s in the browser.
- */
-export function buildVLAModel(tf: TF): tfType.LayersModel {
-  // Branch A: vision (explicit 4x4 spatial patching). 16 filters, not the
-  // minimal 4: the policy must regress BOTH joint angles across mirrored
-  // elbow configurations from 16x16 pixels — with 4 filters it gives up on
-  // vision entirely and plateaus at the language-only loss (~1.5), which
-  // makes the closed-loop rollout overshoot into the joint limits.
-  const visionInput = tf.input({ shape: [16, 16, 3], name: "vision_pixels" });
-  const patchConv = tf.layers
+export function buildVLAModel(tf: TF): VLAModels {
+  // Branch A: vision CNN
+  const visionInput = tf.input({
+    shape: [IMG_SIZE, IMG_SIZE, 3],
+    name: "vision_pixels",
+  });
+  let v = tf.layers
     .conv2d({
-      filters: 16,
-      kernelSize: 4,
-      strides: 4,
+      filters: 8,
+      kernelSize: 3,
+      padding: "same",
       activation: "relu",
-      name: "patch_embeddings",
+      name: "conv1",
     })
     .apply(visionInput);
-  const flattenVision = tf.layers.flatten().apply(patchConv);
+  v = tf.layers.maxPooling2d({ poolSize: 2 }).apply(v);
+  v = tf.layers
+    .conv2d({
+      filters: 16,
+      kernelSize: 3,
+      padding: "same",
+      activation: "relu",
+      name: "conv2",
+    })
+    .apply(v);
+  v = tf.layers.maxPooling2d({ poolSize: 2 }).apply(v);
+  v = tf.layers
+    .conv2d({
+      filters: 24,
+      kernelSize: 3,
+      strides: 2,
+      activation: "relu",
+      name: "conv3",
+    })
+    .apply(v);
+  const flatVision = tf.layers.flatten().apply(v); // 4x4x24 = 384
 
-  // Branch B: language (sequence embedding)
+  // Branch B: language — bag-of-embeddings, no recurrence
   const langInput = tf.input({
     shape: [MAX_SEQ_LEN],
     name: "language_tokens",
     dtype: "int32",
   });
-  const textEmbedding = tf.layers
+  const embedded = tf.layers
     .embedding({
-      inputDim: Object.keys(VOCAB).length,
-      outputDim: 8,
-      name: "text_embedding_layer",
+      inputDim: VOCAB_SIZE,
+      outputDim: 24,
+      name: "text_embedding",
     })
-    .apply(langInput);
-  const flattenLang = tf.layers.flatten().apply(textEmbedding);
+    .apply(langInput); // [12, 24]
+  const langPooled = tf.layers
+    .globalAveragePooling1d({ name: "lang_vector" })
+    .apply(embedded); // 24
 
-  // Fusion bottleneck + regression action head
-  const fusedFeatures = tf.layers
+  // fusion + heads
+  const fused = tf.layers
     .concatenate()
-    .apply([flattenVision, flattenLang] as tfType.SymbolicTensor[]);
+    .apply([flatVision, langPooled] as tfType.SymbolicTensor[]);
   const dense1 = tf.layers
     .dense({ units: 64, activation: "relu" })
-    .apply(fusedFeatures);
+    .apply(fused);
   const actionOutput = tf.layers
-    .dense({ units: 2, activation: "linear", name: "joint_velocities" })
+    .dense({ units: 2, activation: "linear", name: "action" })
     .apply(dense1) as tfType.SymbolicTensor;
+  // aux head reads ONLY the language vector — usable as a pure text decoder
+  const colorOutput = tf.layers
+    .dense({ units: COLORS.length, activation: "softmax", name: "color" })
+    .apply(langPooled) as tfType.SymbolicTensor;
 
   const model = tf.model({
     inputs: [visionInput, langInput],
-    outputs: actionOutput,
+    outputs: [actionOutput, colorOutput],
   });
-
+  // tfjs-layers doesn't implement compile({lossWeights}) — scale the aux
+  // color loss inside a custom per-output loss function instead (and the
+  // loss array must then be all-functions, so MSE is a function too)
+  const actionLoss = (yTrue: tfType.Tensor, yPred: tfType.Tensor) =>
+    tf.metrics.MSE(yTrue, yPred);
+  const weightedColorLoss = (yTrue: tfType.Tensor, yPred: tfType.Tensor) =>
+    tf.tidy(() =>
+      tf.metrics.categoricalCrossentropy(yTrue, yPred).mul(COLOR_LOSS_WEIGHT)
+    );
   model.compile({
-    optimizer: tf.train.adam(0.008),
-    loss: "meanSquaredError",
+    optimizer: tf.train.adam(LEARNING_RATE),
+    loss: [actionLoss, weightedColorLoss],
   });
 
-  return model;
+  return { model };
 }

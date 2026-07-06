@@ -1,5 +1,22 @@
 [
   {
+    "slug": "mini-vla",
+    "title": "mini-vla",
+    "venue": "Open Source",
+    "period": "Ongoing",
+    "blurb": "",
+    "tags": [
+      "VLM"
+    ],
+    "links": [
+      {
+        "label": "Code",
+        "href": "https://github.com/lbm2001/mini-vla"
+      }
+    ],
+    "body": "Writing coming soon."
+  },
+  {
     "slug": "ev-charging-optimal-vs-heuristics",
     "title": "Optimal versus Heuristic Policies for Electrical Vehicle Charging",
     "venue": "Aarhus University",
@@ -67,6 +84,10 @@
       {
         "label": "Code",
         "href": "https://github.com/lbm2001/lascroge"
+      },
+      {
+        "label": "Paper",
+        "href": "https://github.com/lbm2001/lascroge/releases/download/paper-latest/lukas-mueller_large-scale-robot-generation.pdf"
       }
     ],
     "aiAssisted": true,
