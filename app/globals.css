@@ -150,26 +150,37 @@ a {
   }
 }
 
-/* ---- Hero (six learning demos ringed around the name) ---- */
+/* ---- Hero (live VLA pipeline ringed around the name) ----
+   The stage fills the viewport below the nav; four pipeline boxes sit at
+   fixed anchors around the dead-centered name/CTA, joined by orthogonal SVG
+   wires. Toggling training only changes opacity/labels — nothing reflows. */
 .hero {
   position: relative;
-  min-height: 800px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  padding: 40px;
+  height: calc(100vh - 61px);
+  min-height: 700px;
   overflow: hidden;
   background: var(--bg);
 }
 .hero-content {
-  position: relative;
-  z-index: 2;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 10;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 18px;
+  text-align: center;
+  pointer-events: none;
+  transition: opacity 0.55s ease;
+}
+/* focus shifts to the pipeline while training runs */
+.hero.is-training .hero-content {
+  opacity: 0.25;
+}
+.hero-cta {
+  pointer-events: auto;
 }
 .hero-tag {
   font: 600 11px/1 var(--font-mono);
@@ -387,9 +398,6 @@ a {
   .mini-ll {
     margin-top: 20px;
   }
-  .hero {
-    min-height: 860px;
-  }
 }
 
 /* ---- Small ring, tier 1: small phones collapse to 4 demos, shown larger ----
@@ -453,9 +461,6 @@ a {
   .mini-sm-rl2,
   .mini-sm-nn2 {
     right: 20px;
-  }
-  .hero {
-    min-height: 540px;
   }
 }
 
@@ -527,6 +532,351 @@ a {
   border: 1px solid rgba(0, 0, 0, 0.22);
   border-radius: 3px;
   text-decoration: none;
+}
+
+/* ---- VLA pipeline (hero) ----
+   Wires: an SVG layer under the boxes; paths are measured/routed at runtime
+   from the real DOM positions (Hero.tsx layoutWires). Base rails are always
+   visible; the accent glow + marching dash only fade in while training. */
+.vla-wires {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 1;
+}
+.vla-wire-base {
+  fill: none;
+  stroke: rgba(0, 0, 0, 0.16);
+  stroke-width: 1.4;
+  stroke-linejoin: round;
+}
+.vla-wire-signal {
+  opacity: 0;
+  transition: opacity 0.35s ease;
+}
+.is-training .vla-wire-signal {
+  opacity: 1;
+}
+.vla-wire-glow {
+  fill: none;
+  stroke: var(--red);
+  stroke-width: 1.8;
+  stroke-linejoin: round;
+  opacity: 0.16;
+}
+.vla-wire-dash {
+  fill: none;
+  stroke: var(--red);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 8 22;
+  opacity: 0.55;
+}
+.vla-dash-a {
+  animation: vla-dashmove 3.6s linear infinite;
+}
+.vla-dash-b {
+  animation: vla-dashmove 3.6s linear infinite;
+  animation-delay: 0.6s;
+}
+@keyframes vla-dashmove {
+  to {
+    stroke-dashoffset: -1000;
+  }
+}
+
+/* the four pipeline boxes, at fixed anchors around the hero */
+.vla-node {
+  position: absolute;
+  z-index: 3;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 14px;
+}
+.vla-input {
+  left: 2.5%;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 212px;
+}
+.vla-vision {
+  left: 50%;
+  top: 4%;
+  transform: translateX(-50%);
+  text-align: center;
+}
+.vla-lang {
+  left: 50%;
+  /* 73% of the stage, but never under the training bar on short viewports */
+  top: min(73%, calc(100% - 250px));
+  transform: translateX(-50%);
+  padding: 14px 16px;
+}
+.vla-output {
+  right: 2.5%;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 212px;
+}
+
+/* box labels sit dead-center while idle, snap to top-left flow once training
+   starts (the only thing that visibly moves — boxes never reposition) */
+.vla-label {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font: 600 10px/1 var(--font-mono);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.is-training .vla-label {
+  position: static;
+  transform: none;
+  margin-bottom: 10px;
+}
+/* the Demonstration box shows its looping animation instead of a label at
+   rest, so that label stays hidden until training */
+.vla-label-demo {
+  opacity: 0;
+  transition: opacity 0.35s ease;
+}
+.is-training .vla-label-demo {
+  opacity: 1;
+}
+
+/* everything gated by the training toggle only changes opacity — canvases
+   keep their layout size at all times so nothing reflows */
+.vla-detail {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.35s ease;
+}
+.is-training .vla-detail {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.vla-canvas {
+  width: 100%;
+  height: 186px;
+  display: block;
+}
+/* live joint-angle read-out under the Demonstration and Rollout canvases */
+.vla-joints {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 8px;
+  font: 500 10px/1 var(--font-mono);
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+.vla-vision-canvas {
+  width: 176px;
+  height: 176px;
+  display: block;
+  margin: 0 auto;
+}
+
+/* the raw prompt "textarea" — floats above the Demonstration box and is the
+   source of the language-encoder wire */
+.vla-prompt {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  margin-bottom: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  border-radius: 3px;
+  background: #fff;
+  padding: 9px 11px 12px;
+  font: 500 12.5px/1.45 var(--font-mono);
+  color: var(--ink);
+}
+.vla-grip {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 9px;
+  height: 9px;
+  background: repeating-linear-gradient(
+    135deg,
+    transparent 0 2px,
+    rgba(0, 0, 0, 0.3) 2px 3px
+  );
+}
+
+/* language encoder internals */
+.vla-prompt-echo {
+  font: 500 11.5px/1 var(--font-mono);
+  color: var(--muted);
+  margin-bottom: 11px;
+}
+.vla-chip-row {
+  display: flex;
+  align-items: center;
+}
+.vla-tok {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+}
+.vla-chip {
+  font: 500 12px/1 var(--font-mono);
+  background: #f4f4f4;
+  border: 1px solid var(--border);
+  color: var(--body);
+  padding: 6px 10px;
+  border-radius: 3px;
+}
+.vla-arrow {
+  color: #cfcfcf;
+  font-size: 13px;
+  padding: 0 6px;
+  margin-bottom: 14px;
+}
+.vla-attn {
+  width: 26px;
+  height: 4px;
+  background: #ececec;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.vla-attn-fill {
+  height: 100%;
+  background: var(--red);
+  transition: width 0.3s ease;
+}
+.vla-attn-caption {
+  margin-top: 9px;
+  font: 500 9px/1 var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #c3bab3;
+}
+
+/* training control bar */
+.vla-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 3.5%;
+  transform: translateX(-50%);
+  z-index: 8;
+  width: min(560px, 86vw);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 12px 14px;
+}
+.vla-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 96px;
+}
+.vla-status-col {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+/* background progress: examples consumed by the training loop */
+.vla-status-sub {
+  font: 500 9px/1 var(--font-mono);
+  color: var(--muted);
+}
+.vla-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #c9c9c9;
+}
+.vla-dot.is-on {
+  background: var(--red);
+  animation: vla-pulse 1.4s ease-in-out infinite;
+}
+@keyframes vla-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.6);
+    opacity: 0.35;
+  }
+}
+.vla-status-text {
+  font: 600 11px/1 var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--body);
+}
+.vla-loss {
+  flex: 1;
+}
+.vla-loss-label {
+  font: 500 10px/1 var(--font-mono);
+  color: var(--muted);
+  margin-bottom: 5px;
+}
+.vla-loss-canvas {
+  width: 100%;
+  height: 34px;
+  display: block;
+}
+.vla-loss-val {
+  font: 600 12px/1 var(--font-mono);
+  color: var(--ink);
+  min-width: 46px;
+  text-align: right;
+}
+.vla-btn {
+  cursor: pointer;
+  border-radius: 3px;
+  padding: 10px 16px;
+  font: 600 13px/1 var(--font-sans);
+  background: var(--ink);
+  color: #fff;
+  border: 1px solid var(--ink);
+  white-space: nowrap;
+}
+.is-training .vla-btn {
+  background: #fff;
+  color: var(--ink);
+  border-color: rgba(0, 0, 0, 0.22);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vla-dash-a,
+  .vla-dash-b,
+  .vla-dot.is-on {
+    animation: none;
+  }
+}
+
+/* Below the desktop tier the four boxes would collide with the name — the
+   pipeline (and its control bar) steps aside and the hero stays a clean
+   centered intro. */
+@media (max-width: 1099px) {
+  .vla-node,
+  .vla-wires,
+  .vla-bar {
+    display: none;
+  }
+  .hero {
+    height: auto;
+    min-height: 560px;
+  }
 }
 
 /* return/episode chart strip below hero */
