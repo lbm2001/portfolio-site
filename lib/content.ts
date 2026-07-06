@@ -45,7 +45,7 @@ export interface Post {
 
 export const profile = {
   name: "Lukas Müller",
-  lead: "Building the next generation of intelligent machines. My current focus is on Vision-Language-Action models that enable robots to learn from demonstrations.",
+  lead: "Building intelligent machines that learn. Passionate about statistics, machine learning, and robot learning. My current focus is on Vision-Language-Action models that enable robots to learn from demonstrations.",
   focus: "Imitation Learning, VLAs",
   field: "Machine Learning & Robot Learning",
   location: "Frankfurt, Germany",
