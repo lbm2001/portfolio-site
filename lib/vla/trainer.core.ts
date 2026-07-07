@@ -46,7 +46,13 @@ import {
   sampleSentence,
   type Layout,
 } from "./examples";
-import { IMG_SIZE, buildVLAModel, type VLAModels, type TF } from "./model";
+import {
+  ATTN_GRID,
+  IMG_SIZE,
+  buildVLAModel,
+  type VLAModels,
+  type TF,
+} from "./model";
 import { EMBED_DIM } from "./vocab.gen";
 import { embeddingMatrix, loadEmbeddings } from "./embeddings";
 
@@ -77,6 +83,19 @@ export type TrainerStatus =
   | "training"
   | "paused"
   | "converged";
+
+/** One policy inference: the action plus the "where the model looks" viz,
+    all read from a single forward pass of the viz twin (see model.ts). */
+export interface PredictResult {
+  /** Predicted ABSOLUTE target joint angles. */
+  target: [number, number];
+  /** Spatial attention over the ATTN_GRID×ATTN_GRID vision cells, row-major,
+      normalized so the peak cell is 1 (ready to use as overlay alpha). */
+  attn: number[];
+  /** The map's soft-argmax — where the model looks, in [0,1] image coords of
+      the silhouette view (x right, y down). */
+  xy: [number, number];
+}
 
 /** 2D context in either environment (worker OffscreenCanvas / DOM canvas). */
 type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
@@ -178,6 +197,38 @@ export class VLATrainerCore {
     return (Math.random() + Math.random() - 1) * std * 2;
   }
 
+  /** Write the attention-map label for one sample into ysM: BILINEAR weights
+      over the (up to) 4 grid cells around the commanded block's visual center
+      in the silhouette view. Soft on purpose — a hard one-hot label would
+      train the map toward a one-hot, quantizing the soft-argmax readout to
+      cell centers (measured: ~0.15 median reach error); the bilinear label's
+      CE optimum is a distribution whose EXPECTATION is the block's continuous
+      position, so sub-cell precision survives. Mirrors paintSilhouette's
+      geometry: sceneMap placement plus the silBlockScale boost, so the label
+      points at the pixels the model actually sees. */
+  private writeMapLabel(ysM: Float32Array, base: number, x: number, size: number) {
+    const G = ATTN_GRID;
+    const u = 0.5 + (x - 0.5) * CONFIG.render.sceneScale;
+    const yCenter = (size * CONFIG.render.silBlockScale) / 2;
+    const v = CONFIG.render.floorY - yCenter * CONFIG.render.sceneScale;
+    // continuous cell coords (cell centers sit at integer +0.5 / G)
+    const cx = u * G - 0.5;
+    const cy = v * G - 0.5;
+    const j0 = Math.floor(cx);
+    const i0 = Math.floor(cy);
+    const fx = cx - j0;
+    const fy = cy - i0;
+    for (const [i, j, w] of [
+      [i0, j0, (1 - fy) * (1 - fx)],
+      [i0, j0 + 1, (1 - fy) * fx],
+      [i0 + 1, j0, fy * (1 - fx)],
+      [i0 + 1, j0 + 1, fy * fx],
+    ]) {
+      if (i < 0 || i >= G || j < 0 || j >= G || w === 0) continue;
+      ysM[base + i * G + j] += w;
+    }
+  }
+
   /**
    * One gradient step on a freshly synthesized micro-batch.
    * Returns the batch's action loss (Huber).
@@ -185,10 +236,12 @@ export class VLATrainerCore {
   private async trainStep(): Promise<number> {
     const tf = this.tf!;
     const px = IMG_SIZE * IMG_SIZE * 3;
+    const cells = ATTN_GRID * ATTN_GRID;
     const vis = new Float32Array(BATCH_SIZE * px);
     const lang = new Int32Array(BATCH_SIZE * MAX_SEQ_LEN);
     const ysA = new Float32Array(BATCH_SIZE * 2);
     const ysC = new Float32Array(BATCH_SIZE * COLORS.length);
+    const ysM = new Float32Array(BATCH_SIZE * cells);
 
     for (let i = 0; i < BATCH_SIZE; i++) {
       const layout = randomLayout();
@@ -219,6 +272,9 @@ export class VLATrainerCore {
       ysA[i * 2] = t1;
       ysA[i * 2 + 1] = t2;
       ysC[i * COLORS.length + sentence.color] = 1;
+      // attention supervision: bilinear soft label on the commanded block's
+      // position (see model.ts — the action loss alone cannot sharpen the map)
+      this.writeMapLabel(ysM, i * cells, target.x, target.size);
 
       // INVERTED intensities (background 0, content sparse positive) — fed
       // raw, the near-all-white image saturates the conv branch and the
@@ -245,19 +301,21 @@ export class VLATrainerCore {
     const xsLang = tf.tensor2d(lang, [BATCH_SIZE, MAX_SEQ_LEN], "int32");
     const yAction = tf.tensor2d(ysA, [BATCH_SIZE, 2]);
     const yColor = tf.tensor2d(ysC, [BATCH_SIZE, COLORS.length]);
+    const yMap = tf.tensor2d(ysM, [BATCH_SIZE, cells]);
 
     try {
       const h = await this.models!.model.trainOnBatch(
         [xsVision, xsLang],
-        [yAction, yColor]
+        [yAction, yColor, yMap]
       );
-      // multi-output: [totalLoss, actionLoss, colorLoss]
+      // multi-output: [totalLoss, actionLoss, colorLoss, mapLoss]
       return Array.isArray(h) ? (h[1] as number) : (h as number);
     } finally {
       xsVision.dispose();
       xsLang.dispose();
       yAction.dispose();
       yColor.dispose();
+      yMap.dispose();
     }
   }
 
@@ -442,20 +500,22 @@ export class VLATrainerCore {
   }
 
   /**
-   * Policy inference for the live rollout: render the arm's current state
-   * (pose + the rollout's own block layout) to the same 32x32 view the
-   * training samples use, run the model, return the predicted ABSOLUTE
-   * target joint angles (not a delta — the caller subtracts its own known
-   * current pose to get the step direction; see Hero.tsx's drawArm).
+   * Policy inference on the LIVE (still-training) model: render the given
+   * state (pose + block layout) to the same model's-eye view the training
+   * samples use, run the viz twin, return the predicted ABSOLUTE target
+   * joint angles plus the spatial-attention readout (not a delta — the
+   * caller subtracts its own known current pose to get the step direction;
+   * see Hero.tsx's drawArm). Also serves the Vision Encoder panel's live
+   * "where the model looks" heatmap during training.
    */
   predictTarget(
     a1: number,
     a2: number,
     tokens: number[],
     layout: Layout
-  ): [number, number] | null {
+  ): PredictResult | null {
     if (!this.ready) return null;
-    return this.inferTarget(this.models!.model, a1, a2, tokens, layout);
+    return this.inferTarget(this.models!, a1, a2, tokens, layout);
   }
 
   /**
@@ -487,29 +547,56 @@ export class VLATrainerCore {
     a2: number,
     tokens: number[],
     layout: Layout
-  ): [number, number] | null {
+  ): PredictResult | null {
     if (!this.ready) return null;
-    const model = this.frozenModels?.model ?? this.models!.model;
-    return this.inferTarget(model, a1, a2, tokens, layout);
+    return this.inferTarget(
+      this.frozenModels ?? this.models!,
+      a1,
+      a2,
+      tokens,
+      layout
+    );
   }
 
-  /** Render the state, run the given model, return predicted target angles. */
+  /** Render the state, run the given models' viz twin, return the predicted
+      target angles + attention readout (one forward pass for both). */
   private inferTarget(
-    model: tfType.LayersModel,
+    models: VLAModels,
     a1: number,
     a2: number,
     tokens: number[],
     layout: Layout
-  ): [number, number] {
+  ): PredictResult {
     const tf = this.tf!;
     const img = this.renderPose(a1, a2, layout);
     const out = tf.tidy(() => {
       const v = this.visionTensor(img);
       const l = tf.tensor2d([tokens], [1, MAX_SEQ_LEN], "int32");
-      const [action] = model.predict([v, l]) as tfType.Tensor[];
-      return action.dataSync();
+      const [action, attn] = models.viz.predict([v, l]) as tfType.Tensor[];
+      return { action: action.dataSync(), attn: attn.dataSync() };
     });
-    return [out[0], out[1]];
+    // the UI's gaze point: the map's expectation in plain [0,1] image coords,
+    // computed here CPU-side (the in-graph attn_grid kernel feeds the action
+    // head CENTERED+GAINED coords — see config.ts attnCoordGain — so it isn't
+    // directly displayable). Must use the RAW softmax map, before the peak
+    // normalization below.
+    const G = ATTN_GRID;
+    let ux = 0;
+    let vy = 0;
+    let peak = 0;
+    for (let i = 0; i < out.attn.length; i++) {
+      const w = out.attn[i];
+      ux += w * ((i % G) + 0.5);
+      vy += w * (Math.floor(i / G) + 0.5);
+      if (w > peak) peak = w;
+    }
+    // normalize the map so the peak cell is 1 — the UI uses it as alpha
+    const inv = peak > 0 ? 1 / peak : 0;
+    return {
+      target: [out.action[0], out.action[1]],
+      attn: Array.from(out.attn, (a) => a * inv),
+      xy: [ux / G, vy / G],
+    };
   }
 
   /**

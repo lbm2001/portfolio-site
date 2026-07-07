@@ -14,24 +14,17 @@
 // as a comment — read those before turning a knob, several are load-bearing.
 // ─────────────────────────────────────────────────────────────────────────
 
-/** One convolution stage of the vision encoder. */
+/** One convolution stage of the vision encoder (relu activation). */
 export interface ConvLayer {
   filters: number;
   kernel: number;
   /** conv stride (default 1). */
   stride?: number;
   /** "same" keeps the spatial size (default); "valid" shrinks it by the
-      kernel — the final strided stage uses "valid" to downsample into the
-      flatten. */
+      kernel. */
   padding?: "same" | "valid";
-  /** apply 2x2 max-pool after this conv (and after FiLM, if any). */
+  /** apply 2x2 max-pool after this conv. */
   pool?: boolean;
-  /** "linear" only for the FiLM-modulated stage (FiLM applies the relu);
-      "relu" for every other stage. */
-  activation?: "relu" | "linear";
-  /** the language vector FiLM-modulates THIS stage's output. Exactly one conv
-      layer should set this; its `filters` count sets the FiLM vector width. */
-  film?: boolean;
 }
 
 export const CONFIG = {
@@ -40,19 +33,38 @@ export const CONFIG = {
     /** Square input resolution fed to the CNN. Raised 32→64 lets the policy
         resolve WHERE in its placement band a block sits (block ~8px, band
         ~12px) so it reaches precisely; at 32 the position blurred to ~3px and
-        it could only learn the per-band mean target. The CNN is symbolic
-        (flatten→dense adapts), so this is the only downstream knob — but
+        it could only learn the per-band mean target. The CNN and attention
+        grid adapt symbolically, so this is the only downstream knob — but
         per-batch vision compute scales ~4x vs 32. Keep RENDER_SIZE ≈ 4x this. */
     imgSize: 64,
     /** Adam learning rate. 0.005 won the 2026-07 sweep at batchSize 32 /
         imgSize 64: 0.008 was collapse-prone (side-binding failure on bad
         seeds) and 0.003 measurably slower without being more reliable. */
-    learningRate: 0.005,
+    learningRate: 0.0015,
     /** Weight of the auxiliary color-classification loss vs. the action loss.
         0.4 was the most collapse-resistant setting in the sweep (0 side-binding
         collapses across 7 seeds vs 1/7 at 0.2); 0.2 peaked slightly higher on
         lucky seeds but is riskier. */
     colorLossWeight: 0.4,
+    /** Weight of the auxiliary attention-map loss: cross-entropy between the
+        spatial attention map and the commanded block's grid cell. WHY IT
+        EXISTS: the action loss alone cannot train the attention — with a
+        near-uniform 16×16 map the softmax Jacobian dilutes its gradient by
+        ~1/256, and the map never sharpens (measured: loss flat at the ~0.78
+        language-only plateau for 300+ batches). CE through the softmax has
+        an undiluted (map − onehot) gradient, and the supervision is free —
+        the expert already knows which block it labeled. */
+    mapLossWeight: 1.5,
+    /** Scale of the frozen soft-argmax coordinate kernel: the fusion sees the
+        gaze as (imageCoord − 0.5) × this gain. WHY: in raw [0,1] units the
+        within-band position signal spans only ~0.16 while the other ~74
+        fusion inputs swing ~1.0, so the coordinate pathway's gradients are
+        ~10x smaller and the action head parks on a per-side-mean policy
+        (measured: gaze accurate to 0.003 while the reach still missed by
+        0.10). This is plain feature standardization — the kernel is frozen,
+        so the gain is exact, not a learned scale that early training could
+        squash. */
+    attnCoordGain: 16,
     /** Huber transition point for the action loss. The two IK target clusters
         (commanded block left vs. right) sit ~4.3 rad apart, so plain MSE lets
         the rare (~1%) wrong-side pick (cost ~9.3) dominate over regression
@@ -63,17 +75,22 @@ export const CONFIG = {
         quadratic zone while catching wrong-side picks early. */
     actionHuberDelta: 0.6,
     /** Vision CNN stack, in order. Add/remove entries to change depth; edit
-        filters/kernel/stride/pool to retune a stage. FiLM (language→per-channel
-        scale+shift) modulates the `film:true` stage mid-CNN so the command can
-        amplify the named color's channels — a stronger vision↔language binding
-        than the late concat alone. That stage is LINEAR (FiLM applies the relu
-        after the scale/shift). */
+        filters/kernel/stride/pool to retune a stage. The LAST stage's output
+        map is what the language-conditioned spatial attention scores (see
+        model.ts) — its spatial size sets the attention grid (64 → two pools →
+        16×16 here), and its `filters` sets the attention query width. Keep the
+        final map reasonably fine: the soft-argmax readout interpolates BELOW
+        cell size, but the "does this cell match the command" scoring can only
+        separate blocks that land in different cells. */
     conv: [
-      { filters: 8, kernel: 3, pool: true, activation: "relu" },
-      { filters: 16, kernel: 3, pool: true, activation: "linear", film: true },
-      { filters: 24, kernel: 3, stride: 2, activation: "relu" },
+      { filters: 8, kernel: 3, pool: true },
+      { filters: 16, kernel: 3, pool: true },
+      { filters: 24, kernel: 3 },
     ] as ConvLayer[],
-    /** Units in the fused (vision ⊕ language) hidden layer before the heads. */
+    /** Units in the fused hidden layer before the heads. The fusion input is
+        now small and structured — soft-argmax (x̂,ŷ) + attended features +
+        language vector, not a flattened feature map — so this mostly learns
+        the coordinate→angles map. */
     fusionUnits: 64,
   },
 

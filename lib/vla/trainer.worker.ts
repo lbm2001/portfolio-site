@@ -10,10 +10,17 @@
 //   {t:"start", gen}                     {t:"state", gen, status, loss,
 //   {t:"pause"|"resume"|"reset", gen}      smoothLoss, initialLoss, batches}
 //   {t:"snapshot", gen}                    — after every batch + control msg
-//   {t:"predict", id, a1, a2,            {t:"predict", id, target}
-//     tokens, layout, gen}               {t:"decode", id, result}
-//   {t:"decode", id, tokens, gen}        {t:"attention", id, result}
-//   {t:"attention", id, tokens, gen}     {t:"vocab", words}
+//   {t:"predict", id, a1, a2,            {t:"predict", id, result}
+//     tokens, layout, gen}               {t:"predictLive", id, result}
+//   {t:"predictLive", id, a1, a2,        {t:"decode", id, result}
+//     tokens, layout, gen}               {t:"attention", id, result}
+//   {t:"decode", id, tokens, gen}        {t:"vocab", words}
+//   {t:"attention", id, tokens, gen}
+//
+// "predict" runs the FROZEN per-cycle snapshot (the rollout's policy);
+// "predictLive" runs the still-training model (the Vision Encoder panel's
+// live gaze heatmap). Both reply with a full PredictResult — target angles
+// plus the spatial-attention map — from one forward pass.
 //
 // `gen` is the proxy's reset-generation counter: it's echoed on every state
 // post so the proxy can drop state messages that were already in flight when
@@ -28,7 +35,7 @@
 // thread's tokenizer (examples.ts) needs registerFullVocab too — worker and
 // page each have their own copy of that module's state.
 
-import { VLATrainerCore } from "./trainer.core";
+import { VLATrainerCore, type PredictResult } from "./trainer.core";
 import { loadEmbeddings, vocabWords } from "./embeddings";
 import type { Layout } from "./examples";
 
@@ -40,6 +47,15 @@ export type WorkerRequest =
   | { t: "snapshot"; gen: number }
   | {
       t: "predict";
+      id: number;
+      a1: number;
+      a2: number;
+      tokens: number[];
+      layout: Layout;
+      gen: number;
+    }
+  | {
+      t: "predictLive";
       id: number;
       a1: number;
       a2: number;
@@ -60,7 +76,8 @@ export type WorkerResponse =
       initialLoss: number;
       batches: number;
     }
-  | { t: "predict"; id: number; target: [number, number] | null }
+  | { t: "predict"; id: number; result: PredictResult | null }
+  | { t: "predictLive"; id: number; result: PredictResult | null }
   | { t: "decode"; id: number; result: { color: number; prob: number } | null }
   | { t: "attention"; id: number; result: number[] | null }
   | { t: "vocab"; words: string[] };
@@ -122,7 +139,14 @@ onmessage = (e: MessageEvent<WorkerRequest>) => {
       post({
         t: "predict",
         id: msg.id,
-        target: core.predictFrozenTarget(msg.a1, msg.a2, msg.tokens, msg.layout),
+        result: core.predictFrozenTarget(msg.a1, msg.a2, msg.tokens, msg.layout),
+      });
+      break;
+    case "predictLive":
+      post({
+        t: "predictLive",
+        id: msg.id,
+        result: core.predictTarget(msg.a1, msg.a2, msg.tokens, msg.layout),
       });
       break;
     case "decode":

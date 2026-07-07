@@ -27,10 +27,14 @@
 
 import { CONFIG } from "./config";
 import { registerFullVocab, type Layout } from "./examples";
-import { VLATrainerCore, type TrainerStatus } from "./trainer.core";
+import {
+  VLATrainerCore,
+  type PredictResult,
+  type TrainerStatus,
+} from "./trainer.core";
 import type { WorkerRequest, WorkerResponse } from "./trainer.worker";
 
-export type { TrainerStatus };
+export type { PredictResult, TrainerStatus };
 
 const BATCH_SIZE = CONFIG.trainer.batchSize;
 
@@ -156,7 +160,8 @@ export class VLATrainer {
           registerFullVocab(msg.words);
           break;
         case "predict":
-          this.take(msg.id)?.(msg.target as never);
+        case "predictLive":
+          this.take(msg.id)?.(msg.result as never);
           break;
         case "decode":
           this.take(msg.id)?.(msg.result as never);
@@ -275,20 +280,39 @@ export class VLATrainer {
   }
 
   /**
-   * Policy inference against the frozen per-cycle snapshot — now async (the
-   * render + forward pass happen in the worker). The caller keeps stepping
-   * toward its previous target until the reply lands; see Hero.tsx.
+   * Policy inference against the frozen per-cycle snapshot — async (the
+   * render + forward pass happen in the worker). Replies with the target
+   * angles PLUS the spatial-attention readout from the same pass. The caller
+   * keeps stepping toward its previous target until the reply lands; see
+   * Hero.tsx.
    */
   predictFrozenTarget(
     a1: number,
     a2: number,
     tokens: number[],
     layout: Layout
-  ): Promise<[number, number] | null> {
+  ): Promise<PredictResult | null> {
     if (this.core)
       return Promise.resolve(this.core.predictFrozenTarget(a1, a2, tokens, layout));
     if (!this.ready) return Promise.resolve(null);
     return this.request({ t: "predict", a1, a2, tokens, layout });
+  }
+
+  /**
+   * Same inference, but on the LIVE (still-training) model — powers the
+   * Vision Encoder panel's "where the model looks" heatmap during training,
+   * queried against the demonstration's current state.
+   */
+  predictLive(
+    a1: number,
+    a2: number,
+    tokens: number[],
+    layout: Layout
+  ): Promise<PredictResult | null> {
+    if (this.core)
+      return Promise.resolve(this.core.predictTarget(a1, a2, tokens, layout));
+    if (!this.ready) return Promise.resolve(null);
+    return this.request({ t: "predictLive", a1, a2, tokens, layout });
   }
 
   /** Decode which color a token sequence names (auxiliary language head). */

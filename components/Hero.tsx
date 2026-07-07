@@ -10,7 +10,7 @@ import {
   fk,
   graspTarget,
 } from "@/lib/vla/geometry";
-import { effectorPx, paintScene, paintSilhouette } from "@/lib/vla/scene";
+import { effectorPx, paintScene, paintSilhouette, sceneMap } from "@/lib/vla/scene";
 import {
   COLORS,
   DEFAULT_LAYOUT,
@@ -121,15 +121,25 @@ export default function Hero() {
   const armState = useRef({ a1: REST[0], a2: REST[1] });
   const trailRef = useRef<{ x: number; y: number }[]>([]);
   const targetRef = useRef<[number, number] | null>(null);
+  // the spatial-attention readout riding along with the rollout's last
+  // prediction: where the (frozen) policy is looking, drawn as a gaze marker
+  // on the Rollout canvas (xy is in [0,1] silhouette image coords)
+  const gazeRef = useRef<[number, number] | null>(null);
+  // live-model attention over the DEMONSTRATION state — the Vision Encoder
+  // panel's heatmap (ATTN_GRID² weights, peak-normalized by the trainer)
+  const visGazeRef = useRef<number[] | null>(null);
   const lastPredRef = useRef(0);
   const lastHudRef = useRef(0);
   const lastLangRef = useRef(0);
+  const lastVisGazeRef = useRef(0);
   // in-flight guards for the async trainer-worker round-trips: never queue a
-  // second predict (or language-readout) request while one is outstanding.
-  // On a slow GPU a request can take longer than its throttle interval — an
-  // unbounded FIFO backlog in the worker would starve training entirely.
+  // second predict (or language-readout / gaze) request while one is
+  // outstanding. On a slow GPU a request can take longer than its throttle
+  // interval — an unbounded FIFO backlog in the worker would starve training
+  // entirely.
   const predInFlightRef = useRef(false);
   const langInFlightRef = useRef(false);
+  const visGazeInFlightRef = useRef(false);
   // paused-duration accounting so the demo cycle resumes exactly where it
   // left off instead of jumping ahead by the real wall-clock pause length
   const pausedAccumRef = useRef(0);
@@ -327,6 +337,39 @@ export default function Hero() {
       });
     };
 
+    // The policy's gaze on the Rollout scene: the soft-argmax of the spatial
+    // attention map that rode along with the last prediction. xy is in the
+    // SILHOUETTE's [0,1] image coords — invert that renderer's sceneMap back
+    // to workspace units, then forward-map into this canvas. Drawn only while
+    // a reach is live (that's when the prediction is current).
+    const drawGaze = (
+      ctx: CanvasRenderingContext2D,
+      W: number,
+      H: number
+    ) => {
+      const g = gazeRef.current;
+      if (!g || episodeRef.current?.phase !== "reach") return;
+      const sc = CONFIG.render.sceneScale;
+      const wx = 0.5 + (g[0] - 0.5) / sc;
+      const wy = (CONFIG.render.floorY - g[1]) / sc;
+      const m = sceneMap(W, H);
+      const px = m.X(wx);
+      const py = m.Y(wy);
+      const rad = 14;
+      const grad = ctx.createRadialGradient(px, py, 0, px, py, rad);
+      grad.addColorStop(0, "rgba(225,45,26,0.30)");
+      grad.addColorStop(1, "rgba(225,45,26,0)");
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(px, py, rad, 0, 7);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(225,45,26,0.75)";
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.arc(px, py, 4.5, 0, 7);
+      ctx.stroke();
+    };
+
     // advance one episode by a frame (reach → lift → return); ends by
     // nulling the episode (arm left at REST) — training re-syncs a fresh
     // attempt on the next demo cycle, converged waits for the next command
@@ -351,10 +394,14 @@ export default function Hero() {
           predInFlightRef.current = true;
           void trainer
             .predictFrozenTarget(arm.a1, arm.a2, ep.tokens, rolloutLayoutRef.current)
-            .then((t) => {
+            .then((r) => {
               predInFlightRef.current = false;
-              if (t && episodeRef.current === ep && ep.phase === "reach")
-                targetRef.current = t;
+              if (r && episodeRef.current === ep && ep.phase === "reach") {
+                targetRef.current = r.target;
+                // the same forward pass carries the policy's gaze — drawn as
+                // a marker on the rollout scene while the reach is live
+                gazeRef.current = r.xy;
+              }
             });
         }
         const t = targetRef.current;
@@ -433,6 +480,7 @@ export default function Hero() {
           accent: ACCENT,
           carry: ep?.carry ?? null,
         });
+        drawGaze(ctx, W, H);
         setActionVals(targetRef.current);
         return;
       }
@@ -455,6 +503,7 @@ export default function Hero() {
             arm.a2 = REST[1];
             trailRef.current = [];
             targetRef.current = null;
+            gazeRef.current = null;
             trainer.snapshotPolicy();
             episodeRef.current = newEpisode(
               demoSentenceRef.current.color,
@@ -480,6 +529,7 @@ export default function Hero() {
         lossNorm: trainer?.lossNorm() ?? 1,
         carry: ep?.carry ?? null,
       });
+      drawGaze(ctx, W, H);
       setActionVals(st === "idle" ? null : targetRef.current);
     };
 
@@ -489,10 +539,11 @@ export default function Hero() {
       arm.a2 = REST[1];
       trailRef.current = [];
       targetRef.current = null;
+      gazeRef.current = null;
       episodeRef.current = null;
     };
 
-    const drawVision = () => {
+    const drawVision = (now: number) => {
       const c = visionRef.current;
       if (!c) return;
       // once trained the encoder goes dormant: stop feeding it the demo
@@ -529,9 +580,55 @@ export default function Hero() {
       // 32x32 input, blown up pixelated
       ctx.imageSmoothingEnabled = false;
       ctx.drawImage(thumb, 0, 0, IMG_SIZE, IMG_SIZE, 0, 0, W, W);
+
+      // "where the model looks": the live model's spatial attention over THIS
+      // demonstration state, as a per-cell alpha overlay (peak-normalized by
+      // the trainer). Early in training it's a diffuse smear; it visibly
+      // sharpens onto the commanded block as the policy learns to bind the
+      // command to the scene.
+      const gaze = visGazeRef.current;
+      if (gaze && statusRef.current !== "idle") {
+        const G = Math.round(Math.sqrt(gaze.length));
+        const cell = W / G;
+        for (let i = 0; i < G; i++)
+          for (let j = 0; j < G; j++) {
+            const a = gaze[i * G + j];
+            if (a < 0.04) continue;
+            ctx.fillStyle = `rgba(225,45,26,${(0.45 * a).toFixed(3)})`;
+            ctx.fillRect(j * cell, i * cell, cell + 0.5, cell + 0.5);
+          }
+      }
+
       ctx.strokeStyle = "rgba(0,0,0,.12)";
       ctx.lineWidth = 1;
       ctx.strokeRect(0.5, 0.5, W - 1, W - 1);
+
+      // refresh the gaze on a throttle (same cadence as the language panel),
+      // against the demonstration's current pose + command, on the LIVE
+      // model — this is training-progress chrome, like decodeColor. One
+      // request in flight, ever (see the in-flight guards note above).
+      const trainer = trainerRef.current;
+      if (
+        trainer?.ready &&
+        statusRef.current === "training" &&
+        now - lastVisGazeRef.current > LANG_MS &&
+        !visGazeInFlightRef.current
+      ) {
+        lastVisGazeRef.current = now;
+        visGazeInFlightRef.current = true;
+        const p = demoPoseRef.current;
+        void trainer
+          .predictLive(
+            p.a1,
+            p.a2,
+            demoSentenceRef.current.tokens,
+            demoLayoutRef.current
+          )
+          .then((r) => {
+            visGazeInFlightRef.current = false;
+            if (r) visGazeRef.current = r.attn;
+          });
+      }
     };
 
     const drawLossCurve = () => {
@@ -623,7 +720,7 @@ export default function Hero() {
       layoutWires();
       drawDemo(now);
       drawArm(now);
-      drawVision();
+      drawVision(now);
       drawLossCurve();
       langViz(now);
       raf = requestAnimationFrame(loop);
@@ -647,6 +744,8 @@ export default function Hero() {
         episodeRef.current = null;
         trailRef.current = [];
         targetRef.current = null;
+        gazeRef.current = null;
+        visGazeRef.current = null;
         armState.current = { a1: REST[0], a2: REST[1] };
         // detach the rollout scene from the demo's: during training
         // rolloutLayoutRef holds the SAME objects as demoLayoutRef (assigned,
@@ -680,6 +779,8 @@ export default function Hero() {
       rolloutCycleRef.current = -1;
       trailRef.current = [];
       targetRef.current = null;
+      gazeRef.current = null;
+      visGazeRef.current = null;
       armState.current = { a1: REST[0], a2: REST[1] };
       userSentenceRef.current = null;
       pausedAccumRef.current = 0;
@@ -698,6 +799,8 @@ export default function Hero() {
     rolloutCycleRef.current = -1;
     trailRef.current = [];
     targetRef.current = null;
+    gazeRef.current = null;
+    visGazeRef.current = null;
     armState.current = { a1: REST[0], a2: REST[1] };
     demoLayoutRef.current = DEFAULT_LAYOUT;
     demoSentenceRef.current = DEFAULT_SENTENCE;
@@ -747,6 +850,7 @@ export default function Hero() {
     armState.current = { a1: REST[0], a2: REST[1] };
     trailRef.current = [];
     targetRef.current = null;
+    gazeRef.current = null;
     episodeRef.current = newEpisode(d.color, tokens);
   };
 
@@ -756,6 +860,7 @@ export default function Hero() {
     episodeRef.current = null;
     trailRef.current = [];
     targetRef.current = null;
+    gazeRef.current = null;
     armState.current = { a1: REST[0], a2: REST[1] };
     setTryNote(null);
   };
@@ -815,6 +920,7 @@ export default function Hero() {
     episodeRef.current = null;
     trailRef.current = [];
     targetRef.current = null;
+    gazeRef.current = null;
     armState.current = { a1: REST[0], a2: REST[1] };
     setTryNote(null);
     c.style.cursor = "grabbing";
