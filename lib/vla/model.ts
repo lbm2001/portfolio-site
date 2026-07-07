@@ -5,7 +5,13 @@
 // Vision: a real 3-layer CNN over the 32x32 scene (conv → pool → conv →
 // pool → strided conv), not a single patch projection — the policy must
 // tell the two blocks in a scene apart by color AND regress both joint
-// angles.
+// angles. The language vector FiLM-modulates the conv2 feature map (a per-
+// channel scale+shift derived from the command; see makeFiLM) so the word can
+// amplify the vision channels for the named color MID-CNN, with conv3 + the
+// heads downstream to read and act on that highlight. This is a stronger
+// vision↔language binding than the late concat alone, which left the action
+// head to re-derive the color from a raw 50-d sentence vector and cross-
+// reference it with vision by itself — the "picks the wrong block" failure.
 // Language: an ATTENTION-POOLED bag-of-embeddings. Embed each token, score
 // each one with a small learned linear scorer, then combine them with a
 // masked softmax (padding forced to zero attention) into a single weighted-
@@ -57,6 +63,9 @@ export const COLOR_LOSS_WEIGHT = 0.3;
     floor to ~0.025 and smooths the descent. 0.6 keeps correct-side samples
     comfortably in the quadratic zone while catching wrong-side picks early. */
 export const ACTION_HUBER_DELTA = 0.6;
+/** conv2 output channels — and thus the width of the FiLM scale/shift vectors
+    the language branch produces to modulate it. */
+const FILM_CHANNELS = 16;
 
 export interface VLAModels {
   /** Main policy: [vision, tokens] → [action Δθ (2), color softmax]. */
@@ -101,47 +110,51 @@ function makeAttentionPooling(tf: TF) {
 }
 
 /**
+ * FiLM (Feature-wise Linear Modulation): given a conv feature map [B, H, W, C]
+ * plus per-channel scale/shift vectors gamma/beta [B, C] (produced from the
+ * language vector by two small Dense layers), it returns
+ * relu(featureMap * gamma + beta), broadcasting gamma/beta across the spatial
+ * dims. This lets the command reshape the vision features mid-CNN — "pick red"
+ * can amplify the channels that fire on red and suppress the rest — instead of
+ * the action head binding a raw language vector to vision by late concat.
+ * Holds no weights of its own (the gamma/beta Dense layers are separate), so
+ * the live + frozen snapshot models stay weight-order compatible. Built as a
+ * factory for the same reason AttentionPooling is (subclass the dynamically-
+ * imported tfjs Layer).
+ */
+function makeFiLM(tf: TF) {
+  return class FiLM extends tf.layers.Layer {
+    static className = "FiLM";
+
+    computeOutputShape(
+      inputShape: tfType.Shape | tfType.Shape[]
+    ): tfType.Shape | tfType.Shape[] {
+      return (inputShape as tfType.Shape[])[0]; // unchanged: the feature map's
+    }
+
+    call(
+      inputs: tfType.Tensor | tfType.Tensor[]
+    ): tfType.Tensor | tfType.Tensor[] {
+      return tf.tidy(() => {
+        const [fm, gamma, beta] = inputs as tfType.Tensor[];
+        const c = (fm.shape as number[])[3];
+        // broadcast one scale/shift per CHANNEL across every pixel
+        const g = tf.reshape(gamma, [-1, 1, 1, c]);
+        const b = tf.reshape(beta, [-1, 1, 1, c]);
+        return tf.relu(tf.add(tf.mul(fm, g), b));
+      });
+    }
+  };
+}
+
+/**
  * @param embedMatrix Dequantized pretrained GloVe table,
  *   [VOCAB_SIZE, EMBED_DIM] row-major (from lib/vla/embeddings.ts).
  */
 export function buildVLAModel(tf: TF, embedMatrix: Float32Array): VLAModels {
-  // Branch A: vision CNN
-  const visionInput = tf.input({
-    shape: [IMG_SIZE, IMG_SIZE, 3],
-    name: "vision_pixels",
-  });
-  let v = tf.layers
-    .conv2d({
-      filters: 8,
-      kernelSize: 3,
-      padding: "same",
-      activation: "relu",
-      name: "conv1",
-    })
-    .apply(visionInput);
-  v = tf.layers.maxPooling2d({ poolSize: 2 }).apply(v);
-  v = tf.layers
-    .conv2d({
-      filters: 16,
-      kernelSize: 3,
-      padding: "same",
-      activation: "relu",
-      name: "conv2",
-    })
-    .apply(v);
-  v = tf.layers.maxPooling2d({ poolSize: 2 }).apply(v);
-  v = tf.layers
-    .conv2d({
-      filters: 24,
-      kernelSize: 3,
-      strides: 2,
-      activation: "relu",
-      name: "conv3",
-    })
-    .apply(v);
-  const flatVision = tf.layers.flatten().apply(v); // 4x4x24 = 384
-
-  // Branch B: language — attention-pooled bag-of-embeddings (no recurrence)
+  // Branch B is built FIRST — the vision branch's FiLM step consumes
+  // langPooled, so the language vector has to exist before the CNN is wired.
+  // Language: attention-pooled bag-of-embeddings (no recurrence).
   const langInput = tf.input({
     shape: [MAX_SEQ_LEN],
     name: "language_tokens",
@@ -167,7 +180,74 @@ export function buildVLAModel(tf: TF, embedMatrix: Float32Array): VLAModels {
     langInput,
   ]) as tfType.SymbolicTensor; // EMBED_DIM
 
-  // fusion + heads
+  // Branch A: vision CNN, with the language vector FiLM-modulating conv2.
+  const visionInput = tf.input({
+    shape: [IMG_SIZE, IMG_SIZE, 3],
+    name: "vision_pixels",
+  });
+  let v = tf.layers
+    .conv2d({
+      filters: 8,
+      kernelSize: 3,
+      padding: "same",
+      activation: "relu",
+      name: "conv1",
+    })
+    .apply(visionInput);
+  v = tf.layers.maxPooling2d({ poolSize: 2 }).apply(v);
+  // conv2 is LINEAR: FiLM applies the language-conditioned scale/shift and THEN
+  // the relu (standard FiLM placement — modulate pre-activation).
+  v = tf.layers
+    .conv2d({
+      filters: FILM_CHANNELS,
+      kernelSize: 3,
+      padding: "same",
+      name: "conv2",
+    })
+    .apply(v);
+  // language → per-channel scale (gamma) and shift (beta), one each per conv2
+  // channel. Zero kernels + gamma-bias 1 / beta-bias 0 make the modulation the
+  // IDENTITY at init (gamma=1, beta=0), so training starts exactly where the
+  // plain CNN did and LEARNS the modulation on top instead of fighting a random
+  // rescaling of the vision features. The zero kernel still trains — its
+  // gradient is driven by the (nonzero) language input.
+  const gamma = tf.layers
+    .dense({
+      units: FILM_CHANNELS,
+      name: "film_gamma",
+      kernelInitializer: "zeros",
+      biasInitializer: "ones",
+    })
+    .apply(langPooled) as tfType.SymbolicTensor;
+  const beta = tf.layers
+    .dense({
+      units: FILM_CHANNELS,
+      name: "film_beta",
+      kernelInitializer: "zeros",
+    })
+    .apply(langPooled) as tfType.SymbolicTensor;
+  const FiLM = makeFiLM(tf);
+  v = new FiLM({ name: "film" }).apply([
+    v,
+    gamma,
+    beta,
+  ] as tfType.SymbolicTensor[]);
+  v = tf.layers.maxPooling2d({ poolSize: 2 }).apply(v);
+  v = tf.layers
+    .conv2d({
+      filters: 24,
+      kernelSize: 3,
+      strides: 2,
+      activation: "relu",
+      name: "conv3",
+    })
+    .apply(v);
+  const flatVision = tf.layers.flatten().apply(v); // 4x4x24 = 384
+
+  // fusion + heads. langPooled is still concatenated late (belt-and-suspenders:
+  // the action head keeps a direct language path on top of the FiLM-tuned
+  // vision); the color aux head reads ONLY langPooled, so it stays a pure text
+  // decoder and the live "decoded target" readout is unchanged.
   const fused = tf.layers
     .concatenate()
     .apply([flatVision, langPooled] as tfType.SymbolicTensor[]);

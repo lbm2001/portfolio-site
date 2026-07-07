@@ -15,7 +15,7 @@ export const L2 = 0.26;
 export const BASE = { x: 0.5, y: 0.2 };
 
 /** Block side length, in workspace units. */
-export const BLOCK = 0.08;
+export const BLOCK = 0.12;
 
 /** Upright rest pose (straight up from the base). */
 export const REST: [number, number] = [Math.PI / 2, 0];

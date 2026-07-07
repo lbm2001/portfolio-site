@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { profile, resumeDownloadName } from "@/lib/content";
 import {
   REST,
@@ -158,6 +158,7 @@ export default function Hero() {
   const [demoSentence, setDemoSentence] = useState<Sentence>(DEFAULT_SENTENCE);
   const [userSentence, setUserSentence] = useState<Sentence | null>(null);
   const [tryText, setTryText] = useState("");
+  const chipRowRef = useRef<HTMLDivElement | null>(null);
   const [tokenBars, setTokenBars] = useState<number[]>([]);
   const [decoded, setDecoded] = useState<{ name: string; hex: string; prob: number } | null>(null);
   const [tryNote, setTryNote] = useState<string | null>(null);
@@ -729,6 +730,25 @@ export default function Hero() {
   };
 
   const active = userSentence ?? demoSentence;
+
+  // Keep the language-encoder chips on a single line for any sentence length:
+  // measure the row's natural (unwrapped) width against its width budget and
+  // scale the whole row down to fit. Short sentences render at 1:1.
+  useLayoutEffect(() => {
+    const row = chipRowRef.current;
+    if (!row) return;
+    const fit = () => {
+      row.style.setProperty("--chip-fit", "1");
+      const budget = row.clientWidth; // the max-width budget from CSS
+      const natural = row.scrollWidth; // full single-line content width
+      const scale = natural > budget ? budget / natural : 1;
+      row.style.setProperty("--chip-fit", `${scale}`);
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  }, [active.text]);
+
   const live = status !== "idle";
   const statusText =
     status === "idle"
@@ -853,7 +873,7 @@ export default function Hero() {
       <div className="vla-node vla-lang" ref={langCardRef}>
         <div className="vla-label">Language Encoder</div>
         <div className="vla-prompt-echo">&quot;{active.text}&quot;</div>
-        <div className="vla-chip-row">
+        <div className="vla-chip-row" ref={chipRowRef}>
           {active.words.map((w, i) => (
             <Fragment key={`${w}-${i}`}>
               {i > 0 && (
