@@ -7,26 +7,26 @@
 // the vision input and the expert labels can never disagree about where
 // things are.
 
-// Link lengths sized so the full reach circle (base ± 0.58) stays inside the
-// rendered canvas — longer links let wild early-training poses swing the
-// forearm out of the box.
-export const L1 = 0.32;
-export const L2 = 0.26;
-export const BASE = { x: 0.5, y: 0.2 };
+// All values below are knobs — tune them in lib/vla/config.ts. See the CONFIG
+// comments there for the reach-circle / pose-range / block-size rationale.
+import { CONFIG } from "./config";
 
-/** Block side length, in workspace units. */
-export const BLOCK = 0.12;
+export const L1 = CONFIG.arm.l1;
+export const L2 = CONFIG.arm.l2;
+export const BASE = CONFIG.arm.base;
+
+/** Reference block side length, in workspace units — the SSR-default size and
+    the fallback when a block carries no explicit size. Per-scene blocks
+    randomize their side length in [BLOCK_MIN, BLOCK_MAX] (see examples.ts). */
+export const BLOCK = CONFIG.block.ref;
+export const BLOCK_MIN = CONFIG.block.min;
+export const BLOCK_MAX = CONFIG.block.max;
 
 /** Upright rest pose (straight up from the base). */
-export const REST: [number, number] = [Math.PI / 2, 0];
+export const REST: [number, number] = CONFIG.arm.rest;
 
-// Pose-sampling ranges for synthesizing training states. theta2 spans BOTH
-// elbow configurations: the IK solutions for floor blocks sit near
-// |theta2| ≈ 2 rad, so a narrower range would mean the expert's own target
-// configurations are never seen during training and the converged rollout
-// runs out-of-distribution.
-export const THETA1_RANGE: [number, number] = [-0.3, Math.PI + 0.3];
-export const THETA2_RANGE: [number, number] = [-2.4, 2.4];
+export const THETA1_RANGE: [number, number] = CONFIG.arm.theta1Range;
+export const THETA2_RANGE: [number, number] = CONFIG.arm.theta2Range;
 
 /**
  * Analytical 2-link inverse kinematics. Target coords are relative to the
@@ -66,15 +66,16 @@ export function solveIK(
   return [theta1, theta2];
 }
 
-/** Grasp target for a block centered at floor position x: the block CENTER —
-    the effector moves into the block before the grasp/lift. */
-export function graspTarget(x: number) {
-  return { x, y: BLOCK / 2 };
+/** Grasp target for a block of side `size` centered at floor position x: the
+    block CENTER (y = size/2) — the effector moves into the block before the
+    grasp/lift. A bigger block is grasped higher, so its size feeds the IK. */
+export function graspTarget(x: number, size = BLOCK) {
+  return { x, y: size / 2 };
 }
 
 /** IK joint angles that put the end effector at a block's grasp point. */
-export function ikToX(x: number): [number, number] {
-  const t = graspTarget(x);
+export function ikToX(x: number, size = BLOCK): [number, number] {
+  const t = graspTarget(x, size);
   return solveIK(t.x - BASE.x, t.y - BASE.y);
 }
 

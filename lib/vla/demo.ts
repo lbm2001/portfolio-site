@@ -17,27 +17,23 @@
 // the same speed regardless of the period; the period only sets how much
 // resting tail follows the release before the next cycle begins.
 
+import { CONFIG } from "./config";
 import { BASE, REST, graspTarget, solveIK } from "./geometry";
 import { blockOfColor, type Layout } from "./examples";
 
-// Synced cycle length. Trimmed from 8000 to cut most of the post-release
-// resting tail: the scripted demo's motion finishes at ~4.26s (release; see
-// the phase sums below), so 5000 leaves only a short beat at REST before the
-// next cycle. At ~5s/cycle the viewer sees ~5 policy generations in the ~25s
-// before convergence unlocks "try it" mode. Hero.tsx's REACH_TIMEOUT must
-// stay >= this in frames or a rollout would give up before the cycle reset.
-export const DEMO_PERIOD_MS = 5000;
+// Cycle length + trajectory phases are knobs — tune in lib/vla/config.ts.
+// The scripted motion is defined in ABSOLUTE ms (the phases below), independent
+// of the period, so the crisp reach keeps its speed regardless of how much
+// resting tail the period leaves. rollout.reachTimeout (config) in frames must
+// stay >= DEMO_PERIOD_MS or a rollout would give up before the cycle reset.
+export const DEMO_PERIOD_MS = CONFIG.demo.periodMs;
 
-// Absolute-time trajectory phases (ms), independent of DEMO_PERIOD_MS: the
-// scripted arm always reaches at this fixed, crisp speed. Sum of the motion
-// phases (~2.85s) + HOLD is the "active" part; the remainder of the period is
-// the arm resting at home before the next cycle.
-const VIA_MS = 672; // rest -> mid-trajectory waypoint
-const REACH_MS = 672; // waypoint -> block center
-const SETTLE_MS = 420; // settle on the block center
-const LIFT_MS = 1092; // straight up back to rest
-const GRASP_AT_MS = 1430; // block grasped mid-settle (carry begins)
-const HOLD_MS = 1400; // held aloft after the lift completes (was ~500)
+const VIA_MS = CONFIG.demo.phases.viaMs; // rest -> mid-trajectory waypoint
+const REACH_MS = CONFIG.demo.phases.reachMs; // waypoint -> block center
+const SETTLE_MS = CONFIG.demo.phases.settleMs; // settle on the block center
+const LIFT_MS = CONFIG.demo.phases.liftMs; // straight up back to rest
+const GRASP_AT_MS = CONFIG.demo.phases.graspAtMs; // block grasped mid-settle
+const HOLD_MS = CONFIG.demo.phases.holdMs; // held aloft after the lift completes
 
 export interface DemoPlan {
   color: number; // index into COLORS
@@ -58,12 +54,14 @@ const ease = (x: number) =>
   x <= 0 ? 0 : x >= 1 ? 1 : (1 - Math.cos(x * Math.PI)) / 2;
 
 export function makeDemoPlan(layout: Layout, color: number): DemoPlan {
-  const g = graspTarget(blockOfColor(layout, color).x);
-  const reach = solveIK(g.x + jitter(0.012) - BASE.x, g.y + jitter(0.008) - BASE.y);
+  const b = blockOfColor(layout, color);
+  const j = CONFIG.demo.jitter;
+  const g = graspTarget(b.x, b.size); // grasp height follows the block's size
+  const reach = solveIK(g.x + jitter(j.graspX) - BASE.x, g.y + jitter(j.graspY) - BASE.y);
   // a noisy mid-trajectory waypoint so every approach path differs
   const via: [number, number] = [
-    lerp(REST[0], reach[0], 0.5) + jitter(0.3),
-    lerp(REST[1], reach[1], 0.5) + jitter(0.45),
+    lerp(REST[0], reach[0], 0.5) + jitter(j.viaTheta1),
+    lerp(REST[1], reach[1], 0.5) + jitter(j.viaTheta2),
   ];
   return { color, via, reach };
 }

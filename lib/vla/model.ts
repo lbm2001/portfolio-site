@@ -2,7 +2,7 @@
 // via dynamic import in trainer.ts) so this module stays SSR-safe and the
 // ~1MB tfjs bundle is fetched lazily on "Start Training".
 //
-// Vision: a real 3-layer CNN over the 32x32 scene (conv → pool → conv →
+// Vision: a real 3-layer CNN over the 64x64 scene (conv → pool → conv →
 // pool → strided conv), not a single patch projection — the policy must
 // tell the two blocks in a scene apart by color AND regress both joint
 // angles. The language vector FiLM-modulates the conv2 feature map (a per-
@@ -38,34 +38,18 @@
 // bars — no extra sub-model or forward pass required.
 
 import type * as tfType from "@tensorflow/tfjs";
+import { CONFIG } from "./config";
 import { MAX_SEQ_LEN, VOCAB_SIZE, COLORS } from "./examples";
 import { EMBED_DIM } from "./vocab.gen";
 
 export type TF = typeof tfType;
 
-export const IMG_SIZE = 32;
-
-/** Adam learning rate. Bumped from the GRU-era 0.004 now that the language
-    branch is a much smaller bag-of-embeddings — the network has fewer
-    parameters and a simpler loss surface, so it tolerates (and benefits
-    from) a faster step size for quicker convergence. */
-export const LEARNING_RATE = 0.007;
-/** Weight of the auxiliary color-classification loss vs. the action loss. */
-export const COLOR_LOSS_WEIGHT = 0.3;
-/** Huber transition point for the action loss. The two IK target clusters
-    (commanded block on the left vs. right) sit ~4.3 rad apart, so under plain
-    MSE a single wrong-side pick costs ~9.3 — the loss ends up dominated by
-    the rare (~1%) misclassification tail rather than regression precision,
-    which both floors the loss near ~0.09 and makes its gradient thrash on
-    outliers. Huber is quadratic below DELTA (keeps precise regression on the
-    correct-side jitter, whose spread is ~0.1 rad) and LINEAR above it, capping
-    a wrong-side pick at ~2.5 instead of ~9.3. That drops the same-accuracy
-    floor to ~0.025 and smooths the descent. 0.6 keeps correct-side samples
-    comfortably in the quadratic zone while catching wrong-side picks early. */
-export const ACTION_HUBER_DELTA = 0.6;
-/** conv2 output channels — and thus the width of the FiLM scale/shift vectors
-    the language branch produces to modulate it. */
-const FILM_CHANNELS = 16;
+// Every architecture/optimizer knob below is tuned in lib/vla/config.ts; the
+// rationale for each value is documented there.
+export const IMG_SIZE = CONFIG.model.imgSize;
+export const LEARNING_RATE = CONFIG.model.learningRate;
+export const COLOR_LOSS_WEIGHT = CONFIG.model.colorLossWeight;
+export const ACTION_HUBER_DELTA = CONFIG.model.actionHuberDelta;
 
 export interface VLAModels {
   /** Main policy: [vision, tokens] → [action Δθ (2), color softmax]. */
@@ -180,69 +164,63 @@ export function buildVLAModel(tf: TF, embedMatrix: Float32Array): VLAModels {
     langInput,
   ]) as tfType.SymbolicTensor; // EMBED_DIM
 
-  // Branch A: vision CNN, with the language vector FiLM-modulating conv2.
+  // Branch A: vision CNN. The stack is data-driven from CONFIG.model.conv
+  // (edit that to change depth / kernel sizes / channels). The language vector
+  // FiLM-modulates the one stage flagged `film` mid-CNN, so the command can
+  // amplify the named color's channels before the downstream convs read them.
   const visionInput = tf.input({
     shape: [IMG_SIZE, IMG_SIZE, 3],
     name: "vision_pixels",
   });
-  let v = tf.layers
-    .conv2d({
-      filters: 8,
-      kernelSize: 3,
-      padding: "same",
-      activation: "relu",
-      name: "conv1",
-    })
-    .apply(visionInput);
-  v = tf.layers.maxPooling2d({ poolSize: 2 }).apply(v);
-  // conv2 is LINEAR: FiLM applies the language-conditioned scale/shift and THEN
-  // the relu (standard FiLM placement — modulate pre-activation).
-  v = tf.layers
-    .conv2d({
-      filters: FILM_CHANNELS,
-      kernelSize: 3,
-      padding: "same",
-      name: "conv2",
-    })
-    .apply(v);
-  // language → per-channel scale (gamma) and shift (beta), one each per conv2
-  // channel. Zero kernels + gamma-bias 1 / beta-bias 0 make the modulation the
-  // IDENTITY at init (gamma=1, beta=0), so training starts exactly where the
-  // plain CNN did and LEARNS the modulation on top instead of fighting a random
-  // rescaling of the vision features. The zero kernel still trains — its
-  // gradient is driven by the (nonzero) language input.
-  const gamma = tf.layers
-    .dense({
-      units: FILM_CHANNELS,
-      name: "film_gamma",
-      kernelInitializer: "zeros",
-      biasInitializer: "ones",
-    })
-    .apply(langPooled) as tfType.SymbolicTensor;
-  const beta = tf.layers
-    .dense({
-      units: FILM_CHANNELS,
-      name: "film_beta",
-      kernelInitializer: "zeros",
-    })
-    .apply(langPooled) as tfType.SymbolicTensor;
   const FiLM = makeFiLM(tf);
-  v = new FiLM({ name: "film" }).apply([
-    v,
-    gamma,
-    beta,
-  ] as tfType.SymbolicTensor[]);
-  v = tf.layers.maxPooling2d({ poolSize: 2 }).apply(v);
-  v = tf.layers
-    .conv2d({
-      filters: 24,
-      kernelSize: 3,
-      strides: 2,
-      activation: "relu",
-      name: "conv3",
-    })
-    .apply(v);
-  const flatVision = tf.layers.flatten().apply(v); // 4x4x24 = 384
+  let v: tfType.SymbolicTensor = visionInput;
+  CONFIG.model.conv.forEach((layer, i) => {
+    v = tf.layers
+      .conv2d({
+        filters: layer.filters,
+        kernelSize: layer.kernel,
+        strides: layer.stride ?? 1,
+        padding: layer.padding ?? "same",
+        // the FiLM stage is LINEAR — FiLM applies the scale/shift and THEN the
+        // relu (standard pre-activation FiLM placement)
+        activation: layer.film ? "linear" : layer.activation ?? "relu",
+        name: `conv${i + 1}`,
+      })
+      .apply(v) as tfType.SymbolicTensor;
+    if (layer.film) {
+      // language → per-channel scale (gamma) and shift (beta), one each per
+      // this stage's channel. Zero kernels + gamma-bias 1 / beta-bias 0 make
+      // the modulation the IDENTITY at init (gamma=1, beta=0), so training
+      // starts exactly where the plain CNN did and LEARNS the modulation on top
+      // instead of fighting a random rescaling of the vision features. The zero
+      // kernel still trains — its gradient is driven by the language input.
+      const gamma = tf.layers
+        .dense({
+          units: layer.filters,
+          name: "film_gamma",
+          kernelInitializer: "zeros",
+          biasInitializer: "ones",
+        })
+        .apply(langPooled) as tfType.SymbolicTensor;
+      const beta = tf.layers
+        .dense({
+          units: layer.filters,
+          name: "film_beta",
+          kernelInitializer: "zeros",
+        })
+        .apply(langPooled) as tfType.SymbolicTensor;
+      v = new FiLM({ name: "film" }).apply([
+        v,
+        gamma,
+        beta,
+      ] as tfType.SymbolicTensor[]) as tfType.SymbolicTensor;
+    }
+    if (layer.pool)
+      v = tf.layers
+        .maxPooling2d({ poolSize: 2 })
+        .apply(v) as tfType.SymbolicTensor;
+  });
+  const flatVision = tf.layers.flatten().apply(v);
 
   // fusion + heads. langPooled is still concatenated late (belt-and-suspenders:
   // the action head keeps a direct language path on top of the FiLM-tuned
@@ -252,7 +230,7 @@ export function buildVLAModel(tf: TF, embedMatrix: Float32Array): VLAModels {
     .concatenate()
     .apply([flatVision, langPooled] as tfType.SymbolicTensor[]);
   const dense1 = tf.layers
-    .dense({ units: 64, activation: "relu" })
+    .dense({ units: CONFIG.model.fusionUnits, activation: "relu" })
     .apply(fused);
   const actionOutput = tf.layers
     .dense({ units: 2, activation: "linear", name: "action" })

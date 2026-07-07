@@ -24,6 +24,7 @@
 // without the ~1MB bundle; batches are paced with awaits between steps so
 // the rendering thread stays at 60fps.
 
+import { CONFIG } from "./config";
 import { THETA1_RANGE, THETA2_RANGE, clamp, ikToX } from "./geometry";
 import { paintSilhouette } from "./scene";
 import {
@@ -44,65 +45,24 @@ import { embeddingMatrix, loadEmbeddings } from "./embeddings";
 
 import type * as tfType from "@tensorflow/tfjs";
 
-// Halved from 32: fewer canvas renders + smaller tensors per batch means
-// roughly 2x the gradient steps per wall-clock second — for a task this
-// small the noisier per-step gradient estimate is a good trade for more
-// frequent updates within a ~15s budget.
-const BATCH_SIZE = 16;
-/** Silhouettes are drawn at 128px then averaged down to 32 — rendered at
-    32px directly the sub-pixel arm strokes alias away. */
-const RENDER_SIZE = 128;
-/** Minimum gap between batches, so training never starves the rAF loop. The
-    render loop runs on its own rAF and only needs a sliver of main-thread time
-    yielded back between gradient steps — 30ms here left ~1/3 of every second
-    idle. At ~8ms the rAF loop still gets its slice while ~25% more gradient
-    steps fit into the same ~15s budget. */
-const BATCH_GAP_MS = 8;
-/** Fraction of samples drawn NEAR the commanded block's own IK solution
-    (rest are uniform over the full pose range). The label no longer depends
-    on this sampled pose (it's an absolute target now), but the rendered
-    silhouette still does — this keeps vision well-trained on what the scene
-    looks like as the rollout closes in near the target, not just far away. */
-const NEAR_TARGET_FRAC = 0.35;
-const NEAR_TARGET_STD = 0.5;
-/** Training word-dropout: chance a non-color token becomes <unk>. */
-const WORD_DROPOUT = 0.1;
+// All tuning knobs live in lib/vla/config.ts — the rationale for each value is
+// documented there. Aliased to locals so the loop body below reads the same.
+const BATCH_SIZE = CONFIG.trainer.batchSize;
+const RENDER_SIZE = CONFIG.trainer.renderSize;
+const BATCH_GAP_MS = CONFIG.trainer.batchGapMs;
+const NEAR_TARGET_FRAC = CONFIG.trainer.nearTargetFrac;
+const NEAR_TARGET_STD = CONFIG.trainer.nearTargetStd;
+const WORD_DROPOUT = CONFIG.trainer.wordDropout;
 
 // Convergence: the mean action loss over a short trailing WINDOW of batches
-// stays under CONVERGE_LOSS for CONVERGE_STREAK consecutive batches (after a
-// minimum warmup) → training ends and unlocks "try it" mode. MAX_BATCHES is
-// the fixed-budget fallback: whatever the loss floor turns out to be,
-// training ends and the policy becomes usable.
-//
-// This used to judge convergence on an EMA with alpha=0.05 — a ~20-batch
-// time constant, so ~1/alpha lag before the smoothed value even crossed the
-// threshold. Work the step response: if the true loss dropped to ~0.05, the
-// EMA needed ~67 more batches just to cross 0.08 (0.95^n < 0.03/0.95), i.e.
-// ~6s of pure DETECTION latency after the policy had already learned the
-// task. A trailing-window mean of the RAW loss crosses within ~WINDOW
-// batches as the old high values roll off — an order of magnitude less lag
-// for the same stability, since the streak still guards against a lucky dip.
-//
-// MIN_BATCHES/CONVERGE_STREAK used to be 300/20 — a 320-batch FLOOR before
-// convergence could ever be flagged, regardless of how good the loss got.
-// At ~60-100ms/batch that alone is 16-32s, which structurally ruled out
-// ever hitting a ~15s convergence target no matter how learnable the task
-// was. Lowered so the floor (60 batches) leaves real headroom in the budget.
-//
-// Threshold is on the HUBER action loss now (see model.ts), not raw MSE:
-// with a wrong-side pick capped at ~2.5 instead of ~9.3, the same ~1%
-// misclassification tail floors the loss near ~0.025 rather than ~0.09.
-// 0.07 sits above that floor with room to spare — the side-classification is
-// solved well before the loss grinds down to the floor, and the last stretch
-// of descent is just fine-regression polish. Handing off at 0.07 (was 0.045)
-// enters "try it" mode noticeably sooner while the policy is already reliably
-// picking the right block — the remaining fine-regression gain isn't worth
-// stalling the demo for. Raise further to hand off even earlier.
-export const CONVERGE_LOSS = 0.07;
-const CONVERGE_WINDOW = 10;
-const CONVERGE_STREAK = 5;
-const MIN_BATCHES = 60;
-const MAX_BATCHES = 1800;
+// stays under CONVERGE_LOSS for CONVERGE_STREAK consecutive batches (after
+// MIN_BATCHES warmup) → training ends and unlocks "try it" mode. MAX_BATCHES is
+// the fixed-budget fallback. Threshold is on the HUBER action loss (model.ts).
+export const CONVERGE_LOSS = CONFIG.trainer.converge.loss;
+const CONVERGE_WINDOW = CONFIG.trainer.converge.window;
+const CONVERGE_STREAK = CONFIG.trainer.converge.streak;
+const MIN_BATCHES = CONFIG.trainer.converge.minBatches;
+const MAX_BATCHES = CONFIG.trainer.converge.maxBatches;
 
 export type TrainerStatus =
   | "idle"
@@ -213,12 +173,14 @@ export class VLATrainer {
       const layout = randomLayout();
       // command one of the two colors actually present in this scene
       const sentence = sampleSentence(presentColor(layout));
-      const targetX = blockOfColor(layout, sentence.color).x;
+      const target = blockOfColor(layout, sentence.color);
+      // the IK label depends on the target block's SIZE too (grasp height =
+      // size/2), so a bigger commanded block resolves to a higher reach
+      const [t1, t2] = ikToX(target.x, target.size);
 
       let a1: number;
       let a2: number;
       if (Math.random() < NEAR_TARGET_FRAC) {
-        const [t1, t2] = ikToX(targetX);
         a1 = clamp(t1 + this.gauss(NEAR_TARGET_STD), THETA1_RANGE[0], THETA1_RANGE[1]);
         a2 = clamp(t2 + this.gauss(NEAR_TARGET_STD), THETA2_RANGE[0], THETA2_RANGE[1]);
       } else {
@@ -229,11 +191,10 @@ export class VLATrainer {
       // ABSOLUTE target joint angles, not a delta from the sampled pose:
       // the label no longer depends on the (randomized, for robustness)
       // pose the arm is rendered at — only on which side the commanded
-      // color is on. That removes the need for the network to also read
-      // the current pose out of the image and implicitly subtract; the
-      // rollout computes its own delta from this against its actual known
-      // current pose (see Hero.tsx).
-      const [t1, t2] = ikToX(targetX);
+      // color is on (and now its size). That removes the need for the network
+      // to also read the current pose out of the image and implicitly
+      // subtract; the rollout computes its own delta from this against its
+      // actual known current pose (see Hero.tsx).
       ysA[i * 2] = t1;
       ysA[i * 2 + 1] = t2;
       ysC[i * COLORS.length + sentence.color] = 1;

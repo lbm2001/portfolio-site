@@ -508,6 +508,7 @@ a {
 }
 /* the boxes' real content fades in as the label leaves the centre */
 .vla-vision-canvas,
+.vla-vision-hint,
 .vla-prompt-echo,
 .vla-chip-row,
 .vla-decoded {
@@ -571,6 +572,42 @@ a {
   height: 176px;
   display: block;
   margin: 0 auto;
+  transition: opacity 0.45s ease, filter 0.25s ease;
+}
+/* Hover / tap flips the panel to what the CNN actually receives: the model
+   feeds on 1 - pixel (see visionTensor in trainer.ts) — a per-channel invert —
+   so CSS invert(1) is an exact reproduction, not a stylisation (background goes
+   black, each block shows its complement: red→cyan, blue→orange). Gated to the
+   states where a live input actually exists — running OR paused, but NOT idle
+   (blocks still floating), loading (wires drawing), or converged (done). */
+.hero.is-live:not(.is-loading):not(.is-converged) .vla-vision-canvas {
+  cursor: pointer;
+}
+.hero.is-live:not(.is-loading):not(.is-converged) .vla-vision:hover .vla-vision-canvas,
+.hero.is-live:not(.is-loading):not(.is-converged) .vla-vision.model-view .vla-vision-canvas {
+  filter: invert(1);
+}
+.vla-vision-hint {
+  margin-top: 7px;
+  font: 500 9.5px/1 var(--font-mono);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: #9a9a9a;
+  opacity: 0;
+}
+.vla-vision-hint::after {
+  content: "hover: what the CNN sees";
+}
+.hero.is-live:not(.is-loading):not(.is-converged) .vla-vision-hint {
+  opacity: 0.55;
+}
+.hero.is-live:not(.is-loading):not(.is-converged) .vla-vision:hover .vla-vision-hint,
+.hero.is-live:not(.is-loading):not(.is-converged) .vla-vision.model-view .vla-vision-hint {
+  opacity: 0.9;
+}
+.hero.is-live:not(.is-loading):not(.is-converged) .vla-vision:hover .vla-vision-hint::after,
+.hero.is-live:not(.is-loading):not(.is-converged) .vla-vision.model-view .vla-vision-hint::after {
+  content: "CNN input (1 − pixel)";
 }
 
 /* the raw prompt "textarea" — a SEPARATE input floating just below the

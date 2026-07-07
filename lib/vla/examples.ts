@@ -20,11 +20,13 @@
 // learns to shrug off genuinely unknown words.
 
 import grammar from "./grammar.json";
+import { CONFIG } from "./config";
+import { BLOCK, BLOCK_MAX, BLOCK_MIN } from "./geometry";
 import { CORE_VOCAB } from "./vocab.gen";
 
 export { VOCAB_SIZE } from "./vocab.gen";
 
-export const MAX_SEQ_LEN = 12;
+export const MAX_SEQ_LEN = CONFIG.task.maxSeqLen;
 export const PAD = 0;
 export const UNK = 1;
 
@@ -79,12 +81,12 @@ const pick = <T,>(a: readonly T[]): T => a[Math.floor(Math.random() * a.length)]
 
 export function sampleSentence(color: number): Sentence {
   const parts: string[] = [];
-  if (Math.random() < 0.25) parts.push(pick(FILLERS));
+  if (Math.random() < CONFIG.task.fillerProb) parts.push(pick(FILLERS));
   parts.push(...pick(VERBS));
   parts.push(pick(ARTICLES));
   parts.push(pick(COLORS[color].synonyms));
   parts.push(pick(NOUNS));
-  if (Math.random() < 0.2) parts.push("please");
+  if (Math.random() < CONFIG.task.pleaseProb) parts.push("please");
   const text = parts.join(" ");
   return { color, text, words: parts, tokens: tokenize(text) };
 }
@@ -102,40 +104,64 @@ export const DEFAULT_SENTENCE: Sentence = {
 export interface BlockPos {
   x: number; // block center, workspace units
   color: number; // index into COLORS
+  size: number; // block side length, workspace units (grasp height = size/2)
 }
 export type Layout = BlockPos[];
 
 /**
- * TWO blocks per scene — one on each side of the arm (like the original
- * black/red setup) — with the two colors drawn from all 8 without
- * replacement, and a small positional jitter per side.
+ * TWO blocks per scene — one on each side of the arm — with each block placed
+ * at a RANDOM position across its full cleanly-reachable side of the floor
+ * (was a ±0.02 pinprick around fixed 0.16/0.84). The colors are drawn from the
+ * palette without replacement, so vision still only has to tell two colors
+ * apart.
  *
- * The jitter band is ±0.02 (was ±0.06). At the 32x32 model input a block is
- * only ~2.7px wide, so a ±0.06 band (~3px of travel) shifts the block by less
- * than its own width — unresolvable after the downsample — yet the correct
- * elbow angle swings up to ~0.5 rad across it. The policy therefore couldn't
- * see where in the band the block sat, learned the per-side MEAN target, and
- * landed off-center (the "reach is off / noisy" symptom + most of the loss
- * floor). ±0.02 keeps scenes visibly non-identical while shrinking the
- * unresolvable target spread ~9x, so the mean the policy can learn lands on
- * the block. (If wide scatter is ever wanted back, raise the input resolution
- * instead so the position becomes resolvable — see the 32->48 option.)
+ * Reachable-floor analysis (arm base (0.5,0.2), links 0.32+0.26, grasp at
+ * y=0.06): the annulus outer radius 0.58 covers the whole floor out to
+ * |x-0.5| ≈ 0.56, and the inner radius 0.06 never bites (the base sits 0.14
+ * above the floor). BUT blocks within |x-0.5| < 0.167 of the base need an
+ * elbow bend past the sampled THETA2_RANGE — a near-singular fold that also
+ * renders the forearm through the upper arm — so the genuinely grasp-able
+ * floor is the two side BANDS below, not one span through the centre. Each
+ * band's edges stay comfortably inside the joint ranges (verified: |θ2| ≤ 2.39
+ * at the inner edges) and fully in-frame.
+ *
+ * Wide placement is only usable because the model input is now 64px (was 32,
+ * see IMG_SIZE): a block renders ~8px and a band spans ~12px, so the ~0.9-rad
+ * elbow swing across a band is resolvable to the target precision. At 32px the
+ * position was unresolvable (~3px block), the policy learned the per-band MEAN
+ * and landed off-centre — which is exactly why placement used to be pinned to
+ * ±0.02. Raising the input resolution (the documented fix) is what lets the
+ * scatter widen back out.
+ *
+ * Each block also randomizes its SIDE LENGTH in [BLOCK_MIN, BLOCK_MAX]. Size
+ * is not just cosmetic: the grasp target is the block CENTRE (y = size/2), so a
+ * bigger block is grasped higher and the policy has to read the size out of the
+ * 64px image to get the reach height right. It also shifts the near-singular
+ * dead zone — the LARGEST block (grasped at y=0.08) needs |x−0.5| ≳ 0.181 to
+ * keep the elbow inside THETA2_RANGE — so the band inner edges (0.31/0.69) are
+ * set for that worst case; smaller blocks clear it with room to spare.
  */
-const LAYOUT_JITTER = 0.04; // full width; ±0.02 per side
+const PLACE_L: [number, number] = CONFIG.task.placeLeft; // left band [lo, hi]
+const PLACE_R: [number, number] = CONFIG.task.placeRight; // right band [lo, hi]
+const inBand = ([lo, hi]: [number, number]) => lo + Math.random() * (hi - lo);
+const randSize = () => BLOCK_MIN + Math.random() * (BLOCK_MAX - BLOCK_MIN);
 export function randomLayout(): Layout {
   const c1 = Math.floor(Math.random() * COLORS.length);
   let c2 = Math.floor(Math.random() * (COLORS.length - 1));
   if (c2 >= c1) c2++;
+  // c1/c2 are already a uniform random pair, so which color lands on which
+  // side is random too — c1 left, c2 right.
   return [
-    { color: c1, x: 0.16 + (Math.random() - 0.5) * LAYOUT_JITTER },
-    { color: c2, x: 0.84 + (Math.random() - 0.5) * LAYOUT_JITTER },
+    { color: c1, x: inBand(PLACE_L), size: randSize() },
+    { color: c2, x: inBand(PLACE_R), size: randSize() },
   ];
 }
 
-/** Deterministic default layout (SSR-safe): black left, red right. */
+/** Deterministic default layout (SSR-safe): black left, red right, with two
+    fixed sizes so the pre-training scene already shows the size variety. */
 export const DEFAULT_LAYOUT: Layout = [
-  { color: 1, x: 0.16 },
-  { color: 0, x: 0.84 },
+  { color: 1, x: 0.16, size: 0.09 },
+  { color: 0, x: 0.84, size: BLOCK },
 ];
 
 export function blockOfColor(layout: Layout, color: number): BlockPos {

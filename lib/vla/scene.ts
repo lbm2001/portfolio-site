@@ -8,6 +8,7 @@
 //    wasn't trained on.
 // Both map the y-up unit workspace of geometry.ts onto y-down canvas pixels.
 
+import { CONFIG } from "./config";
 import { BASE, BLOCK, L1, L2 } from "./geometry";
 import { COLORS, type Layout } from "./examples";
 
@@ -21,8 +22,8 @@ export interface SceneMap {
 // One isotropic scale for both axes (links must not stretch); sized so the
 // fully extended arm stays inside the canvas when upright.
 export function sceneMap(W: number, H: number): SceneMap {
-  const S = 0.8 * H;
-  const floorY = 0.86 * H;
+  const S = CONFIG.render.sceneScale * H;
+  const floorY = CONFIG.render.floorY * H;
   return {
     X: (x) => W * 0.5 + (x - 0.5) * S,
     Y: (y) => floorY - y * S,
@@ -62,7 +63,6 @@ export function paintScene(
   const m = sceneMap(W, H);
   const bx = m.X(BASE.x);
   const by = m.Y(BASE.y);
-  const box = BLOCK * m.S;
 
   const j1x = m.X(BASE.x + Math.cos(a1) * L1);
   const j1y = m.Y(BASE.y + Math.sin(a1) * L1);
@@ -95,13 +95,16 @@ export function paintScene(
   }
 
   // blocks first — the WHOLE arm draws over them so the reach into a block
-  // and the grip on a carried one stay visible
+  // and the grip on a carried one stay visible. Each block draws at its own
+  // randomized side length.
   for (const b of layout) {
     if (b.color === carry) continue; // carried block leaves its floor spot
+    const box = b.size * m.S;
     ctx.fillStyle = COLORS[b.color].hex;
     ctx.fillRect(m.X(b.x) - box / 2, m.floorY - box, box, box);
   }
   if (carry !== null && carry !== undefined) {
+    const box = (layout.find((b) => b.color === carry)?.size ?? BLOCK) * m.S;
     ctx.fillStyle = COLORS[carry].hex;
     ctx.fillRect(ex - box / 2, ey - box / 2, box, box);
   }
@@ -144,10 +147,10 @@ export function paintScene(
   ctx.fill();
 }
 
-// Blocks render a touch larger in the model's-eye view: at 32x32 a
-// display-size block is ~2px wide — the boost keeps each color's pixels
-// clearly present after the downsample without changing the display scene.
-const SIL_BLOCK = BLOCK * 1.3;
+// Blocks render a touch larger in the model's-eye view: a display-size block
+// is only a few px wide after the downsample — this per-block boost keeps each
+// color's pixels clearly present without changing the display scene.
+const SIL_BLOCK_SCALE = CONFIG.render.silBlockScale;
 
 /**
  * The model's-eye view: white background, the 8 colored blocks at their
@@ -164,7 +167,6 @@ export function paintSilhouette(
   carry?: number | null
 ) {
   const m = sceneMap(size, size);
-  const box = SIL_BLOCK * m.S;
 
   const bx = m.X(BASE.x);
   const by = m.Y(BASE.y);
@@ -177,13 +179,19 @@ export function paintSilhouette(
   ctx.fillRect(0, 0, size, size);
 
   // blocks at their floor spots — the carried one leaves its spot and is
-  // redrawn at the gripper, so the model's-eye view matches the lifted demo
+  // redrawn at the gripper, so the model's-eye view matches the lifted demo.
+  // Each block draws at its own randomized side length (× the model-view boost).
   for (const b of layout) {
     if (b.color === carry) continue;
+    const box = b.size * SIL_BLOCK_SCALE * m.S;
     ctx.fillStyle = COLORS[b.color].hex;
     ctx.fillRect(m.X(b.x) - box / 2, m.floorY - box, box, box);
   }
   if (carry !== null && carry !== undefined) {
+    const box =
+      (layout.find((b) => b.color === carry)?.size ?? BLOCK) *
+      SIL_BLOCK_SCALE *
+      m.S;
     ctx.fillStyle = COLORS[carry].hex;
     ctx.fillRect(ex - box / 2, ey - box / 2, box, box);
   }

@@ -21,11 +21,13 @@ import {
   randomLayout,
   sampleSentence,
   tokenize,
+  type BlockPos,
   type Sentence,
 } from "@/lib/vla/examples";
 import { DEMO_PERIOD_MS, demoPose, makeDemoPlan, type DemoPlan } from "@/lib/vla/demo";
 import { IMG_SIZE } from "@/lib/vla/model";
 import { VLATrainer, type TrainerStatus } from "@/lib/vla/trainer";
+import { CONFIG } from "@/lib/vla/config";
 
 // Live Vision-Language-Action hero: four pipeline boxes ringed around the
 // name (Demonstration left w/ floating prompt above, Vision Encoder top,
@@ -40,27 +42,20 @@ import { VLATrainer, type TrainerStatus } from "@/lib/vla/trainer";
 
 const ACCENT = "#e12d1a"; // = --red; canvases can't read CSS vars cheaply
 
-/** Per-frame joint update: fraction of (predicted target − current pose)
-    applied at 60fps — a proportional step toward the model's target. */
-const STEP_GAIN = 0.08;
-/** Min ms between policy inference calls for the rollout. */
-const PREDICT_MS = 80;
-/** Max rendered trail points. */
-const TRAIL_LEN = 64;
-/** Refresh cadence for the per-token contribution readout. */
-const LANG_MS = 300;
-
-// rollout episode tuning (frames at ~60fps)
-const GRASP_EPS = 0.06; // workspace units from the block center
-const NEAR_FRAMES = 6; // consecutive close frames that count as a grasp
-// ~8.3s per attempt. Must stay above the synced demo cycle (DEMO_PERIOD_MS,
-// ~300 frames @60fps) so a training rollout keeps reaching for the whole
-// window and is bounded by the cycle reset, not by giving up early. (It still
-// caps a failed reach in "try it" mode, which has no cycle reset.)
-const REACH_TIMEOUT = 500;
-const LIFT_FRAMES = 55; // grasp point -> straight-up
-const TOP_HOLD = 30; // 0.5s holding the block at the top, arm straight
-const RETURN_FRAMES = 40; // failed attempts lerp back to rest
+// Rollout control + episode timing are knobs — tune in lib/vla/config.ts
+// (CONFIG.rollout). Episode counts are frames at ~60fps; reachTimeout must stay
+// above the synced demo cycle (DEMO_PERIOD_MS in frames) so a training rollout
+// is bounded by the cycle reset, not by giving up early.
+const STEP_GAIN = CONFIG.rollout.stepGain;
+const PREDICT_MS = CONFIG.rollout.predictMs;
+const TRAIL_LEN = CONFIG.rollout.trailLen;
+const LANG_MS = CONFIG.rollout.langMs;
+const GRASP_EPS = CONFIG.rollout.graspEps; // workspace units from block center
+const NEAR_FRAMES = CONFIG.rollout.nearFrames;
+const REACH_TIMEOUT = CONFIG.rollout.reachTimeout;
+const LIFT_FRAMES = CONFIG.rollout.liftFrames;
+const TOP_HOLD = CONFIG.rollout.topHold;
+const RETURN_FRAMES = CONFIG.rollout.returnFrames;
 
 interface Episode {
   phase: "reach" | "lift" | "return";
@@ -102,7 +97,7 @@ function fitCanvas(c: HTMLCanvasElement, fallbackW = 190, fallbackH = 186) {
   return { ctx, W, H };
 }
 
-const SIL_RENDER = 128; // silhouette render size before the 32x32 downsample
+const SIL_RENDER = CONFIG.rollout.silRender; // silhouette render size before the imgSize downsample
 
 export default function Hero() {
   const stageRef = useRef<HTMLElement>(null);
@@ -162,6 +157,9 @@ export default function Hero() {
   const [tokenBars, setTokenBars] = useState<number[]>([]);
   const [decoded, setDecoded] = useState<{ name: string; hex: string; prob: number } | null>(null);
   const [tryNote, setTryNote] = useState<string | null>(null);
+  // Vision Encoder panel: flip to the exact inverted tensor the CNN receives.
+  // Hover handles it on desktop (CSS); this drives the tap toggle on touch.
+  const [modelView, setModelView] = useState(false);
 
   const setStatusBoth = (s: TrainerStatus) => {
     statusRef.current = s;
@@ -361,7 +359,7 @@ export default function Hero() {
         const e = fk(arm.a1, arm.a2);
         let touched = -1;
         for (const b of rolloutLayoutRef.current) {
-          const g = graspTarget(b.x);
+          const g = graspTarget(b.x, b.size); // grasp height follows block size
           if (Math.hypot(e.ex - g.x, e.ey - g.y) < GRASP_EPS) {
             touched = b.color;
             break;
@@ -622,6 +620,11 @@ export default function Hero() {
         trailRef.current = [];
         targetRef.current = null;
         armState.current = { a1: REST[0], a2: REST[1] };
+        // detach the rollout scene from the demo's: during training
+        // rolloutLayoutRef holds the SAME objects as demoLayoutRef (assigned,
+        // not copied), so dragging a rollout block would also move it in the
+        // Demonstration box. Clone so "try it" edits are rollout-only.
+        rolloutLayoutRef.current = rolloutLayoutRef.current.map((b) => ({ ...b }));
       }
     }
     const now = performance.now();
@@ -727,6 +730,88 @@ export default function Hero() {
     targetRef.current = null;
     armState.current = { a1: REST[0], a2: REST[1] };
     setTryNote(null);
+  };
+
+  // ---- drag the Rollout blocks (converged / "try it" mode only) ----
+  // Once the policy is trained the viewer can reposition either block by
+  // dragging it, constrained to that block's cleanly-reachable side band
+  // (CONFIG.task.placeLeft/Right — the centre is a near-singular dead zone).
+  // The block object is mutated in place, so the rAF loop redraws it moving
+  // live; any in-flight attempt is cancelled so the arm re-plans on the next
+  // Run against wherever the blocks now sit.
+  const dragRef = useRef<{ block: BlockPos; band: [number, number] } | null>(null);
+
+  // Invert sceneMap's X: canvas CSS-pixel x → workspace x. (X = W/2 + (x-0.5)*S.)
+  const canvasX = (c: HTMLCanvasElement, clientX: number) => {
+    const rect = c.getBoundingClientRect();
+    const S = CONFIG.render.sceneScale * rect.height;
+    return 0.5 + (clientX - rect.left - rect.width * 0.5) / S;
+  };
+
+  // The block under a pointer, if any (a few px of touch padding around the box).
+  const blockAt = (c: HTMLCanvasElement, clientX: number, clientY: number) => {
+    const rect = c.getBoundingClientRect();
+    const S = CONFIG.render.sceneScale * rect.height;
+    const floorY = CONFIG.render.floorY * rect.height;
+    const px = clientX - rect.left;
+    const py = clientY - rect.top;
+    const pad = 6;
+    for (const b of rolloutLayoutRef.current) {
+      const cx = rect.width * 0.5 + (b.x - 0.5) * S;
+      const half = (b.size * S) / 2;
+      if (
+        px >= cx - half - pad &&
+        px <= cx + half + pad &&
+        py >= floorY - b.size * S - pad &&
+        py <= floorY + pad
+      )
+        return b;
+    }
+    return null;
+  };
+
+  const onBlockPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (statusRef.current !== "converged") return;
+    const c = armRef.current;
+    if (!c) return;
+    const b = blockAt(c, e.clientX, e.clientY);
+    if (!b) return;
+    e.preventDefault();
+    c.setPointerCapture(e.pointerId);
+    // lock to the side band the block starts on (bands never cross centre)
+    dragRef.current = {
+      block: b,
+      band: b.x < 0.5 ? CONFIG.task.placeLeft : CONFIG.task.placeRight,
+    };
+    // cancel the current attempt; the viewer re-runs once blocks are placed
+    episodeRef.current = null;
+    trailRef.current = [];
+    targetRef.current = null;
+    armState.current = { a1: REST[0], a2: REST[1] };
+    setTryNote(null);
+    c.style.cursor = "grabbing";
+  };
+
+  const onBlockPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const c = armRef.current;
+    if (!c) return;
+    const drag = dragRef.current;
+    if (!drag) {
+      // hover affordance: show a grab cursor over a draggable block
+      if (statusRef.current === "converged")
+        c.style.cursor = blockAt(c, e.clientX, e.clientY) ? "grab" : "default";
+      return;
+    }
+    drag.block.x = clamp(canvasX(c, e.clientX), drag.band[0], drag.band[1]);
+  };
+
+  const onBlockPointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const c = armRef.current;
+    if (dragRef.current && c) {
+      c.releasePointerCapture?.(e.pointerId);
+      c.style.cursor = "grab";
+    }
+    dragRef.current = null;
   };
 
   const active = userSentence ?? demoSentence;
@@ -860,10 +945,18 @@ export default function Hero() {
         <canvas className="vla-canvas" ref={demoRef} />
       </div>
 
-      {/* Vision Encoder — 32x32 CNN input + live first-conv feature maps */}
-      <div className="vla-node vla-vision" ref={visionCardRef}>
+      {/* Vision Encoder — 32x32 CNN input, blown up pixelated. Hover (or tap on
+          touch) flips the panel to the exact tensor the CNN receives: the input
+          is 1 - pixel (see visionTensor in trainer.ts), a per-channel invert, so
+          a CSS invert(1) reproduces the model's-eye view precisely. */}
+      <div
+        className={`vla-node vla-vision${modelView ? " model-view" : ""}`}
+        ref={visionCardRef}
+        onClick={() => setModelView((v) => !v)}
+      >
         <div className="vla-label">Vision Encoder</div>
         <canvas className="vla-vision-canvas" ref={visionRef} />
+        <div className="vla-vision-hint" aria-hidden="true" />
       </div>
 
       {/* Language Encoder — frozen pretrained GloVe embeddings, attention-
@@ -959,7 +1052,15 @@ export default function Hero() {
         <div className="vla-label">
           {status === "converged" ? "Policy — your command" : "Rollout"}
         </div>
-        <canvas className="vla-canvas" ref={armRef} />
+        <canvas
+          className="vla-canvas"
+          ref={armRef}
+          style={status === "converged" ? { touchAction: "none" } : undefined}
+          onPointerDown={onBlockPointerDown}
+          onPointerMove={onBlockPointerMove}
+          onPointerUp={onBlockPointerUp}
+          onPointerCancel={onBlockPointerUp}
+        />
       </div>
 
       {/* training control bar */}
