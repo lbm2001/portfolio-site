@@ -188,29 +188,39 @@ export function paintSilhouette(
     ctx.fillRect(ex - box / 2, ey - box / 2, box, box);
   }
 
-  // base pedestal (shoulder joint down to the floor) + foot — mirrors the
-  // demo scene so the model's-eye view sees the same mounted robot. It's a
-  // fixed feature, but keeping it in-frame matches the display exactly.
-  ctx.fillStyle = "#666666";
-  ctx.fillRect(bx - size * 0.03, by, size * 0.06, m.floorY - by);
-  ctx.fillRect(bx - size * 0.075, m.floorY - size * 0.045, size * 0.15, size * 0.045);
+  // The robot body — pedestal, foot, links, effector — is kept in-frame (real
+  // VLAs see their own mount) but deliberately rendered LIGHT and THIN so the
+  // two color blocks stay the most salient thing in the 32px input. The action
+  // label is pose-INDEPENDENT, so the arm and base are non-informative for the
+  // target; they're present only to match the rollout's live view, not to be
+  // read. After the inverted preprocessing (1 - pixel) a lighter grey is a
+  // weaker activation, so pushing these toward #b0/#c0 lets the saturated
+  // blocks dominate the conv branch rather than the big grey structures.
+
+  // base pedestal (shoulder joint down to the floor) + foot
+  ctx.fillStyle = "#bcbcbc";
+  ctx.fillRect(bx - size * 0.02, by, size * 0.04, m.floorY - by);
+  ctx.fillRect(bx - size * 0.06, m.floorY - size * 0.03, size * 0.12, size * 0.03);
 
   ctx.lineCap = "round";
-  ctx.strokeStyle = "#666666";
-  ctx.lineWidth = size * 0.04;
+  ctx.strokeStyle = "#a8a8a8";
+  ctx.lineWidth = size * 0.028;
   ctx.beginPath();
   ctx.moveTo(bx, by);
   ctx.lineTo(j1x, j1y);
   ctx.stroke();
-  ctx.strokeStyle = "#aaaaaa";
-  ctx.lineWidth = size * 0.03;
+  ctx.strokeStyle = "#c2c2c2";
+  ctx.lineWidth = size * 0.022;
   ctx.beginPath();
   ctx.moveTo(j1x, j1y);
   ctx.lineTo(ex, ey);
   ctx.stroke();
 
-  ctx.fillStyle = "#333333";
+  // effector: a small light locator dot, not the loudest feature. At size*0.05
+  // it was ~3.2px at 32 — bigger and darker (#333) than the ~2.7px color
+  // blocks it exists to help grasp; shrunk + lightened so the blocks win.
+  ctx.fillStyle = "#8f8f8f";
   ctx.beginPath();
-  ctx.arc(ex, ey, size * 0.05, 0, 7);
+  ctx.arc(ex, ey, size * 0.03, 0, 7);
   ctx.fill();
 }

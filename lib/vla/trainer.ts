@@ -90,9 +90,13 @@ const WORD_DROPOUT = 0.1;
 // Threshold is on the HUBER action loss now (see model.ts), not raw MSE:
 // with a wrong-side pick capped at ~2.5 instead of ~9.3, the same ~1%
 // misclassification tail floors the loss near ~0.025 rather than ~0.09.
-// 0.045 sits above that floor but well below the mid-descent values, so it
-// flags a genuinely-converged (~99% correct-side) policy with headroom.
-export const CONVERGE_LOSS = 0.045;
+// 0.07 sits above that floor with room to spare — the side-classification is
+// solved well before the loss grinds down to the floor, and the last stretch
+// of descent is just fine-regression polish. Handing off at 0.07 (was 0.045)
+// enters "try it" mode noticeably sooner while the policy is already reliably
+// picking the right block — the remaining fine-regression gain isn't worth
+// stalling the demo for. Raise further to hand off even earlier.
+export const CONVERGE_LOSS = 0.07;
 const CONVERGE_WINDOW = 10;
 const CONVERGE_STREAK = 5;
 const MIN_BATCHES = 60;
@@ -119,6 +123,11 @@ export class VLATrainer {
 
   private tf: TF | null = null;
   private models: VLAModels | null = null;
+  /** A separate inference model holding a FROZEN copy of the policy weights,
+      refreshed only at snapshotPolicy() calls (each demo-cycle boundary and on
+      convergence). The live rollout attempt runs against this so it sees a
+      fixed policy for its whole cycle while the main model keeps training. */
+  private frozenModels: VLAModels | null = null;
   private running = false;
   private paused = false;
   private convergeStreak = 0;
@@ -351,6 +360,7 @@ export class VLATrainer {
         this.convergeStreak = 0;
       }
       if (this.convergeStreak >= CONVERGE_STREAK || this.batches >= MAX_BATCHES) {
+        this.snapshotPolicy(); // freeze the final weights for "try it" mode
         this.status = "converged";
         this.running = false;
         onUpdate?.();
@@ -397,6 +407,8 @@ export class VLATrainer {
     // drops their container objects
     this.models?.model.dispose();
     this.models = null;
+    this.frozenModels?.model.dispose();
+    this.frozenModels = null;
   }
 
   /** Preprocess a 32x32 RGBA thumb into the model's inverted input tensor. */
@@ -421,12 +433,56 @@ export class VLATrainer {
     layout: Layout
   ): [number, number] | null {
     if (!this.ready) return null;
+    return this.inferTarget(this.models!.model, a1, a2, tokens, layout);
+  }
+
+  /**
+   * Freeze the current policy weights into the separate inference model, so a
+   * rollout attempt can run a FIXED policy for its whole cycle (matching how a
+   * real rollout uses frozen weights) while background training keeps updating
+   * the main model. Called at each demo-cycle boundary and on convergence.
+   * No-op until the first batch has built the main model.
+   */
+  snapshotPolicy() {
+    if (!this.tf || !this.models) return;
+    if (!this.frozenModels) this.frozenModels = buildVLAModel(this.tf);
+    // getWeights() returns the live variables' current values; setWeights
+    // copies them into the frozen model's own variables, so the snapshot holds
+    // steady as the main model trains on. Same architecture → identical weight
+    // ordering. The returned tensors are the main model's — do NOT dispose.
+    this.frozenModels.model.setWeights(this.models.model.getWeights());
+  }
+
+  /**
+   * Like predictTarget, but runs the FROZEN snapshot from the last
+   * snapshotPolicy() call, so a rollout attempt sees one fixed policy for its
+   * whole cycle. Falls back to the live model if no snapshot exists yet.
+   */
+  predictFrozenTarget(
+    a1: number,
+    a2: number,
+    tokens: number[],
+    layout: Layout
+  ): [number, number] | null {
+    if (!this.ready) return null;
+    const model = this.frozenModels?.model ?? this.models!.model;
+    return this.inferTarget(model, a1, a2, tokens, layout);
+  }
+
+  /** Render the state, run the given model, return predicted target angles. */
+  private inferTarget(
+    model: tfType.LayersModel,
+    a1: number,
+    a2: number,
+    tokens: number[],
+    layout: Layout
+  ): [number, number] {
     const tf = this.tf!;
     const img = this.renderPose(a1, a2, layout);
     const out = tf.tidy(() => {
       const v = this.visionTensor(img);
       const l = tf.tensor2d([tokens], [1, MAX_SEQ_LEN], "int32");
-      const [action] = this.models!.model.predict([v, l]) as tfType.Tensor[];
+      const [action] = model.predict([v, l]) as tfType.Tensor[];
       return action.dataSync();
     });
     return [out[0], out[1]];

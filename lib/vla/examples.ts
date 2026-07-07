@@ -118,15 +118,27 @@ export type Layout = BlockPos[];
 /**
  * TWO blocks per scene — one on each side of the arm (like the original
  * black/red setup) — with the two colors drawn from all 8 without
- * replacement, and some positional jitter per side.
+ * replacement, and a small positional jitter per side.
+ *
+ * The jitter band is ±0.02 (was ±0.06). At the 32x32 model input a block is
+ * only ~2.7px wide, so a ±0.06 band (~3px of travel) shifts the block by less
+ * than its own width — unresolvable after the downsample — yet the correct
+ * elbow angle swings up to ~0.5 rad across it. The policy therefore couldn't
+ * see where in the band the block sat, learned the per-side MEAN target, and
+ * landed off-center (the "reach is off / noisy" symptom + most of the loss
+ * floor). ±0.02 keeps scenes visibly non-identical while shrinking the
+ * unresolvable target spread ~9x, so the mean the policy can learn lands on
+ * the block. (If wide scatter is ever wanted back, raise the input resolution
+ * instead so the position becomes resolvable — see the 32->48 option.)
  */
+const LAYOUT_JITTER = 0.04; // full width; ±0.02 per side
 export function randomLayout(): Layout {
   const c1 = Math.floor(Math.random() * COLORS.length);
   let c2 = Math.floor(Math.random() * (COLORS.length - 1));
   if (c2 >= c1) c2++;
   return [
-    { color: c1, x: 0.16 + (Math.random() - 0.5) * 0.12 },
-    { color: c2, x: 0.84 + (Math.random() - 0.5) * 0.12 },
+    { color: c1, x: 0.16 + (Math.random() - 0.5) * LAYOUT_JITTER },
+    { color: c2, x: 0.84 + (Math.random() - 0.5) * LAYOUT_JITTER },
   ];
 }
 

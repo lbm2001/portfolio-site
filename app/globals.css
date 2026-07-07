@@ -576,6 +576,15 @@ a {
 .vla-seg-b,
 .vla-seg-c {
   stroke-dashoffset: 0;
+  transition: opacity 0.4s ease;
+}
+/* Converged: only the Action Head → Rollout leg (segment/pulse c) stays wired;
+   the upstream legs into and between the now-dormant encoder boxes fade out. */
+.is-converged .vla-seg-a,
+.is-converged .vla-seg-b,
+.is-converged .vla-pulse-a,
+.is-converged .vla-pulse-b {
+  opacity: 0;
 }
 .is-loading .vla-seg-a {
   stroke-dasharray: 100;
@@ -694,7 +703,8 @@ a {
 
 /* idle drift: each box floats slowly around its anchor ("not yet wired up");
    the keyframes must repeat each anchor's own centering transform */
-.is-idle .vla-input {
+.is-idle .vla-input,
+.is-converged .vla-input {
   animation: vla-drift-y 7.2s ease-in-out infinite;
 }
 .is-idle .vla-output {
@@ -705,11 +715,13 @@ a {
   animation: vla-drift-y 8.1s ease-in-out infinite;
   animation-delay: -4.4s;
 }
-.is-idle .vla-vision {
+.is-idle .vla-vision,
+.is-converged .vla-vision {
   animation: vla-drift-x 7.9s ease-in-out infinite;
   animation-delay: -1.6s;
 }
-.is-idle .vla-lang {
+.is-idle .vla-lang,
+.is-converged .vla-lang {
   animation: vla-drift-x 8.9s ease-in-out infinite;
   animation-delay: -5.2s;
 }
@@ -768,7 +780,9 @@ a {
 }
 .is-idle .vla-vision .vla-label,
 .is-idle .vla-lang .vla-label,
-.is-idle .vla-action .vla-label {
+.is-idle .vla-action .vla-label,
+.is-converged .vla-vision .vla-label,
+.is-converged .vla-lang .vla-label {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
@@ -818,8 +832,23 @@ a {
 .is-idle .vla-vision-canvas,
 .is-idle .vla-prompt-echo,
 .is-idle .vla-chip-row,
-.is-idle .vla-decoded {
+.is-idle .vla-decoded,
+.is-converged .vla-vision-canvas,
+.is-converged .vla-prompt-echo,
+.is-converged .vla-chip-row,
+.is-converged .vla-decoded {
   opacity: 0;
+}
+/* Converged: the pipeline is now interactive (type a command → Rollout). The
+   three upstream boxes (Demonstration, Vision, Language) have no further role,
+   so they return to their exact pre-training dormant look — dimmed, drifting,
+   label re-centered, content hidden (the demo arm rests via the idle sway;
+   see drawDemo/drawVision in Hero.tsx). Only the Action Head → Rollout leg
+   stays wired and live. */
+.is-converged .vla-input,
+.is-converged .vla-vision,
+.is-converged .vla-lang {
+  opacity: 0.45;
 }
 
 .vla-canvas {
@@ -881,7 +910,8 @@ a {
 }
 /* hidden (not just dimmed) before training — no command has been given yet;
    stays in normal layout flow so layoutWires can still measure it once live */
-.is-idle .vla-prompt {
+.is-idle .vla-prompt,
+.is-converged .vla-prompt {
   opacity: 0;
   pointer-events: none;
 }
@@ -1131,7 +1161,10 @@ a {
   .is-idle .vla-output,
   .is-idle .vla-action,
   .is-idle .vla-vision,
-  .is-idle .vla-lang {
+  .is-idle .vla-lang,
+  .is-converged .vla-input,
+  .is-converged .vla-vision,
+  .is-converged .vla-lang {
     animation: none;
   }
 }

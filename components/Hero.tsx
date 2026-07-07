@@ -54,7 +54,11 @@ const LANG_MS = 300;
 // rollout episode tuning (frames at ~60fps)
 const GRASP_EPS = 0.06; // workspace units from the block center
 const NEAR_FRAMES = 6; // consecutive close frames that count as a grasp
-const REACH_TIMEOUT = 280; // ~4.7s per attempt before giving up
+// ~8.3s per attempt. Must stay above the synced demo cycle (DEMO_PERIOD_MS,
+// ~300 frames @60fps) so a training rollout keeps reaching for the whole
+// window and is bounded by the cycle reset, not by giving up early. (It still
+// caps a failed reach in "try it" mode, which has no cycle reset.)
+const REACH_TIMEOUT = 500;
 const LIFT_FRAMES = 55; // grasp point -> straight-up
 const TOP_HOLD = 30; // 0.5s holding the block at the top, arm straight
 const RETURN_FRAMES = 40; // failed attempts lerp back to rest
@@ -268,7 +272,7 @@ export default function Hero() {
       let a2: number;
       let carry: number | null = null;
 
-      if (st !== "idle") {
+      if (st === "training" || st === "loading") {
         // subtract accumulated paused time so the cycle resumes exactly
         // where it left off instead of jumping ahead by the pause length
         const effectiveNow = now - pausedAccumRef.current;
@@ -299,6 +303,9 @@ export default function Hero() {
         a2 = pose.a2;
         carry = pose.carry;
       } else {
+        // idle OR converged: the demonstrations stop once the policy is
+        // trained — the arm returns to the resting sway (the CSS also fades
+        // the box back to its dormant, pre-training transparency)
         [a1, a2] = wiggle(now, 0, 1.7);
       }
 
@@ -324,7 +331,10 @@ export default function Hero() {
         // against the arm's actual current pose, so the step naturally
         // shrinks as it closes in (proportional control)
         if (now - lastPredRef.current > PREDICT_MS) {
-          const t = trainer.predictTarget(arm.a1, arm.a2, ep.tokens, rolloutLayoutRef.current);
+          // frozen per-cycle snapshot (training) / final weights (converged) —
+          // the arm still re-predicts every PREDICT_MS as it moves (closed
+          // loop), just against fixed weights for the whole attempt
+          const t = trainer.predictFrozenTarget(arm.a1, arm.a2, ep.tokens, rolloutLayoutRef.current);
           if (t) targetRef.current = t;
           lastPredRef.current = now;
         }
@@ -406,7 +416,9 @@ export default function Hero() {
           if (ep) runEpisode(ep, now, W, H);
           else [arm.a1, arm.a2] = wiggle(now, 2.6, 4.1); // waiting for command
         } else {
-          // training: a fresh synced attempt at every new demonstration cycle
+          // training: a fresh synced attempt at every new demonstration cycle,
+          // run against a policy snapshot frozen at this boundary so the whole
+          // attempt reflects one policy generation (not a live-drifting target)
           if (rolloutCycleRef.current !== lastCycleRef.current) {
             rolloutCycleRef.current = lastCycleRef.current;
             rolloutLayoutRef.current = demoLayoutRef.current;
@@ -414,6 +426,7 @@ export default function Hero() {
             arm.a2 = REST[1];
             trailRef.current = [];
             targetRef.current = null;
+            trainer.snapshotPolicy();
             episodeRef.current = newEpisode(
               demoSentenceRef.current.color,
               demoSentenceRef.current.tokens
@@ -453,6 +466,10 @@ export default function Hero() {
     const drawVision = () => {
       const c = visionRef.current;
       if (!c) return;
+      // once trained the encoder goes dormant: stop feeding it the demo
+      // silhouette (the CSS fades the canvas back to transparent). The last
+      // frame stays underneath the fade-out, which is fine — it's hidden.
+      if (statusRef.current === "converged") return;
       const { ctx, W } = fitCanvas(c, 176, 176);
 
       // offscreen silhouette pipeline (the literal model input view)
@@ -492,7 +509,7 @@ export default function Hero() {
       const c = lossRef.current;
       if (!c) return;
       const { ctx, W, H } = fitCanvas(c, 300, 34);
-      const hist = trainerRef.current?.lossHistory ?? [];
+      const raw = trainerRef.current?.lossHistory ?? [];
       const pad = 3;
 
       ctx.strokeStyle = "#efefef";
@@ -501,7 +518,19 @@ export default function Hero() {
       ctx.moveTo(0, H - pad);
       ctx.lineTo(W, H - pad);
       ctx.stroke();
-      if (hist.length < 2) return;
+      if (raw.length < 2) return;
+
+      // Smooth out the batch-to-batch noise so the curve shows the trend, not
+      // the jitter: a trailing rolling mean over the last SMOOTH_WINDOW batches
+      // (prefix sum → O(n)). The window shrinks near the start so the curve
+      // still begins at the first real loss.
+      const SMOOTH_WINDOW = 30;
+      const prefix = [0];
+      for (let i = 0; i < raw.length; i++) prefix.push(prefix[i] + raw[i]);
+      const hist = raw.map((_, i) => {
+        const lo = Math.max(0, i - SMOOTH_WINDOW + 1);
+        return (prefix[i + 1] - prefix[lo]) / (i + 1 - lo);
+      });
 
       const maxLoss = Math.max(trainerRef.current?.initialLoss ?? 0, ...hist);
       const n = hist.length;
@@ -707,7 +736,9 @@ export default function Hero() {
         ? "is-live is-loading"
         : status === "paused"
           ? "is-live is-paused"
-          : "is-live";
+          : status === "converged"
+            ? "is-live is-converged"
+            : "is-live";
 
   return (
     <header className={`hero ${stateClass}`} ref={stageRef}>
