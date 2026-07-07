@@ -122,6 +122,19 @@ export class VLATrainer {
       new URL("./trainer.worker.ts", import.meta.url),
       { type: "module" }
     );
+    // If the worker script fails to load/evaluate (stale chunk, unsupported
+    // browser, etc.) or posts something structured-clone can't handle, there
+    // is otherwise no signal at all — status would sit at "loading" forever.
+    // Recover the same way a failed embeddings fetch does: back to idle so
+    // "Start Training" reappears and a retry gets a fresh worker.
+    this.worker.onerror = (ev) => {
+      console.error("VLA trainer worker failed:", ev.message || ev);
+      this.handleWorkerFailure();
+    };
+    this.worker.onmessageerror = () => {
+      console.error("VLA trainer worker sent an unclonable message");
+      this.handleWorkerFailure();
+    };
     this.worker.onmessage = (e: MessageEvent<WorkerResponse>) => {
       const msg = e.data;
       switch (msg.t) {
@@ -159,6 +172,24 @@ export class VLATrainer {
     const resolve = this.pending.get(id);
     this.pending.delete(id);
     return resolve;
+  }
+
+  /** Worker died (load error or unclonable message) — drop it, resolve any
+      in-flight requests with null so callers don't hang, and go back to idle
+      so the UI recovers instead of sitting on "loading" forever. */
+  private handleWorkerFailure() {
+    this.worker?.terminate();
+    this.worker = null;
+    this.gen++; // orphan any reply that somehow still lands
+    this.pending.forEach((resolve) => resolve(null as never));
+    this.pending.clear();
+    this.m.status = "idle";
+    this.m.loss = NaN;
+    this.m.smoothLoss = NaN;
+    this.m.initialLoss = NaN;
+    this.m.lossHistory = [];
+    this.m.batches = 0;
+    this.onUpdate?.();
   }
 
   private send(msg: WorkerRequest) {
