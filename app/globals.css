@@ -150,26 +150,37 @@ a {
   }
 }
 
-/* ---- Hero (six learning demos ringed around the name) ---- */
+/* ---- Hero (live VLA pipeline ringed around the name) ----
+   The stage fills the viewport below the nav; four pipeline boxes sit at
+   fixed anchors around the dead-centered name/CTA, joined by orthogonal SVG
+   wires. Toggling training only changes opacity/labels — nothing reflows. */
 .hero {
   position: relative;
-  min-height: 800px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  padding: 40px;
+  height: calc(100vh - 61px);
+  min-height: 700px;
   overflow: hidden;
   background: var(--bg);
 }
 .hero-content {
-  position: relative;
-  z-index: 2;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 10;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 18px;
+  text-align: center;
+  pointer-events: none;
+  transition: opacity 0.55s ease;
+}
+/* focus shifts to the pipeline while training runs */
+.hero.is-live .hero-content {
+  opacity: 0.25;
+}
+.hero-cta {
+  pointer-events: auto;
 }
 .hero-tag {
   font: 600 11px/1 var(--font-mono);
@@ -178,328 +189,6 @@ a {
   color: var(--red);
 }
 
-/* ---- Mini learning-demo panels (floating, draggable ring nodes) ---- */
-.mini {
-  position: absolute;
-  z-index: 1;
-  width: 248px;
-  /* every seat is placed relative to the hero centre; the JS transform
-     (ambient drift + drag) is layered on top — see useFloatDrag */
-  left: 50%;
-  top: 50%;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  pointer-events: auto;
-  cursor: grab;
-  touch-action: none;
-  opacity: 0.34;
-  transition: opacity 0.5s ease;
-  will-change: transform;
-}
-/* pre-reveal state: each panel fades in from here at a randomized delay
-   (see useFloatDrag) so the six don't all pop in at once on load */
-.mini.mini-pre {
-  opacity: 0;
-}
-.mini.is-dragging {
-  cursor: grabbing;
-  transition: none;
-  opacity: 1;
-  z-index: 5;
-}
-/* six seats evenly spaced on a ring (ellipse Rx≈476, Ry≈258) around the name.
-   margins offset each panel's top-left from the hero centre. */
-.mini-top {
-  margin-left: -124px;
-  margin-top: -336px;
-}
-.mini-ur {
-  margin-left: 352px;
-  margin-top: -239px;
-}
-.mini-lr {
-  margin-left: 352px;
-  margin-top: 19px;
-}
-.mini-bot {
-  margin-left: -124px;
-  margin-top: 172px;
-}
-.mini-ll {
-  margin-left: -600px;
-  margin-top: 19px;
-}
-.mini-ul {
-  margin-left: -600px;
-  margin-top: -239px;
-}
-
-/* an actively-training node stays more visible even without a hover */
-.mini.is-running {
-  opacity: 0.6;
-}
-
-/* solid + still + detailed on hover */
-.mini:hover {
-  opacity: 1;
-  z-index: 4;
-}
-.mini-paused {
-  color: var(--muted);
-}
-.mini-sim {
-  width: 100%;
-  height: 132px;
-  display: block;
-  border-radius: 3px;
-  transition: background 0.3s ease;
-}
-/* The HUD (meta + loss/return chart) is absolutely positioned below the canvas so
-   it adds no height to the panel's hit area — this keeps the floating panels from
-   colliding via their invisible hover regions. It reveals + becomes interactive
-   only on hover. */
-.mini-hud {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding-top: 8px;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.4s ease;
-}
-.mini:hover .mini-hud {
-  opacity: 1;
-  pointer-events: auto;
-}
-.mini-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  text-align: left;
-}
-.mini-training {
-  font: 600 10px var(--font-mono);
-  color: var(--red);
-  letter-spacing: 0.02em;
-}
-.mini-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-.mini-reset {
-  font: 600 17px/1 var(--font-mono);
-  color: var(--red);
-  background: none;
-  border: none;
-  padding: 0 2px;
-  margin-top: -3px;
-  cursor: pointer;
-  opacity: 0.65;
-  transition: opacity 0.2s ease;
-}
-.mini-reset:hover {
-  opacity: 1;
-}
-.mini-title {
-  font: 400 10px var(--font-mono);
-  color: rgba(17, 17, 17, 0.5);
-}
-.mini-stats {
-  font: 700 10px var(--font-mono);
-  color: rgba(17, 17, 17, 0.8);
-  white-space: pre;
-}
-.mini-chart {
-  width: 100%;
-  height: 34px;
-  display: block;
-}
-
-/* ---- Small ring, tier 2: tablets + narrow desktop windows, still 6 demos ----
-   Below 1180px, OR on any device without real hover (tablets like iPad, even in
-   wide landscape), the ring doesn't disappear — it re-forms as the SAME hexagon
-   shape as desktop (top/bot directly above/below the name, ur/lr/ul/ll as side
-   seats), just measurement-based instead of hardcoded, so it can't collide:
-     - top/bot clear the name vertically, using the measured content half-height
-       (--content-half-h, set by Hero.tsx) — same idea as tier 1 below.
-     - ur/lr/ul/ll clear the name *horizontally* instead (--content-half-w): once
-       a seat is fully to the left or right of the content's bounding box, it can
-       sit at ANY vertical position without colliding, since content doesn't
-       extend that far sideways at any height within its own box. That's what
-       lets them hover near the name's own vertical level, like desktop's ring,
-       rather than being pushed into a top/bottom band.
-   Panel size is scaled down from desktop's 248px — a panel that large next to a
-   comparatively narrow name/button column leaves no real breathing room on a
-   tablet-width screen no matter the buffer, so tablet trades exact size parity
-   with desktop for genuine clearance. The HUD (graph/title/reset) is untouched —
-   the only difference from desktop is tap-to-reveal instead of hover-to-reveal
-   (see the (hover:none) block below) and the CLICK→TAP wording.
-
-   top's clearance has to cover more than just the canvas: once revealed
-   (tapped/trained), its full HUD — title, stats, the loss/return graph — unfolds
-   *downward*, toward the name, adding ~110px below the canvas. Left uncounted, a
-   revealed top panel's HUD lands right on the title (the original bug here).
-   bot doesn't need this: its HUD unfolds further away from the content. Side
-   seats get a generous 32px clearance from the content's measured edge, plus a
-   further 20px vertical nudge away from its own vertical centre, so they read as
-   floating near the name rather than pressed up against the buttons/tagline. */
-@media (min-width: 601px) and (max-width: 1180px), (hover: none) {
-  .mini {
-    width: min(190px, 15vw);
-  }
-  .mini-sim {
-    height: min(101px, 7.98vw);
-  }
-  .mini-top,
-  .mini-bot {
-    margin-left: calc(-1 * (min(190px, 15vw) / 2));
-  }
-  .mini-top {
-    margin-top: calc(-1 * (var(--content-half-h, 90px) + 150px + min(101px, 7.98vw)));
-  }
-  .mini-bot {
-    margin-top: calc(var(--content-half-h, 90px) + 40px);
-  }
-  /* right-side seats */
-  .mini-ur,
-  .mini-lr {
-    margin-left: calc(var(--content-half-w, 160px) + 32px);
-  }
-  /* left-side seats */
-  .mini-ul,
-  .mini-ll {
-    margin-left: calc(-1 * (var(--content-half-w, 160px) + 32px + min(190px, 15vw)));
-  }
-  /* upper side seats hover above the name's vertical level, with a bit of air */
-  .mini-ur,
-  .mini-ul {
-    margin-top: calc(-1 * (min(101px, 7.98vw) + 20px));
-  }
-  /* lower side seats hover below it, same extra air */
-  .mini-lr,
-  .mini-ll {
-    margin-top: 20px;
-  }
-  .hero {
-    min-height: 860px;
-  }
-}
-
-/* ---- Small ring, tier 1: small phones collapse to 4 demos, shown larger ----
-   Below 600px width, one random NN and one random RL demo are dropped (Hero.tsx
-   marks them .mini-drop-sm; picked once per load, still mounted so resizing
-   across this breakpoint doesn't need JS). The two survivors of each group sit
-   left-edge / right-edge (same edge-anchoring idea as tier 2). HUD stays
-   decluttered (no graph/title/reset) — these panels are still small enough that
-   the full HUD wouldn't fit legibly; even so, its revealed tap-hint/stats still
-   unfold a little below the canvas, so the top row needs some clearance for
-   that too (same reasoning as tier 2, just a smaller allowance since there's
-   much less HUD content here). The bottom row is given the SAME total reach
-   from centre (rather than just its own smaller minimum) purely so the two rows
-   sit symmetrically either side of the name — otherwise, since top legitimately
-   needs more room than bottom, a shared hero height left extra dead space
-   stacked on one side (below) rather than split evenly; hero's min-height is
-   sized to that shared reach, snug rather than padded with unused room.
-   Declared after tier 2 so these rules win on small phones (equal specificity,
-   later wins) without needing !important. */
-@media (max-width: 600px) {
-  .mini-drop-sm {
-    display: none;
-  }
-  .mini {
-    width: 110px;
-  }
-  .mini-sim {
-    height: 56px;
-  }
-  .mini-training,
-  .mini-stats {
-    font-size: 9px;
-  }
-  .mini-reset,
-  .mini-title,
-  .mini-chart {
-    display: none;
-  }
-  .mini-sm-rl1,
-  .mini-sm-rl2,
-  .mini-sm-nn1,
-  .mini-sm-nn2 {
-    left: auto;
-    right: auto;
-    margin-left: 0;
-  }
-  .mini-sm-rl1,
-  .mini-sm-rl2 {
-    margin-top: calc(-1 * (var(--content-half-h, 90px) + 137px));
-  }
-  /* margin-top + panel height (56px) reaches the same 137px total as the top
-     row above, so both rows sit the same distance from the name */
-  .mini-sm-nn1,
-  .mini-sm-nn2 {
-    margin-top: calc(var(--content-half-h, 90px) + 81px);
-  }
-  .mini-sm-rl1,
-  .mini-sm-nn1 {
-    left: 20px;
-  }
-  .mini-sm-rl2,
-  .mini-sm-nn2 {
-    right: 20px;
-  }
-  .hero {
-    min-height: 540px;
-  }
-}
-
-/* Touch devices (no real hover): the HUD reveals on tap (is-running) instead of
-   hover, prompted by a pulsing "○ TAP FOR LIVE TRAINING"; numbers stay hidden
-   until then. Real-hover devices (incl. a narrow desktop window) keep the
-   original hover-to-reveal behaviour and always show the numbers on hover. */
-@media (hover: none) {
-  .mini.is-running {
-    opacity: 1;
-  }
-  .mini.is-running .mini-hud {
-    opacity: 1;
-    pointer-events: auto;
-  }
-  .mini:not(.is-running) .mini-stats {
-    display: none;
-  }
-  .mini:not(.is-running) .mini-training {
-    animation: mini-tap-pulse 1.6s ease-in-out infinite;
-  }
-}
-@keyframes mini-tap-pulse {
-  0%,
-  100% {
-    opacity: 0.4;
-  }
-  50% {
-    opacity: 1;
-  }
-}
-
-/* CLICK on pointer devices, TAP on touch — only the verb changes */
-.verb-tap {
-  display: none;
-}
-@media (hover: none) {
-  .verb-click {
-    display: none;
-  }
-  .verb-tap {
-    display: inline;
-  }
-}
 .hero h1 {
   font: 700 46px/1.02 var(--font-sans);
   letter-spacing: -0.03em;
@@ -527,6 +216,699 @@ a {
   border: 1px solid rgba(0, 0, 0, 0.22);
   border-radius: 3px;
   text-decoration: none;
+}
+
+/* ---- VLA pipeline (hero) ----
+   Idle: all four boxes fully visible, gently drifting around their anchors,
+   arms swaying — disconnected components. Starting training assembles the
+   pipeline: drifting stops, the orthogonal wires (measured at runtime from
+   the real DOM positions, Hero.tsx layoutWires) "draw on" in two stages —
+   Demonstration/Prompt → Encoders, then Encoders → Rollout — and once
+   drawn, a single small "current" pulse travels each rail left→right for as
+   long as training is actively running (hidden while still drawing,
+   frozen while paused). */
+.vla-wires {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0;
+  transition: opacity 0.5s ease 0.15s;
+}
+.is-live .vla-wires {
+  opacity: 1;
+}
+.vla-wire-base {
+  fill: none;
+  stroke: rgba(0, 0, 0, 0.48);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+/* draw-on segments: pathLength=100 normalizes the dash space, so animating
+   stroke-dashoffset 100→0 reveals each segment start-to-end. The dash is
+   applied ONLY during the .is-loading reveal — at rest (training/paused/
+   converged) the rails carry no dasharray and render as one solid stroke.
+   (A single full-length dash under preserveAspectRatio="none" +
+   non-scaling-stroke maps unevenly across the stretched horizontal vs.
+   compressed vertical legs of each L-bend, so it under-covers and leaves
+   gaps at the corners; keeping the settled state undashed avoids that.)
+   The reveal is staged: A (source→encoder), then B (encoder→action head),
+   then C (action head→rollout). */
+.vla-seg-a,
+.vla-seg-b,
+.vla-seg-c {
+  stroke-dashoffset: 0;
+  transition: opacity 0.4s ease;
+}
+/* Converged: only the Action Head → Rollout leg (segment/pulse c) stays wired;
+   the upstream legs into and between the now-dormant encoder boxes fade out. */
+.is-converged .vla-seg-a,
+.is-converged .vla-seg-b,
+.is-converged .vla-pulse-a,
+.is-converged .vla-pulse-b {
+  opacity: 0;
+}
+.is-loading .vla-seg-a {
+  stroke-dasharray: 100;
+  animation: vla-draw 0.6s ease-out;
+}
+.is-loading .vla-seg-b {
+  stroke-dasharray: 100;
+  stroke-dashoffset: 100;
+  animation: vla-draw 0.6s ease-out 0.6s forwards;
+}
+.is-loading .vla-seg-c {
+  stroke-dasharray: 100;
+  stroke-dashoffset: 100;
+  animation: vla-draw 0.6s ease-out 1.2s forwards;
+}
+@keyframes vla-draw {
+  from {
+    stroke-dashoffset: 100;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+/* one small traveling signal per wire — only once the pipeline is drawn */
+.vla-wire-pulse {
+  fill: none;
+  stroke: var(--red);
+  stroke-width: 1.3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 6 94;
+  opacity: 0.7;
+  transition: opacity 0.25s ease;
+}
+.is-loading .vla-wire-pulse {
+  opacity: 0;
+}
+/* staggered so the signal reads as flowing along the pipeline: source →
+   encoder (a), encoder → action head (b), action head → rollout (c) */
+.vla-pulse-a {
+  animation: vla-current 2.8s linear infinite;
+}
+.vla-pulse-b {
+  animation: vla-current 2.8s linear infinite;
+  animation-delay: 0.9s;
+}
+.vla-pulse-c {
+  animation: vla-current 2.8s linear infinite;
+  animation-delay: 1.8s;
+}
+.is-paused .vla-pulse-a,
+.is-paused .vla-pulse-b,
+.is-paused .vla-pulse-c {
+  animation-play-state: paused;
+}
+@keyframes vla-current {
+  from {
+    stroke-dashoffset: 100;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* the four pipeline boxes, at fixed anchors around the hero */
+.vla-node {
+  position: absolute;
+  z-index: 3;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 14px;
+  opacity: 1;
+  transition: opacity 0.5s ease;
+}
+/* dormant/disconnected before training starts — full opacity once live */
+.is-idle .vla-node {
+  opacity: 0.45;
+}
+.vla-input {
+  left: 2.5%;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 212px;
+}
+.vla-vision {
+  left: 50%;
+  top: 4%;
+  transform: translateX(-50%);
+  text-align: center;
+}
+.vla-lang {
+  left: 50%;
+  /* 73% of the stage, but never under the training bar on short viewports */
+  top: min(73%, calc(100% - 250px));
+  transform: translateX(-50%);
+  padding: 14px 16px;
+}
+/* Action Head — small node where the vision + language wires merge into the
+   policy's action output; parked a fixed gap to the LEFT of the Rollout (it
+   mirrors the Rollout's right:2.5% + 212px width anchor) so the two stay
+   adjacent at any viewport width, with a short merge wire between them */
+.vla-action {
+  right: calc(2.5% + 212px + 40px);
+  top: 50%;
+  transform: translateY(-50%);
+  width: 132px;
+  text-align: center;
+}
+.vla-output {
+  right: 2.5%;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 212px;
+}
+
+/* idle drift: each box floats slowly around its anchor ("not yet wired up");
+   the keyframes must repeat each anchor's own centering transform */
+.is-idle .vla-input,
+.is-converged .vla-input {
+  animation: vla-drift-y 7.2s ease-in-out infinite;
+}
+.is-idle .vla-output {
+  animation: vla-drift-y 8.6s ease-in-out infinite;
+  animation-delay: -3.1s;
+}
+.is-idle .vla-action {
+  animation: vla-drift-y 8.1s ease-in-out infinite;
+  animation-delay: -4.4s;
+}
+.is-idle .vla-vision,
+.is-converged .vla-vision {
+  animation: vla-drift-x 7.9s ease-in-out infinite;
+  animation-delay: -1.6s;
+}
+.is-idle .vla-lang,
+.is-converged .vla-lang {
+  animation: vla-drift-x 8.9s ease-in-out infinite;
+  animation-delay: -5.2s;
+}
+@keyframes vla-drift-y {
+  0%,
+  100% {
+    transform: translateY(-50%) translate(0, 0);
+  }
+  33% {
+    transform: translateY(-50%) translate(5px, -7px);
+  }
+  66% {
+    transform: translateY(-50%) translate(-4px, 5px);
+  }
+}
+@keyframes vla-drift-x {
+  0%,
+  100% {
+    transform: translateX(-50%) translate(0, 0);
+  }
+  33% {
+    transform: translateX(-50%) translate(-6px, 5px);
+  }
+  66% {
+    transform: translateX(-50%) translate(5px, -4px);
+  }
+}
+
+.vla-label {
+  font: 600 10px/1 var(--font-mono);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+  margin-bottom: 10px;
+}
+
+/* Vision / Language / Action Head: while live the label sits top-left above
+   its content, but BEFORE any input exists (idle) there is nothing to show,
+   so the label sits CENTERED in the empty box and only travels to the corner
+   once the real content — the downsampled image, the tokens, the action
+   numbers — fades in. Absolute label + reserved padding-top keeps each box
+   the exact same size in both states (no reflow → stable wire geometry). */
+.vla-vision,
+.vla-lang,
+.vla-action {
+  padding-top: 32px;
+}
+.vla-vision .vla-label,
+.vla-lang .vla-label,
+.vla-action .vla-label {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  margin: 0;
+}
+.is-idle .vla-vision .vla-label,
+.is-idle .vla-lang .vla-label,
+.is-idle .vla-action .vla-label,
+.is-converged .vla-vision .vla-label,
+.is-converged .vla-lang .vla-label {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+/* On training start the label does NOT slide centre→corner (that path reads
+   as shaky); instead it fades out where it sits (centre) and fades back in at
+   the corner, the position switching while it is invisible. Plays once, when
+   .is-live first appears. */
+.is-live .vla-vision .vla-label,
+.is-live .vla-lang .vla-label,
+.is-live .vla-action .vla-label {
+  animation: vla-label-hop 0.5s ease;
+}
+@keyframes vla-label-hop {
+  0% {
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    opacity: 1;
+  }
+  40% {
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    opacity: 0;
+  }
+  60% {
+    top: 14px;
+    left: 14px;
+    transform: none;
+    opacity: 0;
+  }
+  100% {
+    top: 14px;
+    left: 14px;
+    transform: none;
+    opacity: 1;
+  }
+}
+/* the boxes' real content fades in as the label leaves the centre */
+.vla-vision-canvas,
+.vla-vision-hint,
+.vla-prompt-echo,
+.vla-chip-row,
+.vla-decoded {
+  transition: opacity 0.45s ease;
+}
+.is-idle .vla-vision-canvas,
+.is-idle .vla-prompt-echo,
+.is-idle .vla-chip-row,
+.is-idle .vla-decoded,
+.is-converged .vla-vision-canvas,
+.is-converged .vla-prompt-echo,
+.is-converged .vla-chip-row,
+.is-converged .vla-decoded {
+  opacity: 0;
+}
+/* Converged: the pipeline is now interactive (type a command → Rollout). The
+   three upstream boxes (Demonstration, Vision, Language) have no further role,
+   so they return to their exact pre-training dormant look — dimmed, drifting,
+   label re-centered, content hidden (the demo arm rests via the idle sway;
+   see drawDemo/drawVision in Hero.tsx). Only the Action Head → Rollout leg
+   stays wired and live. */
+.is-converged .vla-input,
+.is-converged .vla-vision,
+.is-converged .vla-lang {
+  opacity: 0.45;
+}
+
+.vla-canvas {
+  width: 100%;
+  height: 186px;
+  display: block;
+}
+/* the Action Head's live output: current predicted target joint angles.
+   Each row is label (left) + value (right column), vertically centred;
+   tabular-nums keeps the digits from jittering as the values update. */
+.vla-action-vals {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font: 500 11px/1 var(--font-mono);
+  color: var(--ink);
+  letter-spacing: 0.04em;
+  text-align: left;
+  transition: opacity 0.35s ease;
+}
+.vla-action-vals > span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.vla-av-v {
+  font-variant-numeric: tabular-nums;
+}
+.is-idle .vla-action-vals {
+  opacity: 0;
+}
+/* the 32x32 model input, blown up pixelated */
+.vla-vision-canvas {
+  width: 176px;
+  height: 176px;
+  display: block;
+  margin: 0 auto;
+  transition: opacity 0.45s ease, filter 0.25s ease;
+}
+/* Hover / tap flips the panel to what the CNN actually receives: the model
+   feeds on 1 - pixel (see visionTensor in trainer.ts) — a per-channel invert —
+   so CSS invert(1) is an exact reproduction, not a stylisation (background goes
+   black, each block shows its complement: red→cyan, blue→orange). Gated to the
+   states where a live input actually exists — running OR paused, but NOT idle
+   (blocks still floating), loading (wires drawing), or converged (done). */
+.hero.is-live:not(.is-loading):not(.is-converged) .vla-vision-canvas {
+  cursor: pointer;
+}
+.hero.is-live:not(.is-loading):not(.is-converged) .vla-vision:hover .vla-vision-canvas,
+.hero.is-live:not(.is-loading):not(.is-converged) .vla-vision.model-view .vla-vision-canvas {
+  filter: invert(1);
+}
+.vla-vision-hint {
+  margin-top: 7px;
+  font: 500 9.5px/1 var(--font-mono);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: #9a9a9a;
+  opacity: 0;
+}
+.vla-vision-hint::after {
+  content: "hover: what the CNN sees";
+}
+.hero.is-live:not(.is-loading):not(.is-converged) .vla-vision-hint {
+  opacity: 0.55;
+}
+.hero.is-live:not(.is-loading):not(.is-converged) .vla-vision:hover .vla-vision-hint,
+.hero.is-live:not(.is-loading):not(.is-converged) .vla-vision.model-view .vla-vision-hint {
+  opacity: 0.9;
+}
+.hero.is-live:not(.is-loading):not(.is-converged) .vla-vision:hover .vla-vision-hint::after,
+.hero.is-live:not(.is-loading):not(.is-converged) .vla-vision.model-view .vla-vision-hint::after {
+  content: "CNN input (1 − pixel)";
+}
+
+/* the raw prompt "textarea" — a SEPARATE input floating just below the
+   Demonstration box (no wire joins the two); it is the source of the
+   language-encoder wire */
+.vla-prompt {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  margin-top: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  border-radius: 3px;
+  background: #fff;
+  padding: 9px 11px 12px;
+  font: 500 12.5px/1.45 var(--font-mono);
+  color: var(--ink);
+  opacity: 1;
+  pointer-events: auto;
+  transition: opacity 0.5s ease;
+}
+/* hidden (not just dimmed) before training — no command has been given yet;
+   stays in normal layout flow so layoutWires can still measure it once live */
+.is-idle .vla-prompt,
+.is-converged .vla-prompt {
+  opacity: 0;
+  pointer-events: none;
+}
+.vla-grip {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 9px;
+  height: 9px;
+  background: repeating-linear-gradient(
+    135deg,
+    transparent 0 2px,
+    rgba(0, 0, 0, 0.3) 2px 3px
+  );
+}
+
+/* language encoder internals */
+.vla-prompt-echo {
+  font: 500 11.5px/1 var(--font-mono);
+  color: var(--muted);
+  margin-bottom: 11px;
+}
+.vla-chip-row {
+  display: flex;
+  align-items: center;
+  /* single line always: never wrap; long sentences are scaled to fit the
+     width budget below via --chip-fit (measured in JS) so even a 12-word
+     command stays on one row instead of breaking */
+  flex-wrap: nowrap;
+  max-width: 460px;
+  transform: scale(var(--chip-fit, 1));
+  transform-origin: center center;
+}
+.vla-tok {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  /* keep natural size — the row scales as a whole, chips don't squeeze */
+  flex: 0 0 auto;
+}
+.vla-chip {
+  font: 500 12px/1 var(--font-mono);
+  background: #f4f4f4;
+  border: 1px solid var(--border);
+  color: var(--body);
+  padding: 6px 10px;
+  border-radius: 3px;
+}
+.vla-arrow {
+  color: #cfcfcf;
+  font-size: 13px;
+  padding: 0 6px;
+  margin-bottom: 14px;
+}
+/* per-token bar = exact contribution to the decoded color's logit */
+.vla-attn {
+  width: 26px;
+  height: 4px;
+  background: #ececec;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.vla-attn-fill {
+  height: 100%;
+  background: var(--red);
+  transition: width 0.3s ease;
+}
+/* the aux head's read of the sentence: which color it decoded */
+.vla-decoded {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  font: 500 9px/1 var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #c3bab3;
+}
+.vla-swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  display: inline-block;
+}
+
+/* "try it" prompt — appears over the Rollout box once training converged */
+.vla-try {
+  position: absolute;
+  left: -44px;
+  right: 0;
+  bottom: 100%;
+  margin-bottom: 10px;
+  display: flex;
+  gap: 6px;
+  z-index: 4;
+}
+.vla-try-input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  border-radius: 3px;
+  background: #fff;
+  padding: 8px 10px;
+  font: 500 12px/1.4 var(--font-mono);
+  color: var(--ink);
+}
+.vla-try-input:focus {
+  outline: none;
+  border-color: rgba(0, 0, 0, 0.45);
+}
+.vla-try-btn {
+  cursor: pointer;
+  border-radius: 3px;
+  padding: 8px 12px;
+  font: 600 12px/1 var(--font-sans);
+  background: var(--ink);
+  color: #fff;
+  border: 1px solid var(--ink);
+  white-space: nowrap;
+}
+.vla-try-shuffle {
+  background: transparent;
+  color: var(--ink);
+  border-color: rgba(0, 0, 0, 0.22);
+  padding: 8px 10px;
+}
+/* e.g. "no purple block in this scene — ⟳ to reshuffle" */
+.vla-try-note {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 5px;
+  font: 500 9.5px/1.4 var(--font-mono);
+  color: var(--muted);
+}
+
+/* training control bar */
+.vla-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 3.5%;
+  transform: translateX(-50%);
+  z-index: 8;
+  width: min(560px, 86vw);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 12px 14px;
+}
+.vla-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 96px;
+}
+.vla-status-col {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+/* background progress: examples consumed by the training loop */
+.vla-status-sub {
+  font: 500 9px/1 var(--font-mono);
+  color: var(--muted);
+}
+.vla-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #c9c9c9;
+}
+.vla-dot.is-on {
+  background: var(--red);
+  animation: vla-pulse 1.4s ease-in-out infinite;
+}
+.vla-dot.is-done {
+  background: var(--red);
+}
+@keyframes vla-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.6);
+    opacity: 0.35;
+  }
+}
+.vla-status-text {
+  font: 600 11px/1 var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--body);
+}
+.vla-loss {
+  flex: 1;
+}
+.vla-loss-label {
+  font: 500 10px/1 var(--font-mono);
+  color: var(--muted);
+  margin-bottom: 5px;
+}
+.vla-loss-canvas {
+  width: 100%;
+  height: 34px;
+  display: block;
+}
+.vla-loss-val {
+  font: 600 12px/1 var(--font-mono);
+  color: var(--ink);
+  min-width: 46px;
+  text-align: right;
+}
+.vla-btn {
+  cursor: pointer;
+  border-radius: 3px;
+  padding: 10px 16px;
+  font: 600 13px/1 var(--font-sans);
+  background: var(--ink);
+  color: #fff;
+  border: 1px solid var(--ink);
+  white-space: nowrap;
+}
+.vla-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.vla-btn-ghost {
+  background: transparent;
+  color: var(--ink);
+  border-color: rgba(0, 0, 0, 0.22);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vla-pulse-a,
+  .vla-pulse-b,
+  .vla-pulse-c,
+  .vla-seg-a,
+  .vla-seg-b,
+  .vla-seg-c,
+  .is-live .vla-vision .vla-label,
+  .is-live .vla-lang .vla-label,
+  .is-live .vla-action .vla-label,
+  .vla-dot.is-on,
+  .is-idle .vla-input,
+  .is-idle .vla-output,
+  .is-idle .vla-action,
+  .is-idle .vla-vision,
+  .is-idle .vla-lang,
+  .is-converged .vla-input,
+  .is-converged .vla-vision,
+  .is-converged .vla-lang {
+    animation: none;
+  }
+}
+
+/* Below the desktop tier the four boxes would collide with the name — the
+   pipeline (and its control bar) steps aside and the hero stays a clean
+   centered intro. */
+@media (max-width: 1099px) {
+  .vla-node,
+  .vla-wires,
+  .vla-bar {
+    display: none;
+  }
+  .hero {
+    height: auto;
+    min-height: 560px;
+  }
 }
 
 /* return/episode chart strip below hero */
