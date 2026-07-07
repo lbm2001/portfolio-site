@@ -43,13 +43,13 @@ export const CONFIG = {
         it could only learn the per-band mean target. The CNN is symbolic
         (flatten→dense adapts), so this is the only downstream knob — but
         per-batch vision compute scales ~4x vs 32. Keep RENDER_SIZE ≈ 4x this. */
-    imgSize: 32,
+    imgSize: 64,
     /** Adam learning rate. 0.007 (up from the GRU-era 0.004) suits the small
         bag-of-embeddings language branch — fewer params + a simpler loss
         surface tolerate and benefit from a faster step. */
-    learningRate: 0.007,
+    learningRate: 0.005,
     /** Weight of the auxiliary color-classification loss vs. the action loss. */
-    colorLossWeight: 0.3,
+    colorLossWeight: 0.2,
     /** Huber transition point for the action loss. The two IK target clusters
         (commanded block left vs. right) sit ~4.3 rad apart, so plain MSE lets
         the rare (~1%) wrong-side pick (cost ~9.3) dominate over regression
@@ -68,7 +68,7 @@ export const CONFIG = {
     conv: [
       { filters: 8, kernel: 3, pool: true, activation: "relu" },
       { filters: 16, kernel: 3, pool: true, activation: "linear", film: true },
-      { filters: 24, kernel: 3, stride: 2, padding: "valid", activation: "relu" },
+      { filters: 24, kernel: 3, stride: 2, activation: "relu" },
     ] as ConvLayer[],
     /** Units in the fused (vision ⊕ language) hidden layer before the heads. */
     fusionUnits: 64,
@@ -79,7 +79,7 @@ export const CONFIG = {
     /** Samples synthesized + gradient-stepped per batch. 16 (down from 32)
         buys ~2x gradient steps/second for this small task — noisier per-step
         estimate is a good trade within a ~15s budget. */
-    batchSize: 16,
+    batchSize: 8,
     /** Silhouettes are drawn at this px then averaged down to imgSize — drawn
         at target size directly the sub-pixel arm strokes alias away. Keep ≈4x
         imgSize to preserve the tuned antialiasing headroom. */
@@ -107,7 +107,7 @@ export const CONFIG = {
           fine-regression polish so the served policy reaches the block tightly,
           not just picks the right side. Below ~0.025 risks never converging
           (grinds to maxBatches); raise toward 0.07 to hand off earlier. */
-      loss: 0.04,
+      loss: 0.03,
       /** Trailing window (batches) the convergence mean is taken over. Small =
           low detection lag as old high losses roll off; the streak guards
           against a lucky dip. */
@@ -195,7 +195,7 @@ export const CONFIG = {
     /** How often (ms) the policy re-predicts its target (closed loop). */
     predictMs: 80,
     /** Distance (workspace units) from the block centre that counts as reached. */
-    graspEps: 0.06,
+    graspEps: 0.05,
     /** Consecutive close frames required to register a grasp. */
     nearFrames: 6,
     /** Frames before a reach gives up as failed. Must exceed the synced demo

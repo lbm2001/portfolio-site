@@ -991,7 +991,7 @@ export default function Hero() {
           ))}
         </div>
         <div className="vla-decoded">
-          ↳ decoded target:{" "}
+          decoded target:{" "}
           {decoded ? (
             <>
               <span
