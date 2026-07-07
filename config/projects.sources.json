@@ -2,6 +2,7 @@
   "dir": "portfolio",
   "file": "README.md",
   "projects": [
+    { "slug": "algo-lens", "repo": "lbm2001/algo-lens"},
     { "slug": "mini-vla", "repo": "lbm2001/mini-vla"},
     { "slug": "ev-charging-optimal-vs-heuristics", "repo": "lbm2001/au-mdt" },
     { "slug": "mujopy", "repo": "lbm2001/mujopy" },
