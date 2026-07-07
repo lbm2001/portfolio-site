@@ -265,7 +265,7 @@ export class VLATrainerCore {
    * Load tfjs (first call only), build a fresh model and run batches until
    * pause/reset or convergence. onUpdate fires after every batch.
    */
-  async start(onUpdate?: () => void) {
+  async start(onUpdate?: () => void): Promise<void> {
     if (this.running) return;
     const myRun = ++this.runId;
     this.running = true;
@@ -316,60 +316,82 @@ export class VLATrainerCore {
     this.batches = 0;
     this.convergeStreak = 0;
 
-    // WebGL compiles each distinct kernel shader (conv2d, pooling, embedding
-    // gather, the losses, Adam's update ops) the first time it's used — a
-    // one-time cost that would otherwise stall the FIRST visible batch right
-    // after the status flips to "Training". Pay it here instead, while the UI
-    // still reads "Loading" (a state the user already expects to wait
-    // through), so training visibly moves at full speed from the first
-    // rendered batch.
-    const warmupLoss = await this.trainStep();
-    if (!this.running || this.runId !== myRun) return;
-    this.loss = warmupLoss;
-    this.smoothLoss = warmupLoss;
-    this.initialLoss = warmupLoss;
-    this.lossHistory.push(warmupLoss);
-    this.batches = 1;
+    try {
+      // WebGL compiles each distinct kernel shader (conv2d, pooling, embedding
+      // gather, the losses, Adam's update ops) the first time it's used — a
+      // one-time cost that would otherwise stall the FIRST visible batch right
+      // after the status flips to "Training". Pay it here instead, while the UI
+      // still reads "Loading" (a state the user already expects to wait
+      // through), so training visibly moves at full speed from the first
+      // rendered batch.
+      const warmupLoss = await this.trainStep();
+      if (!this.running || this.runId !== myRun) return;
+      this.loss = warmupLoss;
+      this.smoothLoss = warmupLoss;
+      this.initialLoss = warmupLoss;
+      this.lossHistory.push(warmupLoss);
+      this.batches = 1;
 
-    this.status = "training";
-    onUpdate?.();
-
-    while (this.running && this.runId === myRun) {
-      if (this.paused) {
-        await new Promise((r) => setTimeout(r, 120));
-        continue;
-      }
-      const t0 = performance.now();
-      const loss = await this.trainStep();
-      if (!this.running || this.runId !== myRun) break;
-      this.loss = loss;
-      if (Number.isNaN(this.initialLoss)) this.initialLoss = loss;
-      // keep the FULL curve from batch 0 → now (capped only by MAX_BATCHES),
-      // so the plot shows the whole training development, not a trailing slice
-      this.lossHistory.push(loss);
-      this.batches++;
-      // low-lag convergence signal: mean of the last CONVERGE_WINDOW raw
-      // losses (read straight off the tail of lossHistory — no extra buffer)
-      const window = this.lossHistory.slice(-CONVERGE_WINDOW);
-      this.smoothLoss = window.reduce((a, b) => a + b, 0) / window.length;
-
-      // converged? training's job is done — keep the model, stop the loop
-      if (this.batches >= MIN_BATCHES && this.smoothLoss < CONVERGE_LOSS) {
-        this.convergeStreak++;
-      } else {
-        this.convergeStreak = 0;
-      }
-      if (this.convergeStreak >= CONVERGE_STREAK || this.batches >= MAX_BATCHES) {
-        this.snapshotPolicy(); // freeze the final weights for "try it" mode
-        this.status = "converged";
-        this.running = false;
-        onUpdate?.();
-        return;
-      }
-
+      this.status = "training";
       onUpdate?.();
-      const gap = Math.max(8, BATCH_GAP_MS - (performance.now() - t0));
-      await new Promise((r) => setTimeout(r, gap));
+
+      while (this.running && this.runId === myRun) {
+        if (this.paused) {
+          await new Promise((r) => setTimeout(r, 120));
+          continue;
+        }
+        const t0 = performance.now();
+        const loss = await this.trainStep();
+        if (!this.running || this.runId !== myRun) break;
+        this.loss = loss;
+        if (Number.isNaN(this.initialLoss)) this.initialLoss = loss;
+        // keep the FULL curve from batch 0 → now (capped only by MAX_BATCHES),
+        // so the plot shows the whole training development, not a trailing slice
+        this.lossHistory.push(loss);
+        this.batches++;
+        // low-lag convergence signal: mean of the last CONVERGE_WINDOW raw
+        // losses (read straight off the tail of lossHistory — no extra buffer)
+        const window = this.lossHistory.slice(-CONVERGE_WINDOW);
+        this.smoothLoss = window.reduce((a, b) => a + b, 0) / window.length;
+
+        // converged? training's job is done — keep the model, stop the loop
+        if (this.batches >= MIN_BATCHES && this.smoothLoss < CONVERGE_LOSS) {
+          this.convergeStreak++;
+        } else {
+          this.convergeStreak = 0;
+        }
+        if (this.convergeStreak >= CONVERGE_STREAK || this.batches >= MAX_BATCHES) {
+          this.snapshotPolicy(); // freeze the final weights for "try it" mode
+          this.status = "converged";
+          this.running = false;
+          onUpdate?.();
+          return;
+        }
+
+        onUpdate?.();
+        const gap = Math.max(8, BATCH_GAP_MS - (performance.now() - t0));
+        await new Promise((r) => setTimeout(r, gap));
+      }
+    } catch (err) {
+      // A batch threw mid-training (e.g. the WebGL backend lost its GPU context
+      // and an op couldn't recover). Uncaught, this rejection has nobody
+      // awaiting it — trainer.worker.ts calls start() fire-and-forget — so
+      // status would sit stuck on "loading" forever with no visible signal.
+      // Fall back to the cpu backend once (this small CNN trains fine without a
+      // GPU, just slower) and retry from a clean model; give up to idle only if
+      // cpu ALSO fails.
+      if (!this.running || this.runId !== myRun) return;
+      console.error("VLA trainer step failed", err);
+      if (this.tf.getBackend() !== "cpu") {
+        console.warn("VLA trainer falling back to the cpu backend");
+        this.running = false;
+        await this.tf.setBackend("cpu");
+        return this.start(onUpdate);
+      }
+      this.running = false;
+      this.status = "idle";
+      this.disposeModels();
+      onUpdate?.();
     }
   }
 

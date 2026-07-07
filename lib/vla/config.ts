@@ -44,11 +44,14 @@ export const CONFIG = {
         (flatten→dense adapts), so this is the only downstream knob — but
         per-batch vision compute scales ~4x vs 32. Keep RENDER_SIZE ≈ 4x this. */
     imgSize: 64,
-    /** Adam learning rate. 0.007 (up from the GRU-era 0.004) suits the small
-        bag-of-embeddings language branch — fewer params + a simpler loss
-        surface tolerate and benefit from a faster step. */
+    /** Adam learning rate. 0.005 won the 2026-07 sweep at batchSize 32 /
+        imgSize 64: 0.008 was collapse-prone (side-binding failure on bad
+        seeds) and 0.003 measurably slower without being more reliable. */
     learningRate: 0.005,
-    /** Weight of the auxiliary color-classification loss vs. the action loss. */
+    /** Weight of the auxiliary color-classification loss vs. the action loss.
+        0.4 was the most collapse-resistant setting in the sweep (0 side-binding
+        collapses across 7 seeds vs 1/7 at 0.2); 0.2 peaked slightly higher on
+        lucky seeds but is riskier. */
     colorLossWeight: 0.4,
     /** Huber transition point for the action loss. The two IK target clusters
         (commanded block left vs. right) sit ~4.3 rad apart, so plain MSE lets
@@ -76,9 +79,11 @@ export const CONFIG = {
 
   // ── Training loop + convergence (lib/vla/trainer.ts) ───────────────────
   trainer: {
-    /** Samples synthesized + gradient-stepped per batch. 16 (down from 32)
-        buys ~2x gradient steps/second for this small task — noisier per-step
-        estimate is a good trade within a ~15s budget. */
+    /** Samples synthesized + gradient-stepped per batch. 32 is load-bearing
+        for RELIABILITY, not just speed: in the 2026-07 headless sweep (M4,
+        ~100ms/batch at imgSize 64) batchSize 16 collapsed onto always-one-side
+        policies on bad seeds (wrong-side rate 0.4-0.7, loss stuck ~0.78) where
+        32 stayed healthy on the same seeds. Don't lower it. */
     batchSize: 32,
     /** Silhouettes are drawn at this px then averaged down to imgSize — drawn
         at target size directly the sub-pixel arm strokes alias away. Keep ≈4x
@@ -102,23 +107,33 @@ export const CONFIG = {
     // `loss` for `streak` consecutive batches (after `minBatches` warmup) →
     // training ends, "try it" mode unlocks. `maxBatches` is the fixed fallback.
     converge: {
-      /** Handoff threshold on the trailing-window HUBER action loss. 0.04 sits
-          just above the ~0.025 same-accuracy floor: waits for the last
-          fine-regression polish so the served policy reaches the block tightly,
-          not just picks the right side. Below ~0.025 risks never converging
-          (grinds to maxBatches); raise toward 0.07 to hand off earlier. */
-      loss: 0.03,
+      /** Handoff threshold on the trailing-window HUBER action loss. Calibrated
+          in the 2026-07 sweep (M4, ~100ms/batch → ~10 batches/s): healthy runs
+          cross 0.02 at 150-280 batches ≈ 15-28s of training and score ~0.7-0.85
+          closed-loop reach success at handoff (0 wrong-side). Tightening to
+          0.015 (+streak 8) cost ~5s and measurably improved nothing — the
+          policy's residual ~0.03 reach error is a vision-resolution floor, not
+          undertraining. Raise toward 0.04 to hand off earlier/looser. */
+      loss: 0.02,
       /** Trailing window (batches) the convergence mean is taken over. Small =
           low detection lag as old high losses roll off; the streak guards
           against a lucky dip. */
       window: 10,
       /** Consecutive in-threshold batches required before declaring converged. */
       streak: 5,
-      /** Hard floor of batches before convergence can fire (~4-7s of headroom
-          in a 15s budget; was 300, a 16-32s floor that alone ruled out 15s). */
-      minBatches: 60,
-      /** Fixed-budget fallback: converge regardless of loss at this batch. */
-      maxBatches: 1800,
+      /** Hard floor of batches before convergence can fire. Earliest genuine
+          crossing observed in the sweep was ~155 batches, so 100 is pure
+          lucky-dip insurance and never binds on healthy runs. */
+      minBatches: 100,
+      /** Fixed-budget fallback: converge regardless of loss at this batch —
+          ~45s at ~10 batches/s. Slow-but-healthy seeds (~1 in 3) land here or
+          shortly before it with a usable policy. NOTE (sweep finding): ~1 in 8
+          inits collapses to an always-one-side policy (loss flat ~0.78) and
+          NEVER recovers — no swept parameter fixes it, so a longer budget only
+          delays the fallback. Detectable early (smoothLoss > 0.4 at batch
+          ~120); an auto-restart in trainer.core is the real fix if this rate
+          bothers us. */
+      maxBatches: 450,
     },
   },
 
