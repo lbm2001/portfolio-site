@@ -159,7 +159,9 @@ const SIL_BLOCK_SCALE = CONFIG.render.silBlockScale;
  * joint angles AND localize the named color from this image alone.
  */
 export function paintSilhouette(
-  ctx: CanvasRenderingContext2D,
+  // union: the trainer renders silhouettes on an OffscreenCanvas inside its
+  // worker; Hero's model's-eye panel still paints onto a DOM canvas
+  ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
   size: number,
   a1: number,
   a2: number,

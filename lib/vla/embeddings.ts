@@ -14,11 +14,20 @@ import { EMBED_DIM, EMBED_SCALES, VOCAB_SIZE } from "./vocab.gen";
 import { registerFullVocab } from "./examples";
 
 let matrix: Float32Array | null = null;
+let words: string[] | null = null;
 let loading: Promise<Float32Array> | null = null;
 
 /** The dequantized [VOCAB_SIZE, EMBED_DIM] table, or null before load. */
 export function embeddingMatrix(): Float32Array | null {
   return matrix;
+}
+
+/** The fetched word list (row order), or null before load. The trainer worker
+    posts this back to the main thread, whose examples.ts tokenizer instance
+    otherwise never sees registerFullVocab (module state isn't shared across
+    threads) — without it, user-typed near-synonyms would tokenize to <unk>. */
+export function vocabWords(): string[] | null {
+  return words;
 }
 
 /** Fetch + dequantize (idempotent; concurrent callers share one promise). */
@@ -32,17 +41,18 @@ export function loadEmbeddings(): Promise<Float32Array> {
     if (!binRes.ok || !wordsRes.ok)
       throw new Error("embedding assets failed to load");
     const bin = new Int8Array(await binRes.arrayBuffer());
-    const words = (await wordsRes.text()).split("\n").filter(Boolean);
+    const list = (await wordsRes.text()).split("\n").filter(Boolean);
 
     // rows 0 (<pad>) and 1 (<unk>) stay zero: dropped-out or unknown words
     // contribute nothing to the mean-pooled sentence vector
     const m = new Float32Array(VOCAB_SIZE * EMBED_DIM);
-    for (let i = 0; i < words.length; i++)
+    for (let i = 0; i < list.length; i++)
       for (let d = 0; d < EMBED_DIM; d++)
         m[(i + 2) * EMBED_DIM + d] = bin[i * EMBED_DIM + d] * EMBED_SCALES[d];
 
-    registerFullVocab(words);
+    registerFullVocab(list);
     matrix = m;
+    words = list;
     return m;
   })();
   // allow a retry after a failed fetch instead of caching the rejection

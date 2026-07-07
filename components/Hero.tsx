@@ -32,7 +32,9 @@ import { CONFIG } from "@/lib/vla/config";
 // Live Vision-Language-Action hero: four pipeline boxes ringed around the
 // name (Demonstration left w/ floating prompt above, Vision Encoder top,
 // Language Encoder bottom, Rollout right). "Start Training" runs a GENUINE
-// TensorFlow.js behavioral-cloning loop (lib/vla/trainer.ts) against an
+// TensorFlow.js behavioral-cloning loop — hosted in a Web Worker off the main
+// thread (lib/vla/trainer.worker.ts, via the lib/vla/trainer.ts proxy) so
+// gradient steps never fight this component's 60fps rAF loop — against an
 // analytical-IK expert: every scene places two blocks, one per side, colors
 // drawn from a 4-color palette, and the command (slot-grammar sentence)
 // names one of them. The displayed demonstration swaps every cycle while
@@ -122,6 +124,12 @@ export default function Hero() {
   const lastPredRef = useRef(0);
   const lastHudRef = useRef(0);
   const lastLangRef = useRef(0);
+  // in-flight guards for the async trainer-worker round-trips: never queue a
+  // second predict (or language-readout) request while one is outstanding.
+  // On a slow GPU a request can take longer than its throttle interval — an
+  // unbounded FIFO backlog in the worker would starve training entirely.
+  const predInFlightRef = useRef(false);
+  const langInFlightRef = useRef(false);
   // paused-duration accounting so the demo cycle resumes exactly where it
   // left off instead of jumping ahead by the real wall-clock pause length
   const pausedAccumRef = useRef(0);
@@ -330,13 +338,24 @@ export default function Hero() {
         // the step direction is recomputed every FRAME from that target
         // against the arm's actual current pose, so the step naturally
         // shrinks as it closes in (proportional control)
-        if (now - lastPredRef.current > PREDICT_MS) {
+        if (now - lastPredRef.current > PREDICT_MS && !predInFlightRef.current) {
           // frozen per-cycle snapshot (training) / final weights (converged) —
           // the arm still re-predicts every PREDICT_MS as it moves (closed
-          // loop), just against fixed weights for the whole attempt
-          const t = trainer.predictFrozenTarget(arm.a1, arm.a2, ep.tokens, rolloutLayoutRef.current);
-          if (t) targetRef.current = t;
+          // loop), just against fixed weights for the whole attempt. The
+          // prediction is ASYNC now (render + forward pass in the trainer
+          // worker); the arm keeps stepping toward its previous target until
+          // the reply lands, and a reply for an episode that has since ended
+          // (or left the reach phase) is dropped instead of re-arming a
+          // cleared targetRef.
           lastPredRef.current = now;
+          predInFlightRef.current = true;
+          void trainer
+            .predictFrozenTarget(arm.a1, arm.a2, ep.tokens, rolloutLayoutRef.current)
+            .then((t) => {
+              predInFlightRef.current = false;
+              if (t && episodeRef.current === ep && ep.phase === "reach")
+                targetRef.current = t;
+            });
         }
         const t = targetRef.current;
         if (t) {
@@ -575,19 +594,28 @@ export default function Hero() {
     };
 
     // real language-encoder readouts: decoded color + each token's live
-    // ATTENTION weight (see attentionWeights in trainer.ts — the exact
+    // ATTENTION weight (see attentionWeights in trainer.core.ts — the exact
     // masked-softmax weights the attention-pooling layer uses, recomputed
-    // from the linear scorer's weights, not an approximation)
+    // from the linear scorer's weights, not an approximation). Both are async
+    // round-trips to the trainer worker; LANG_MS throttling means at most one
+    // pair is ever in flight, so replies apply in order.
     const langViz = (now: number) => {
       const trainer = trainerRef.current;
       if (!trainer?.ready || now - lastLangRef.current < LANG_MS) return;
+      if (langInFlightRef.current) return;
       lastLangRef.current = now;
+      langInFlightRef.current = true;
       const tokens = activeTokensRef.current;
-      const d = trainer.decodeColor(tokens);
-      if (!d) return;
-      setDecoded({ name: COLORS[d.color].name, hex: COLORS[d.color].hex, prob: d.prob });
-      const bars = trainer.attentionWeights(tokens);
-      if (bars) setTokenBars(bars);
+      const decodeP = trainer.decodeColor(tokens).then((d) => {
+        if (!d) return;
+        setDecoded({ name: COLORS[d.color].name, hex: COLORS[d.color].hex, prob: d.prob });
+      });
+      const attnP = trainer.attentionWeights(tokens).then((bars) => {
+        if (bars) setTokenBars(bars);
+      });
+      void Promise.all([decodeP, attnP]).then(() => {
+        langInFlightRef.current = false;
+      });
     };
 
     let raf = 0;
@@ -605,7 +633,7 @@ export default function Hero() {
     return () => {
       cancelAnimationFrame(raf);
       window.removeEventListener("resize", layoutWires);
-      trainerRef.current?.reset();
+      trainerRef.current?.destroy(); // reset + terminate the trainer worker
     };
   }, []);
 
@@ -690,14 +718,14 @@ export default function Hero() {
   };
 
   /** "Try it" mode: run the user's own sentence through the trained policy. */
-  const runCommand = () => {
+  const runCommand = async () => {
     const trainer = trainerRef.current;
     if (!trainer?.ready || statusRef.current !== "converged") return;
     const text = tryText.trim();
     if (!text) return;
     const tokens = tokenize(text);
-    const d = trainer.decodeColor(tokens);
-    if (!d) return;
+    const d = await trainer.decodeColor(tokens); // worker round-trip (~ms)
+    if (!d || statusRef.current !== "converged") return;
     const words = text
       .toLowerCase()
       .replace(/[^a-z ]/g, "")
@@ -947,7 +975,7 @@ export default function Hero() {
 
       {/* Vision Encoder — 32x32 CNN input, blown up pixelated. Hover (or tap on
           touch) flips the panel to the exact tensor the CNN receives: the input
-          is 1 - pixel (see visionTensor in trainer.ts), a per-channel invert, so
+          is 1 - pixel (see visionTensor in trainer.core.ts), a per-channel invert, so
           a CSS invert(1) reproduces the model's-eye view precisely. */}
       <div
         className={`vla-node vla-vision${modelView ? " model-view" : ""}`}
@@ -1032,7 +1060,7 @@ export default function Hero() {
               value={tryText}
               onChange={(e) => setTryText(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter") runCommand();
+                if (e.key === "Enter") void runCommand();
               }}
             />
             <button className="vla-try-btn" onClick={runCommand} type="button">

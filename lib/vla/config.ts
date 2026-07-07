@@ -49,7 +49,7 @@ export const CONFIG = {
         surface tolerate and benefit from a faster step. */
     learningRate: 0.005,
     /** Weight of the auxiliary color-classification loss vs. the action loss. */
-    colorLossWeight: 0.2,
+    colorLossWeight: 0.4,
     /** Huber transition point for the action loss. The two IK target clusters
         (commanded block left vs. right) sit ~4.3 rad apart, so plain MSE lets
         the rare (~1%) wrong-side pick (cost ~9.3) dominate over regression
@@ -79,7 +79,7 @@ export const CONFIG = {
     /** Samples synthesized + gradient-stepped per batch. 16 (down from 32)
         buys ~2x gradient steps/second for this small task — noisier per-step
         estimate is a good trade within a ~15s budget. */
-    batchSize: 8,
+    batchSize: 32,
     /** Silhouettes are drawn at this px then averaged down to imgSize — drawn
         at target size directly the sub-pixel arm strokes alias away. Keep ≈4x
         imgSize to preserve the tuned antialiasing headroom. */
