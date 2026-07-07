@@ -12,11 +12,11 @@
 // need to end up," not also implicitly infer the current pose and subtract.
 // The Rollout arm computes its own delta from the predicted target against
 // its actual known current pose (see Hero.tsx's drawArm) and steps toward
-// it; the plotted MSE is the genuine action loss (regression to that
+// it; the plotted curve is the genuine action loss (Huber regression to that
 // absolute target), and the Rollout is driven purely by model.predict on
 // its own live 32x32 view.
 //
-// Training stops by itself once the action-MSE EMA crosses the convergence
+// Training stops by itself once the trailing-window action loss crosses the convergence
 // threshold — that switches the hero into "try it" mode where user-typed
 // sentences drive the policy. It can also be paused/resumed.
 //
@@ -66,8 +66,8 @@ const NEAR_TARGET_STD = 0.5;
 /** Training word-dropout: chance a non-color token becomes <unk>. */
 const WORD_DROPOUT = 0.1;
 
-// Convergence: the mean action MSE over a short trailing WINDOW of batches
-// stays under CONVERGE_MSE for CONVERGE_STREAK consecutive batches (after a
+// Convergence: the mean action loss over a short trailing WINDOW of batches
+// stays under CONVERGE_LOSS for CONVERGE_STREAK consecutive batches (after a
 // minimum warmup) → training ends and unlocks "try it" mode. MAX_BATCHES is
 // the fixed-budget fallback: whatever the loss floor turns out to be,
 // training ends and the policy becomes usable.
@@ -86,7 +86,13 @@ const WORD_DROPOUT = 0.1;
 // At ~60-100ms/batch that alone is 16-32s, which structurally ruled out
 // ever hitting a ~15s convergence target no matter how learnable the task
 // was. Lowered so the floor (60 batches) leaves real headroom in the budget.
-export const CONVERGE_MSE = 0.08;
+//
+// Threshold is on the HUBER action loss now (see model.ts), not raw MSE:
+// with a wrong-side pick capped at ~2.5 instead of ~9.3, the same ~1%
+// misclassification tail floors the loss near ~0.025 rather than ~0.09.
+// 0.045 sits above that floor but well below the mid-descent values, so it
+// flags a genuinely-converged (~99% correct-side) policy with headroom.
+export const CONVERGE_LOSS = 0.045;
 const CONVERGE_WINDOW = 10;
 const CONVERGE_STREAK = 5;
 const MIN_BATCHES = 60;
@@ -101,9 +107,9 @@ export type TrainerStatus =
 
 export class VLATrainer {
   status: TrainerStatus = "idle";
-  /** Real action MSE from the latest trainOnBatch (NaN before the first). */
+  /** Real action loss (Huber) from the latest trainOnBatch (NaN before the first). */
   loss = NaN;
-  /** Mean action MSE over the last CONVERGE_WINDOW batches — the low-lag
+  /** Mean action loss over the last CONVERGE_WINDOW batches — the low-lag
       signal convergence is judged on (NaN before the first batch). */
   smoothLoss = NaN;
   /** First recorded loss — the normalization anchor for the UI. */
@@ -182,7 +188,7 @@ export class VLATrainer {
 
   /**
    * One gradient step on a freshly synthesized micro-batch.
-   * Returns the batch's action MSE.
+   * Returns the batch's action loss (Huber).
    */
   private async trainStep(): Promise<number> {
     const tf = this.tf!;
@@ -339,7 +345,7 @@ export class VLATrainer {
       this.smoothLoss = window.reduce((a, b) => a + b, 0) / window.length;
 
       // converged? training's job is done — keep the model, stop the loop
-      if (this.batches >= MIN_BATCHES && this.smoothLoss < CONVERGE_MSE) {
+      if (this.batches >= MIN_BATCHES && this.smoothLoss < CONVERGE_LOSS) {
         this.convergeStreak++;
       } else {
         this.convergeStreak = 0;

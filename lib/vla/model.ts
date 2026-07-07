@@ -29,8 +29,19 @@ export const IMG_SIZE = 32;
     parameters and a simpler loss surface, so it tolerates (and benefits
     from) a faster step size for quicker convergence. */
 export const LEARNING_RATE = 0.007;
-/** Weight of the auxiliary color-classification loss vs. the action MSE. */
+/** Weight of the auxiliary color-classification loss vs. the action loss. */
 export const COLOR_LOSS_WEIGHT = 0.3;
+/** Huber transition point for the action loss. The two IK target clusters
+    (commanded block on the left vs. right) sit ~4.3 rad apart, so under plain
+    MSE a single wrong-side pick costs ~9.3 — the loss ends up dominated by
+    the rare (~1%) misclassification tail rather than regression precision,
+    which both floors the loss near ~0.09 and makes its gradient thrash on
+    outliers. Huber is quadratic below DELTA (keeps precise regression on the
+    correct-side jitter, whose spread is ~0.1 rad) and LINEAR above it, capping
+    a wrong-side pick at ~2.5 instead of ~9.3. That drops the same-accuracy
+    floor to ~0.025 and smooths the descent. 0.6 keeps correct-side samples
+    comfortably in the quadratic zone while catching wrong-side picks early. */
+export const ACTION_HUBER_DELTA = 0.6;
 
 export interface VLAModels {
   /** Main policy: [vision, tokens] → [action Δθ (2), color softmax]. */
@@ -112,9 +123,11 @@ export function buildVLAModel(tf: TF): VLAModels {
   });
   // tfjs-layers doesn't implement compile({lossWeights}) — scale the aux
   // color loss inside a custom per-output loss function instead (and the
-  // loss array must then be all-functions, so MSE is a function too)
+  // loss array must then be all-functions, so the action loss is a function
+  // too). The action loss is Huber, not MSE: the wrong-side outlier tail (see
+  // ACTION_HUBER_DELTA) otherwise dominates both the floor and the gradient.
   const actionLoss = (yTrue: tfType.Tensor, yPred: tfType.Tensor) =>
-    tf.metrics.MSE(yTrue, yPred);
+    tf.losses.huberLoss(yTrue, yPred, undefined, ACTION_HUBER_DELTA);
   const weightedColorLoss = (yTrue: tfType.Tensor, yPred: tfType.Tensor) =>
     tf.tidy(() =>
       tf.metrics.categoricalCrossentropy(yTrue, yPred).mul(COLOR_LOSS_WEIGHT)

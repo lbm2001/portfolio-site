@@ -188,6 +188,13 @@ export function paintSilhouette(
     ctx.fillRect(ex - box / 2, ey - box / 2, box, box);
   }
 
+  // base pedestal (shoulder joint down to the floor) + foot — mirrors the
+  // demo scene so the model's-eye view sees the same mounted robot. It's a
+  // fixed feature, but keeping it in-frame matches the display exactly.
+  ctx.fillStyle = "#666666";
+  ctx.fillRect(bx - size * 0.03, by, size * 0.06, m.floorY - by);
+  ctx.fillRect(bx - size * 0.075, m.floorY - size * 0.045, size * 0.15, size * 0.045);
+
   ctx.lineCap = "round";
   ctx.strokeStyle = "#666666";
   ctx.lineWidth = size * 0.04;
