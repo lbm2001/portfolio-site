@@ -39,6 +39,8 @@ import {
   type Layout,
 } from "./examples";
 import { IMG_SIZE, buildVLAModel, type VLAModels, type TF } from "./model";
+import { EMBED_DIM } from "./vocab.gen";
+import { embeddingMatrix, loadEmbeddings } from "./embeddings";
 
 import type * as tfType from "@tensorflow/tfjs";
 
@@ -289,26 +291,42 @@ export class VLATrainer {
     this.status = "loading";
     onUpdate?.();
 
-    if (!this.tf) {
-      // Import the umbrella "@tensorflow/tfjs" package. A prior attempt to
-      // import core+layers+webgl-backend separately (to shed the unused
-      // converter/data/cpu-backend weight) measured ~0KB real savings in a
-      // production build (core's op/gradient library dominates regardless)
-      // AND broke at runtime: tfjs-layers imports its own copy of
-      // tfjs-core internally, and the bundler didn't dedupe it against the
-      // one imported here, so tensors crossing between "our" core and
-      // layers' internal core lacked expected prototype methods (surfaced
-      // as "rMat.flatten is not a function" deep inside GRU). The umbrella
-      // package guarantees a single shared core instance — not worth
-      // reintroducing that class of bug for zero measured benefit.
-      const tf = await import("@tensorflow/tfjs");
-      await tf.ready();
-      this.tf = tf;
+    // the pretrained GloVe assets (~1MB) load in parallel with tfjs; both
+    // are cached after the first start, so a reset+restart resolves instantly
+    let embed: Float32Array;
+    try {
+      const embedP = loadEmbeddings();
+      if (!this.tf) {
+        // Import the umbrella "@tensorflow/tfjs" package. A prior attempt to
+        // import core+layers+webgl-backend separately (to shed the unused
+        // converter/data/cpu-backend weight) measured ~0KB real savings in a
+        // production build (core's op/gradient library dominates regardless)
+        // AND broke at runtime: tfjs-layers imports its own copy of
+        // tfjs-core internally, and the bundler didn't dedupe it against the
+        // one imported here, so tensors crossing between "our" core and
+        // layers' internal core lacked expected prototype methods (surfaced
+        // as "rMat.flatten is not a function" deep inside GRU). The umbrella
+        // package guarantees a single shared core instance — not worth
+        // reintroducing that class of bug for zero measured benefit.
+        const tf = await import("@tensorflow/tfjs");
+        await tf.ready();
+        this.tf = tf;
+      }
+      embed = await embedP;
+    } catch (err) {
+      // network failure on the embedding fetch — back to idle so the button
+      // becomes "Start Training" again (loadEmbeddings un-caches the
+      // rejection, so the retry refetches)
+      console.error("VLA trainer failed to load", err);
+      this.running = false;
+      this.status = "idle";
+      onUpdate?.();
+      return;
     }
     if (!this.running || this.runId !== myRun) return; // reset while loading
 
     this.disposeModels();
-    this.models = buildVLAModel(this.tf);
+    this.models = buildVLAModel(this.tf, embed);
     this.loss = NaN;
     this.smoothLoss = NaN;
     this.initialLoss = NaN;
@@ -445,7 +463,9 @@ export class VLATrainer {
    */
   snapshotPolicy() {
     if (!this.tf || !this.models) return;
-    if (!this.frozenModels) this.frozenModels = buildVLAModel(this.tf);
+    // embeddingMatrix() is non-null whenever models exist (start() awaits it)
+    if (!this.frozenModels)
+      this.frozenModels = buildVLAModel(this.tf, embeddingMatrix()!);
     // getWeights() returns the live variables' current values; setWeights
     // copies them into the frozen model's own variables, so the snapshot holds
     // steady as the main model trains on. Same architecture → identical weight
@@ -507,30 +527,46 @@ export class VLATrainer {
   }
 
   /**
-   * Exact per-token contribution to the decoded color's logit — the live
-   * per-chip bars. Because the color head is a single linear layer on a
-   * MEAN-pooled bag-of-embeddings, that logit is precisely
-   * mean_t(embedding[token_t] · colorWeights[:, color]): no forward pass
-   * needed, just two small weight-matrix lookups + a dot product per token.
+   * The language encoder's per-token ATTENTION weights — the live per-chip
+   * bars. The pooling scorer is a single LINEAR dense layer over the frozen
+   * embeddings, so the exact masked-softmax weights the model computes
+   * internally can be recomputed CPU-side here: score each token as
+   * embedding[token] · scoreKernel + scoreBias, drop padding, softmax over
+   * the rest. No forward pass — just the scorer's two small weight tensors
+   * plus a dot product per token against the frozen table. Weights are
+   * normalized so the most-attended token fills its bar.
    */
-  tokenContributions(tokens: number[], color: number): number[] | null {
+  attentionWeights(tokens: number[]): number[] | null {
     if (!this.ready) return null;
-    const embedTable = this.models!.model
-      .getLayer("text_embedding")
-      .getWeights()[0]
-      .arraySync() as number[][];
-    const colorWeights = this.models!.model
-      .getLayer("color")
-      .getWeights()[0]
-      .arraySync() as number[][];
-    const dim = colorWeights.length;
-    const contributions = tokens.map((tok) => {
-      let dot = 0;
-      for (let d = 0; d < dim; d++) dot += embedTable[tok][d] * colorWeights[d][color];
-      return dot;
+    // the embedding table is FROZEN pretrained GloVe — read it from the
+    // CPU-side copy loadEmbeddings() kept (syncing the 20k x 50 table off
+    // the GPU every refresh would dwarf the readout it powers); only the
+    // small trainable scorer weights are pulled from the model
+    const embedTable = embeddingMatrix();
+    if (!embedTable) return null;
+    const w = this.models!.model.getLayer("attn_score").getWeights();
+    const kernel = w[0].arraySync() as number[][]; // [EMBED_DIM][1]
+    const bias = (w[1].arraySync() as number[])[0];
+    // raw scores; padding is excluded from the softmax entirely
+    const scores = tokens.map((tok) => {
+      if (tok === PAD) return -Infinity;
+      let s = bias;
+      for (let d = 0; d < EMBED_DIM; d++)
+        s += embedTable[tok * EMBED_DIM + d] * kernel[d][0];
+      return s;
     });
-    const max = Math.max(...contributions.map(Math.abs), 1e-6);
-    return contributions.map((c) => Math.abs(c) / max);
+    const finite = scores.filter((s) => Number.isFinite(s));
+    const maxS = finite.length ? Math.max(...finite) : 0;
+    let sum = 0;
+    const exps = scores.map((s) => {
+      if (!Number.isFinite(s)) return 0;
+      const e = Math.exp(s - maxS);
+      sum += e;
+      return e;
+    });
+    const weights = exps.map((e) => (sum > 0 ? e / sum : 0));
+    const maxW = Math.max(...weights, 1e-6);
+    return weights.map((wt) => wt / maxW);
   }
 
   /** Loss normalized against the first batch, clamped to [0,1]. */

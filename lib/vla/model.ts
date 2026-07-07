@@ -6,19 +6,34 @@
 // pool → strided conv), not a single patch projection — the policy must
 // tell the two blocks in a scene apart by color AND regress both joint
 // angles.
-// Language: a bag-of-embeddings — embed each token, then mean-pool across
-// the sequence (robust to WHERE the color word appears — free user text at
-// inference; word order carries no signal for this task, so a recurrent
-// reader isn't needed and costs meaningfully more to run/compile). An
-// auxiliary color-classification head on the pooled language vector shapes
-// it to be color-decodable and powers the live "decoded target" readout.
-// Because the head is LINEAR and pooling is a mean, the decoded color's
-// logit is an exact average of each token's own dot-product contribution —
-// trainer.ts's tokenContributions() reads that off directly for the live
-// per-token bars, no extra sub-model or forward pass required.
+// Language: an ATTENTION-POOLED bag-of-embeddings. Embed each token, score
+// each one with a small learned linear scorer, then combine them with a
+// masked softmax (padding forced to zero attention) into a single weighted-
+// sum sentence vector. This replaces a plain mean-pool, which diluted the
+// one word that matters (the color/verb) under filler + padding — in a
+// 12-slot mean the color token is only ~1/12 of the result, and short
+// commands are watered down further by the empty pad slots. Attention lets
+// the encoder learn to keep the content words and ignore the scaffolding
+// (still robust to WHERE the color word appears — free user text at
+// inference; word order carries no signal, so no recurrence is needed). The
+// embedding table is PRETRAINED (a ~20k-word GloVe 50d slice, see
+// lib/vla/embeddings.ts) and FROZEN: only the scorer/heads/fusion fine-tune
+// on top of it. Frozen is the point — Adam would only update rows for words
+// seen in training, so a trainable table would drift "golden" away from the
+// untouched "gold" and destroy exactly the near-synonym generalization the
+// pretrained geometry provides. The linear color head learns a map from
+// GloVe space using only the grammar's synonyms, and unseen neighbors
+// ("gold", "violet") ride along. An auxiliary color-classification head on
+// the pooled language vector shapes it to be color-decodable and powers the
+// live "decoded target" readout.
+// The attention scorer is LINEAR, so trainer.ts's attentionWeights() can
+// recompute the exact same per-token weights CPU-side (from the scorer's two
+// small weight tensors + the frozen embedding table) for the live per-token
+// bars — no extra sub-model or forward pass required.
 
 import type * as tfType from "@tensorflow/tfjs";
 import { MAX_SEQ_LEN, VOCAB_SIZE, COLORS } from "./examples";
+import { EMBED_DIM } from "./vocab.gen";
 
 export type TF = typeof tfType;
 
@@ -48,7 +63,48 @@ export interface VLAModels {
   model: tfType.LayersModel;
 }
 
-export function buildVLAModel(tf: TF): VLAModels {
+/**
+ * A masked attention-pooling layer: given the token embeddings [B, T, D],
+ * their per-token scores [B, T, 1], and the raw token ids [B, T], it masks
+ * out padding (id 0), softmaxes the scores over the token axis, and returns
+ * the attention-weighted sum [B, D]. Built as a factory (rather than a
+ * top-level class) because it must subclass the `tf.layers.Layer` from the
+ * dynamically-imported tfjs instance. It holds no weights of its own — the
+ * trainable scorer is a separate Dense layer — so the two models built per
+ * session (live + frozen snapshot) stay weight-order-compatible.
+ */
+function makeAttentionPooling(tf: TF) {
+  return class AttentionPooling extends tf.layers.Layer {
+    static className = "AttentionPooling";
+
+    computeOutputShape(
+      inputShape: tfType.Shape | tfType.Shape[]
+    ): tfType.Shape | tfType.Shape[] {
+      const emb = (inputShape as tfType.Shape[])[0] as number[];
+      return [emb[0], emb[emb.length - 1]]; // [B, D]
+    }
+
+    call(
+      inputs: tfType.Tensor | tfType.Tensor[]
+    ): tfType.Tensor | tfType.Tensor[] {
+      return tf.tidy(() => {
+        const [embedded, scores, tokenIds] = inputs as tfType.Tensor[];
+        const mask = tf.cast(tf.notEqual(tokenIds, 0), "float32"); // [B, T]
+        const s = tf.squeeze(scores, [2]); // [B, T]
+        // pad positions get -1e9 before the softmax, so they take ~0 weight
+        const masked = tf.add(s, tf.mul(tf.sub(mask, 1), 1e9));
+        const weights = tf.softmax(masked, -1); // [B, T]
+        return tf.sum(tf.mul(embedded, tf.expandDims(weights, -1)), 1); // [B, D]
+      });
+    }
+  };
+}
+
+/**
+ * @param embedMatrix Dequantized pretrained GloVe table,
+ *   [VOCAB_SIZE, EMBED_DIM] row-major (from lib/vla/embeddings.ts).
+ */
+export function buildVLAModel(tf: TF, embedMatrix: Float32Array): VLAModels {
   // Branch A: vision CNN
   const visionInput = tf.input({
     shape: [IMG_SIZE, IMG_SIZE, 3],
@@ -85,7 +141,7 @@ export function buildVLAModel(tf: TF): VLAModels {
     .apply(v);
   const flatVision = tf.layers.flatten().apply(v); // 4x4x24 = 384
 
-  // Branch B: language — bag-of-embeddings, no recurrence
+  // Branch B: language — attention-pooled bag-of-embeddings (no recurrence)
   const langInput = tf.input({
     shape: [MAX_SEQ_LEN],
     name: "language_tokens",
@@ -94,13 +150,22 @@ export function buildVLAModel(tf: TF): VLAModels {
   const embedded = tf.layers
     .embedding({
       inputDim: VOCAB_SIZE,
-      outputDim: 24,
+      outputDim: EMBED_DIM,
+      trainable: false, // frozen pretrained backbone (see header)
       name: "text_embedding",
     })
-    .apply(langInput); // [12, 24]
-  const langPooled = tf.layers
-    .globalAveragePooling1d({ name: "lang_vector" })
-    .apply(embedded); // 24
+    .apply(langInput) as tfType.SymbolicTensor; // [T, EMBED_DIM]
+  // per-token importance score; LINEAR (no activation) so attentionWeights()
+  // can recompute the same scores CPU-side from this layer's two weights
+  const scores = tf.layers
+    .dense({ units: 1, name: "attn_score" })
+    .apply(embedded) as tfType.SymbolicTensor; // [T, 1]
+  const AttentionPooling = makeAttentionPooling(tf);
+  const langPooled = new AttentionPooling({ name: "lang_vector" }).apply([
+    embedded,
+    scores,
+    langInput,
+  ]) as tfType.SymbolicTensor; // EMBED_DIM
 
   // fusion + heads
   const fused = tf.layers
@@ -121,6 +186,13 @@ export function buildVLAModel(tf: TF): VLAModels {
     inputs: [visionInput, langInput],
     outputs: [actionOutput, colorOutput],
   });
+
+  // load the pretrained GloVe vectors into the (frozen) embedding table.
+  // setWeights copies the values into the layer's variable, so the temp
+  // tensor is disposed right after.
+  const embedInit = tf.tensor2d(embedMatrix, [VOCAB_SIZE, EMBED_DIM]);
+  model.getLayer("text_embedding").setWeights([embedInit]);
+  embedInit.dispose();
   // tfjs-layers doesn't implement compile({lossWeights}) — scale the aux
   // color loss inside a custom per-output loss function instead (and the
   // loss array must then be all-functions, so the action loss is a function

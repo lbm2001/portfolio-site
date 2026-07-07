@@ -3,15 +3,26 @@
 // Four named colors (chosen for maximum hue contrast at small silhouette
 // sizes), each with synonyms; sentences are generated from a slot grammar
 // (filler? verb article color-word noun please?) so hundreds of surface
-// forms collapse onto 4 intents. Every scene places exactly TWO blocks, one
-// per side, with colors drawn from the four without replacement — so vision
-// only ever has to tell two colors apart at once, not localize one among a
-// crowd, which keeps training fast.
+// forms collapse onto 4 intents. The word inventory lives in grammar.json
+// (single source of truth shared with scripts/gen-embeddings-data.mjs).
+// Every scene places exactly TWO blocks, one per side, with colors drawn
+// from the four without replacement — so vision only ever has to tell two
+// colors apart at once, not localize one among a crowd, which keeps
+// training fast.
 //
-// Token id 0 is <pad>, id 1 is <unk>: out-of-vocabulary words (typos, free
-// text) map to <unk>, and the trainer also randomly drops ~10% of non-color
-// training tokens to <unk> so the encoder learns to key on the color word
-// and shrug off words it doesn't know.
+// Token ids index the pretrained GloVe table (vocab.gen.ts / public/vla/):
+// 0 is <pad>, 1 is <unk>, then the ~20k-word GloVe vocab. Only the grammar
+// words' ids (CORE_VOCAB) are bundled — tokenize() uses them synchronously
+// (SSR default sentence, demo cycling) and upgrades to the full lazy-fetched
+// list once lib/vla/embeddings.ts registers it, so free user text like
+// "gold" resolves to a real pretrained vector, not <unk>. The trainer still
+// randomly drops ~10% of non-color training tokens to <unk> so the encoder
+// learns to shrug off genuinely unknown words.
+
+import grammar from "./grammar.json";
+import { CORE_VOCAB } from "./vocab.gen";
+
+export { VOCAB_SIZE } from "./vocab.gen";
 
 export const MAX_SEQ_LEN = 12;
 export const PAD = 0;
@@ -23,46 +34,25 @@ export interface ColorDef {
   synonyms: string[];
 }
 
-export const COLORS: ColorDef[] = [
-  { name: "red", hex: "#e12d1a", synonyms: ["red", "crimson", "scarlet"] },
-  { name: "black", hex: "#1c1c1c", synonyms: ["black"] },
-  { name: "blue", hex: "#2a6fdb", synonyms: ["blue", "azure", "navy"] },
-  { name: "yellow", hex: "#d9a800", synonyms: ["yellow", "golden"] },
-];
+export const COLORS: ColorDef[] = grammar.colors;
 
-const VERBS = [
-  ["pick", "up"],
-  ["grab"],
-  ["grasp"],
-  ["take"],
-  ["lift"],
-  ["fetch"],
-  ["get"],
-  ["reach", "for"],
-];
-const ARTICLES = ["the", "a"];
-const NOUNS = ["block", "box", "cube", "object"];
-const FILLERS = ["please", "robot", "now"];
-
-// stable vocab: pad, unk, then every grammar word in insertion order
-export const VOCAB: Record<string, number> = { "<pad>": PAD, "<unk>": UNK };
-{
-  let id = 2;
-  const add = (w: string) => {
-    if (!(w in VOCAB)) VOCAB[w] = id++;
-  };
-  VERBS.flat().forEach(add);
-  ARTICLES.forEach(add);
-  NOUNS.forEach(add);
-  FILLERS.forEach(add);
-  COLORS.forEach((c) => c.synonyms.forEach(add));
-}
-export const VOCAB_SIZE = Object.keys(VOCAB).length;
+const VERBS = grammar.verbs;
+const ARTICLES = grammar.articles;
+const NOUNS = grammar.nouns;
+const FILLERS = grammar.fillers;
 
 /** Token ids of every color synonym — exempt from training word-dropout. */
 export const COLOR_TOKEN_IDS = new Set<number>(
-  COLORS.flatMap((c) => c.synonyms.map((s) => VOCAB[s]))
+  COLORS.flatMap((c) => c.synonyms.map((s) => CORE_VOCAB[s]))
 );
+
+// full GloVe word list, registered by loadEmbeddings() once fetched
+let fullVocab: Map<string, number> | null = null;
+
+/** Install the complete vocab (word at index i → token id i+2). */
+export function registerFullVocab(words: string[]) {
+  fullVocab = new Map(words.map((w, i) => [w, i + 2]));
+}
 
 /** Lowercase, strip punctuation, map OOV words to <unk>, pad to MAX_SEQ_LEN. */
 export function tokenize(sentence: string): number[] {
@@ -73,7 +63,7 @@ export function tokenize(sentence: string): number[] {
     .filter(Boolean);
   const tokens = new Array<number>(MAX_SEQ_LEN).fill(PAD);
   for (let i = 0; i < Math.min(words.length, MAX_SEQ_LEN); i++) {
-    tokens[i] = VOCAB[words[i]] ?? UNK;
+    tokens[i] = fullVocab?.get(words[i]) ?? CORE_VOCAB[words[i]] ?? UNK;
   }
   return tokens;
 }

@@ -16,7 +16,6 @@ import {
   DEFAULT_LAYOUT,
   DEFAULT_SENTENCE,
   MAX_SEQ_LEN,
-  blockOfColor,
   hasColor,
   presentColor,
   randomLayout,
@@ -67,6 +66,7 @@ interface Episode {
   phase: "reach" | "lift" | "return";
   f: number; // frames in the current phase
   near: number;
+  nearColor: number; // COLORS index of the block being hovered, or -1
   color: number; // COLORS index of the commanded block
   tokens: number[];
   from: { a1: number; a2: number };
@@ -77,6 +77,7 @@ const newEpisode = (color: number, tokens: number[]): Episode => ({
   phase: "reach",
   f: 0,
   near: 0,
+  nearColor: -1,
   color,
   tokens,
   from: { a1: REST[0], a2: REST[1] },
@@ -353,14 +354,24 @@ export default function Hero() {
           trailRef.current.push(effectorPx(W, H, arm.a1, arm.a2));
           if (trailRef.current.length > TRAIL_LEN) trailRef.current.shift();
         }
-        const g = graspTarget(blockOfColor(rolloutLayoutRef.current, ep.color).x);
+        // the gripper closes on whatever block the effector settles over —
+        // not just the commanded one — so a wrong-side reach visibly lifts
+        // the wrong block instead of hovering next to it until the timeout
         const e = fk(arm.a1, arm.a2);
-        const dist = Math.hypot(e.ex - g.x, e.ey - g.y);
-        ep.near = dist < GRASP_EPS ? ep.near + 1 : 0;
-        if (ep.near >= NEAR_FRAMES) {
-          ep.phase = "lift"; // success: grasp, then lift straight up
+        let touched = -1;
+        for (const b of rolloutLayoutRef.current) {
+          const g = graspTarget(b.x);
+          if (Math.hypot(e.ex - g.x, e.ey - g.y) < GRASP_EPS) {
+            touched = b.color;
+            break;
+          }
+        }
+        ep.near = touched >= 0 && touched === ep.nearColor ? ep.near + 1 : touched >= 0 ? 1 : 0;
+        ep.nearColor = touched;
+        if (touched >= 0 && ep.near >= NEAR_FRAMES) {
+          ep.phase = "lift"; // grasp whatever it settled on, lift straight up
           ep.from = { ...arm };
-          ep.carry = ep.color;
+          ep.carry = touched;
           ep.f = 0;
         } else if (ep.f > REACH_TIMEOUT) {
           ep.phase = "return";
@@ -564,10 +575,10 @@ export default function Hero() {
       ctx.fill();
     };
 
-    // real language-encoder readouts: decoded color + each token's EXACT
-    // contribution to that color's logit (see tokenContributions in
-    // trainer.ts — an exact decomposition, not an approximation, since the
-    // color head is linear on a mean-pooled bag-of-embeddings)
+    // real language-encoder readouts: decoded color + each token's live
+    // ATTENTION weight (see attentionWeights in trainer.ts — the exact
+    // masked-softmax weights the attention-pooling layer uses, recomputed
+    // from the linear scorer's weights, not an approximation)
     const langViz = (now: number) => {
       const trainer = trainerRef.current;
       if (!trainer?.ready || now - lastLangRef.current < LANG_MS) return;
@@ -576,7 +587,7 @@ export default function Hero() {
       const d = trainer.decodeColor(tokens);
       if (!d) return;
       setDecoded({ name: COLORS[d.color].name, hex: COLORS[d.color].hex, prob: d.prob });
-      const bars = trainer.tokenContributions(tokens, d.color);
+      const bars = trainer.attentionWeights(tokens);
       if (bars) setTokenBars(bars);
     };
 
@@ -835,7 +846,10 @@ export default function Hero() {
         <canvas className="vla-vision-canvas" ref={visionRef} />
       </div>
 
-      {/* Language Encoder — bag-of-embeddings (mean-pooled, no recurrence) */}
+      {/* Language Encoder — frozen pretrained GloVe embeddings, attention-
+          pooled (a learned scorer weights each token so filler + padding stop
+          diluting the color/verb word); near-synonyms the grammar never
+          trained on ("gold", "violet") resolve via the pretrained geometry */}
       <div className="vla-node vla-lang" ref={langCardRef}>
         <div className="vla-label">Language Encoder</div>
         <div className="vla-prompt-echo">&quot;{active.text}&quot;</div>

@@ -1,0 +1,21 @@
+{
+  "verbs": [
+    ["pick", "up"],
+    ["grab"],
+    ["grasp"],
+    ["take"],
+    ["lift"],
+    ["fetch"],
+    ["get"],
+    ["reach", "for"]
+  ],
+  "articles": ["the", "a"],
+  "nouns": ["block", "box", "cube", "object"],
+  "fillers": ["please", "robot", "now"],
+  "colors": [
+    { "name": "red", "hex": "#e12d1a", "synonyms": ["red", "crimson", "scarlet"] },
+    { "name": "black", "hex": "#1c1c1c", "synonyms": ["black"] },
+    { "name": "blue", "hex": "#2a6fdb", "synonyms": ["blue", "azure", "navy"] },
+    { "name": "yellow", "hex": "#d9a800", "synonyms": ["yellow", "golden"] }
+  ]
+}
