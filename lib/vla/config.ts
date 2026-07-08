@@ -40,12 +40,12 @@ export const CONFIG = {
     /** Adam learning rate. 0.005 won the 2026-07 sweep at batchSize 32 /
         imgSize 64: 0.008 was collapse-prone (side-binding failure on bad
         seeds) and 0.003 measurably slower without being more reliable. */
-    learningRate: 0.0015,
+    learningRate: 0.005,
     /** Weight of the auxiliary color-classification loss vs. the action loss.
         0.4 was the most collapse-resistant setting in the sweep (0 side-binding
         collapses across 7 seeds vs 1/7 at 0.2); 0.2 peaked slightly higher on
         lucky seeds but is riskier. */
-    colorLossWeight: 0.4,
+    colorLossWeight: 0.6,
     /** Weight of the auxiliary attention-map loss: cross-entropy between the
         spatial attention map and the commanded block's grid cell. WHY IT
         EXISTS: the action loss alone cannot train the attention — with a
@@ -54,7 +54,7 @@ export const CONFIG = {
         language-only plateau for 300+ batches). CE through the softmax has
         an undiluted (map − onehot) gradient, and the supervision is free —
         the expert already knows which block it labeled. */
-    mapLossWeight: 1.5,
+    mapLossWeight: 2.5,
     /** Scale of the frozen soft-argmax coordinate kernel: the fusion sees the
         gaze as (imageCoord − 0.5) × this gain. WHY: in raw [0,1] units the
         within-band position signal spans only ~0.16 while the other ~74
@@ -64,7 +64,7 @@ export const CONFIG = {
         0.10). This is plain feature standardization — the kernel is frozen,
         so the gain is exact, not a learned scale that early training could
         squash. */
-    attnCoordGain: 16,
+    attnCoordGain: 32,
     /** Huber transition point for the action loss. The two IK target clusters
         (commanded block left vs. right) sit ~4.3 rad apart, so plain MSE lets
         the rare (~1%) wrong-side pick (cost ~9.3) dominate over regression
@@ -114,7 +114,7 @@ export const CONFIG = {
         uniform over the full pose range). The label is pose-independent now,
         but the rendered silhouette isn't — this keeps vision trained on what
         the scene looks like as the rollout closes in, not just far away. */
-    nearTargetFrac: 0.35,
+    nearTargetFrac: 0.5,
     /** Gaussian spread (rad) of that near-target pose jitter. */
     nearTargetStd: 0.5,
     /** Chance a non-color token becomes <unk> in training, so the encoder
@@ -131,13 +131,13 @@ export const CONFIG = {
           0.015 (+streak 8) cost ~5s and measurably improved nothing — the
           policy's residual ~0.03 reach error is a vision-resolution floor, not
           undertraining. Raise toward 0.04 to hand off earlier/looser. */
-      loss: 0.02,
+      loss: 0.015,
       /** Trailing window (batches) the convergence mean is taken over. Small =
           low detection lag as old high losses roll off; the streak guards
           against a lucky dip. */
       window: 10,
       /** Consecutive in-threshold batches required before declaring converged. */
-      streak: 5,
+      streak: 8,
       /** Hard floor of batches before convergence can fire. Earliest genuine
           crossing observed in the sweep was ~155 batches, so 100 is pure
           lucky-dip insurance and never binds on healthy runs. */
@@ -227,9 +227,9 @@ export const CONFIG = {
     /** How often (ms) the policy re-predicts its target (closed loop). */
     predictMs: 80,
     /** Distance (workspace units) from the block centre that counts as reached. */
-    graspEps: 0.05,
+    graspEps: 0.03,
     /** Consecutive close frames required to register a grasp. */
-    nearFrames: 6,
+    nearFrames: 4,
     /** Frames before a reach gives up as failed. Must exceed the synced demo
         cycle (demo.periodMs in frames) so a rollout isn't cut off early. */
     reachTimeout: 500,

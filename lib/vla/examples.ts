@@ -1,14 +1,15 @@
 // Language + scene-layout space for the VLA task.
 //
-// Four named colors (chosen for maximum hue contrast at small silhouette
+// Eight named colors (chosen for maximum hue contrast at small silhouette
 // sizes), each with synonyms; sentences are generated from a slot grammar
 // (filler? verb article color-word noun please?) so hundreds of surface
-// forms collapse onto 4 intents. The word inventory lives in grammar.json
+// forms collapse onto 8 intents. The word inventory lives in grammar.json
 // (single source of truth shared with scripts/gen-embeddings-data.mjs).
 // Every scene places exactly TWO blocks, one per side, with colors drawn
-// from the four without replacement — so vision only ever has to tell two
+// from the eight without replacement — so vision only ever has to tell two
 // colors apart at once, not localize one among a crowd, which keeps
-// training fast.
+// training fast; the wider palette makes the language-grounding (which of
+// eight words → which of two blocks) the harder part.
 //
 // Token ids index the pretrained GloVe table (vocab.gen.ts / public/vla/):
 // 0 is <pad>, 1 is <unk>, then the ~20k-word GloVe vocab. Only the grammar

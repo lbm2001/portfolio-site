@@ -16,6 +16,10 @@
     { "name": "red", "hex": "#e12d1a", "synonyms": ["red", "crimson", "scarlet"] },
     { "name": "black", "hex": "#1c1c1c", "synonyms": ["black"] },
     { "name": "blue", "hex": "#2a6fdb", "synonyms": ["blue", "azure", "navy"] },
-    { "name": "yellow", "hex": "#d9a800", "synonyms": ["yellow", "golden"] }
+    { "name": "yellow", "hex": "#d9a800", "synonyms": ["yellow", "golden"] },
+    { "name": "green", "hex": "#1f9d4d", "synonyms": ["green", "emerald"] },
+    { "name": "orange", "hex": "#e8720f", "synonyms": ["orange"] },
+    { "name": "purple", "hex": "#8b3fd6", "synonyms": ["purple", "violet"] },
+    { "name": "pink", "hex": "#e0459b", "synonyms": ["pink", "magenta"] }
   ]
 }

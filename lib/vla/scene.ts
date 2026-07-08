@@ -153,8 +153,8 @@ export function paintScene(
 const SIL_BLOCK_SCALE = CONFIG.render.silBlockScale;
 
 /**
- * The model's-eye view: white background, the 8 colored blocks at their
- * layout positions, grey arm. Two grey link tones + a dark effector dot keep
+ * The model's-eye view: white background, the layout's colored blocks at
+ * their positions, grey arm. Two grey link tones + a dark effector dot keep
  * the pose readable after the 32x32 downsample — the network has to regress
  * joint angles AND localize the named color from this image alone.
  */

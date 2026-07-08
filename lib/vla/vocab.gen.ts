@@ -5,8 +5,8 @@
 // with EMBED_SCALES.
 
 export const EMBED_DIM = 50;
-/** <pad> + <unk> + 20001 GloVe words. */
-export const VOCAB_SIZE = 20003;
+/** <pad> + <unk> + 20002 GloVe words. */
+export const VOCAB_SIZE = 20004;
 
 /** Per-dimension int8 dequantization scales (value = int8 * scale[d]). */
 export const EMBED_SCALES: number[] = [
@@ -73,6 +73,7 @@ export const CORE_VOCAB: Record<string, number> = {
   "take": 173,
   "black": 486,
   "red": 598,
+  "green": 912,
   "reach": 941,
   "blue": 1096,
   "navy": 1399,
@@ -81,9 +82,12 @@ export const CORE_VOCAB: Record<string, number> = {
   "pick": 1945,
   "golden": 2276,
   "yellow": 2682,
+  "orange": 3011,
   "lift": 3194,
   "please": 3610,
   "object": 4326,
+  "pink": 5174,
+  "purple": 7206,
   "grab": 7533,
   "robot": 8740,
   "grasp": 11636,
@@ -91,5 +95,8 @@ export const CORE_VOCAB: Record<string, number> = {
   "cube": 15013,
   "scarlet": 16046,
   "fetch": 17096,
-  "azure": 20002
+  "violet": 17151,
+  "emerald": 18510,
+  "azure": 20002,
+  "magenta": 20003
 };
