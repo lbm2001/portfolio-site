@@ -74,6 +74,21 @@ export const CONFIG = {
         ~0.025 and smoothing the descent. 0.6 keeps correct-side samples in the
         quadratic zone while catching wrong-side picks early. */
     actionHuberDelta: 0.6,
+    /** Weight of the gripper BCE loss — the 1-unit sigmoid head off the
+        fusion layer predicting the DESIRED gripper state at the predicted
+        target (0 open / 1 closed; touch 0, lift 1, stack 1-then-0). Kept a
+        separate head + loss so the calibrated Huber action numbers above stay
+        untouched. UNTUNED first value for the multi-task expansion. */
+    gripLossWeight: 0.5,
+    /** Weight of the auxiliary task-classification loss (langPooled → which
+        of the TASKS the sentence asks for). Like the color head it's a pure
+        text decoder; it powers the decoded-task readout and try-it routing.
+        UNTUNED. */
+    taskLossWeight: 0.3,
+    /** Weight of the auxiliary reference-color loss (stack's "…on the X
+        block"; COLORS.length+1 classes, last = "none" for lift/touch).
+        UNTUNED. */
+    refColorLossWeight: 0.4,
     /** Vision CNN stack, in order. Add/remove entries to change depth; edit
         filters/kernel/stride/pool to retune a stage. The LAST stage's output
         map is what the language-conditioned spatial attention scores (see
@@ -117,6 +132,13 @@ export const CONFIG = {
     nearTargetFrac: 0.5,
     /** Gaussian spread (rad) of that near-target pose jitter. */
     nearTargetStd: 0.5,
+    /** Fraction of lift/stack samples synthesized MID-CARRY: the commanded
+        block is rendered at the effector of the sampled pose and the label
+        is the carry-phase target (lift → REST grip closed; stack → above the
+        reference block, grip open). This is what makes the carry phase
+        policy-driven — the network must read "am I holding it" out of the
+        image. Touch has no carry phase. UNTUNED. */
+    carryFrac: 0.5,
     /** Chance a non-color token becomes <unk> in training, so the encoder
         learns to shrug off unknown words in free user text. */
     wordDropout: 0.1,
@@ -185,20 +207,17 @@ export const CONFIG = {
 
   // ── Task / language space (lib/vla/examples.ts) ────────────────────────
   task: {
-    /** Token slots per command (padded/truncated to this). */
-    maxSeqLen: 12,
+    /** Token slots per command (padded/truncated to this). 14 fits the widest
+        stack sentence (filler + verb + article + color + noun + "on top of" +
+        article + color + noun + please = 12) with headroom. */
+    maxSeqLen: 14,
     /** The two cleanly-reachable floor BANDS [lo, hi] blocks are placed in per
         side (the centre is a near-singular dead zone; see examples.ts). Inner
         edges (0.31/0.69) are set for the LARGEST block's elbow limit. */
     placeLeft: [0.11, 0.31] as [number, number],
     placeRight: [0.69, 0.89] as [number, number],
-    /** Chance a side gets a SECOND block (else one). So a scene holds 2-4
-        blocks total, each a distinct color — the extra distractors make the
-        language-grounding (which of 8 color words → which of up to 4 blocks)
-        harder. Two blocks share one band, so they can only both be placed when
-        neither is too big; see randomLayout's reject-and-fallback in
-        examples.ts. Set to 0 to restore the strict one-per-side task. */
-    twoPerSideProb: 0.6,
+    // (Scene density — how many blocks, from how many colors, which tasks —
+    // is the USER's ⚙ run config now: lib/vla/run-config.ts, not a knob here.)
     /** Extra clearance (workspace units) required between two same-side blocks'
         silhouettes, on top of their (boosted) half-widths — keeps them from
         occluding each other AND lands them in different attention cells (one
@@ -219,14 +238,28 @@ export const CONFIG = {
     periodMs: 5000,
     // Absolute-time trajectory phases (ms), independent of periodMs so the
     // scripted reach keeps its crisp speed regardless of the resting tail.
+    // All three task trajectories share via/reach/settle; the tails differ:
+    //   lift : settle → liftMs up → holdMs aloft            (ends ~4.26s)
+    //   touch: settle → touchHoldMs resting ON the block → returnMs to rest
+    //   stack: settle → carryMs arc to above the ref block → placeSettleMs
+    //          → release → returnMs to rest                 (ends ~3.78s)
     phases: {
       viaMs: 672, // rest → mid-trajectory waypoint
       reachMs: 672, // waypoint → block centre
       settleMs: 420, // settle on the block centre
       liftMs: 1092, // straight up back to rest
-      graspAtMs: 1430, // block grasped mid-settle (carry begins)
+      graspAtMs: 1430, // block grasped mid-settle (carry begins; lift/stack)
       holdMs: 1400, // held aloft after the lift completes
+      touchHoldMs: 600, // touch: effector rests on the block, gripper open
+      carryMs: 900, // stack: block centre → above the ref block (via an arc)
+      placeSettleMs: 320, // stack: settle above the ref block, then release
+      returnMs: 800, // touch/stack: empty-handed return to rest
     },
+    /** Height (workspace units) of the stack demo's carry waypoint — the
+        carried block swings through (midX, carryHeight) between the grasp and
+        the placement so it clears the scene instead of dragging along the
+        floor. Reachable across both bands (max dist from base ≈ 0.37 ≤ 0.58). */
+    carryHeight: 0.34,
     /** Waypoint/reach noise amplitudes so no two demonstrations are identical:
         grasp x/y jitter, and the mid-trajectory via-point θ1/θ2 jitter. */
     jitter: { graspX: 0.012, graspY: 0.008, viaTheta1: 0.3, viaTheta2: 0.45 },
@@ -245,8 +278,12 @@ export const CONFIG = {
     /** Frames before a reach gives up as failed. Must exceed the synced demo
         cycle (demo.periodMs in frames) so a rollout isn't cut off early. */
     reachTimeout: 500,
-    /** Frames for the straight-up lift after a grasp. */
-    liftFrames: 55,
+    /** Joint-space closeness (rad, per joint) to the predicted carry-phase
+        target that counts as "settled" — the release/lift-complete test now
+        that the carry phase is policy-driven (there is no block to be near;
+        the arm settles wherever the policy parked it). With stepGain 0.08
+        the approach is asymptotic, so this can't be too tight. */
+    settleEps: 0.05,
     /** Frames holding the block at the top (~0.5s), arm straight. */
     topHold: 30,
     /** Frames a failed attempt lerps back to rest over. */
@@ -258,6 +295,17 @@ export const CONFIG = {
     /** Silhouette render size before the live rollout's own imgSize downsample
         (Hero's copy of the trainer render; keep ≈4x imgSize). */
     silRender: 128,
+  },
+
+  // ── Training-time estimate shown in the ⚙ run-config menu ──────────────
+  // DUMMY factor table — estimateTrainingSeconds (lib/vla/run-config.ts) is
+  // baseSeconds × Σ taskCost(enabled) × colorFactor × blockFactor. Replace
+  // with gauged per-config numbers once the multi-task runs are measured.
+  eta: {
+    baseSeconds: 30,
+    taskCost: { lift: 1.0, touch: 0.8, stack: 2.2 },
+    colorFactor: { 2: 0.85, 4: 1.0, 8: 1.2 } as Record<number, number>,
+    blockFactor: { 2: 0.9, 3: 1.0, 4: 1.1 } as Record<number, number>,
   },
 
   // ── Model's-eye rendering (lib/vla/scene.ts) ───────────────────────────

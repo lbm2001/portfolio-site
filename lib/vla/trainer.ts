@@ -12,7 +12,7 @@
 //    plain synchronous read, served from a mirror updated per batch message.
 //    lossHistory is reconstructed by appending each batch's loss — only a
 //    few numbers cross the thread boundary per step, never the full curve.
-//  - inference (predictFrozenTarget/decodeColor/attentionWeights) is now
+//  - inference (predictFrozenTarget/decodeCommand/attentionWeights) is now
 //    ASYNC (Promise), matched to worker replies by request id. The rollout
 //    already re-predicts on a throttle and steps toward its LAST target every
 //    frame, so the added round-trip latency is invisible (see Hero.tsx).
@@ -28,13 +28,19 @@
 import { CONFIG } from "./config";
 import { registerFullVocab, type Layout } from "./examples";
 import {
+  DEFAULT_RUN_CONFIG,
+  setRunConfig,
+  type RunConfig,
+} from "./run-config";
+import {
   VLATrainerCore,
+  type DecodedCommand,
   type PredictResult,
   type TrainerStatus,
 } from "./trainer.core";
 import type { WorkerRequest, WorkerResponse } from "./trainer.worker";
 
-export type { PredictResult, TrainerStatus };
+export type { DecodedCommand, PredictResult, TrainerStatus };
 
 const BATCH_SIZE = CONFIG.trainer.batchSize;
 
@@ -215,17 +221,22 @@ export class VLATrainer {
   /**
    * Kick off training (loads tfjs + embeddings in the worker on first call).
    * onUpdate fires after every batch and on status changes, same as before.
+   * `cfg` is the user's ⚙ run config; start() installs it on BOTH sides —
+   * this thread (Hero's demo-cycle layout/sentence sampling reads the same
+   * module state) and the training thread (worker via the message, or the
+   * shared module instance in inline-fallback mode).
    */
-  start(onUpdate?: () => void) {
+  start(onUpdate?: () => void, cfg: RunConfig = DEFAULT_RUN_CONFIG) {
     this.ensureBackend();
     this.onUpdate = onUpdate;
+    setRunConfig(cfg);
     if (this.core) {
       void this.core.start(onUpdate);
       return;
     }
     if (this.m.status !== "idle") return;
     this.m.status = "loading";
-    this.send({ t: "start", gen: this.gen });
+    this.send({ t: "start", gen: this.gen, cfg });
     onUpdate?.();
   }
 
@@ -282,20 +293,25 @@ export class VLATrainer {
   /**
    * Policy inference against the frozen per-cycle snapshot — async (the
    * render + forward pass happen in the worker). Replies with the target
-   * angles PLUS the spatial-attention readout from the same pass. The caller
-   * keeps stepping toward its previous target until the reply lands; see
-   * Hero.tsx.
+   * angles + desired gripper state PLUS the spatial-attention readout from
+   * the same pass. `carry` is the rollout's currently-held block (rendered
+   * at the effector in the model's-eye view — the carry-phase state cue).
+   * The caller keeps stepping toward its previous target until the reply
+   * lands; see Hero.tsx.
    */
   predictFrozenTarget(
     a1: number,
     a2: number,
     tokens: number[],
-    layout: Layout
+    layout: Layout,
+    carry: number | null = null
   ): Promise<PredictResult | null> {
     if (this.core)
-      return Promise.resolve(this.core.predictFrozenTarget(a1, a2, tokens, layout));
+      return Promise.resolve(
+        this.core.predictFrozenTarget(a1, a2, tokens, layout, carry)
+      );
     if (!this.ready) return Promise.resolve(null);
-    return this.request({ t: "predict", a1, a2, tokens, layout });
+    return this.request({ t: "predict", a1, a2, tokens, layout, carry });
   }
 
   /**
@@ -307,17 +323,21 @@ export class VLATrainer {
     a1: number,
     a2: number,
     tokens: number[],
-    layout: Layout
+    layout: Layout,
+    carry: number | null = null
   ): Promise<PredictResult | null> {
     if (this.core)
-      return Promise.resolve(this.core.predictTarget(a1, a2, tokens, layout));
+      return Promise.resolve(
+        this.core.predictTarget(a1, a2, tokens, layout, carry)
+      );
     if (!this.ready) return Promise.resolve(null);
-    return this.request({ t: "predictLive", a1, a2, tokens, layout });
+    return this.request({ t: "predictLive", a1, a2, tokens, layout, carry });
   }
 
-  /** Decode which color a token sequence names (auxiliary language head). */
-  decodeColor(tokens: number[]): Promise<{ color: number; prob: number } | null> {
-    if (this.core) return Promise.resolve(this.core.decodeColor(tokens));
+  /** Decode what a token sequence asks for — task, color, ref color — via
+      the auxiliary language heads. */
+  decodeCommand(tokens: number[]): Promise<DecodedCommand | null> {
+    if (this.core) return Promise.resolve(this.core.decodeCommand(tokens));
     if (!this.ready) return Promise.resolve(null);
     return this.request({ t: "decode", tokens });
   }

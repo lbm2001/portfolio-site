@@ -52,13 +52,17 @@ export interface PaintOpts {
   lossNorm?: number;
   /** COLORS index of the block held at the gripper (its floor spot empties). */
   carry?: number | null;
+  /** Gripper state readout on the effector dot: false = open (white centre),
+      true/undefined = closed (solid grey — the pre-gripper look, so call
+      sites that don't pass it render as before). */
+  grip?: boolean;
 }
 
 export function paintScene(
   ctx: CanvasRenderingContext2D,
   W: number,
   H: number,
-  { a1, a2, layout, accent, trail, lossNorm = 0, carry }: PaintOpts
+  { a1, a2, layout, accent, trail, lossNorm = 0, carry, grip }: PaintOpts
 ) {
   const m = sceneMap(W, H);
   const bx = m.X(BASE.x);
@@ -96,12 +100,13 @@ export function paintScene(
 
   // blocks first — the WHOLE arm draws over them so the reach into a block
   // and the grip on a carried one stay visible. Each block draws at its own
-  // randomized side length.
+  // randomized side length, bottom at its rest height (y>0 = stacked).
   for (const b of layout) {
     if (b.color === carry) continue; // carried block leaves its floor spot
     const box = b.size * m.S;
+    const rest = (b.y ?? 0) * m.S;
     ctx.fillStyle = COLORS[b.color].hex;
-    ctx.fillRect(m.X(b.x) - box / 2, m.floorY - box, box, box);
+    ctx.fillRect(m.X(b.x) - box / 2, m.floorY - rest - box, box, box);
   }
   if (carry !== null && carry !== undefined) {
     const box = (layout.find((b) => b.color === carry)?.size ?? BLOCK) * m.S;
@@ -139,12 +144,21 @@ export function paintScene(
   ctx.fill();
   ctx.stroke();
 
-  // end effector — a solid grey dot on top of everything; stays the same
-  // grey whether reaching or carrying a block
-  ctx.fillStyle = "#6f6f6f";
+  // end effector — on top of everything; doubles as the gripper readout:
+  // closed = the familiar solid grey dot, open = a grey ring with a white
+  // centre. Callers that don't pass `grip` keep the solid-grey look.
   ctx.beginPath();
   ctx.arc(ex, ey, 4, 0, 7);
-  ctx.fill();
+  if (grip === false) {
+    ctx.fillStyle = "#fff";
+    ctx.fill();
+    ctx.lineWidth = 2.2;
+    ctx.strokeStyle = "#6f6f6f";
+    ctx.stroke();
+  } else {
+    ctx.fillStyle = "#6f6f6f";
+    ctx.fill();
+  }
 }
 
 // Blocks render a touch larger in the model's-eye view: a display-size block
@@ -180,14 +194,16 @@ export function paintSilhouette(
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, size, size);
 
-  // blocks at their floor spots — the carried one leaves its spot and is
+  // blocks at their rest spots — the carried one leaves its spot and is
   // redrawn at the gripper, so the model's-eye view matches the lifted demo.
-  // Each block draws at its own randomized side length (× the model-view boost).
+  // Each block draws at its own randomized side length (× the model-view
+  // boost — the boost widens the block, the rest height y stays true).
   for (const b of layout) {
     if (b.color === carry) continue;
     const box = b.size * SIL_BLOCK_SCALE * m.S;
+    const rest = (b.y ?? 0) * m.S;
     ctx.fillStyle = COLORS[b.color].hex;
-    ctx.fillRect(m.X(b.x) - box / 2, m.floorY - box, box, box);
+    ctx.fillRect(m.X(b.x) - box / 2, m.floorY - rest - box, box, box);
   }
   if (carry !== null && carry !== undefined) {
     const box =

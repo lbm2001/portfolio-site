@@ -58,6 +58,7 @@
 import type * as tfType from "@tensorflow/tfjs";
 import { CONFIG, type ConvLayer } from "./config";
 import { MAX_SEQ_LEN, VOCAB_SIZE, COLORS } from "./examples";
+import { TASKS } from "./run-config";
 import { EMBED_DIM } from "./vocab.gen";
 
 export type TF = typeof tfType;
@@ -69,6 +70,12 @@ export const LEARNING_RATE = CONFIG.model.learningRate;
 export const COLOR_LOSS_WEIGHT = CONFIG.model.colorLossWeight;
 export const MAP_LOSS_WEIGHT = CONFIG.model.mapLossWeight;
 export const ACTION_HUBER_DELTA = CONFIG.model.actionHuberDelta;
+export const GRIP_LOSS_WEIGHT = CONFIG.model.gripLossWeight;
+export const TASK_LOSS_WEIGHT = CONFIG.model.taskLossWeight;
+export const REF_COLOR_LOSS_WEIGHT = CONFIG.model.refColorLossWeight;
+
+/** The ref-color head's "none" class index (lift/touch have no reference). */
+export const REF_NONE = COLORS.length;
 
 /** Spatial size after one conv stage (+ optional pool). */
 function convOutSize(size: number, l: ConvLayer): number {
@@ -90,14 +97,17 @@ export const ATTN_GRID = CONFIG.model.conv.reduce(
 
 export interface VLAModels {
   /** Main policy (the one that trains): [vision, tokens] →
-      [action angles (2), color softmax, attention map [G*G]]. The map is a
-      trained OUTPUT, not just a readout — see mapLossWeight in config.ts for
-      why the action loss alone can't train the attention. */
+      [action angles (2), grip sigmoid (1), color softmax, ref-color softmax
+      (COLORS+1, last = "none"), task softmax, attention map [G*G]]. The map
+      is a trained OUTPUT, not just a readout — see mapLossWeight in config.ts
+      for why the action loss alone can't train the attention. Grip reads the
+      FUSION (it must see whether a block is already carried); color/refColor/
+      task read only langPooled, so they stay pure text decoders. */
   model: tfType.LayersModel;
   /** Inference/readout twin sharing every layer (no weights of its own):
-      [vision, tokens] → [action angles (2), spatial attention map [G*G]].
-      One predict on this yields the action AND the "where is the model
-      looking" viz in a single pass (the UI's gaze point is the map's
+      [vision, tokens] → [action angles (2), grip (1), attention map [G*G]].
+      One predict on this yields the action + gripper AND the "where is the
+      model looking" viz in a single pass (the UI's gaze point is the map's
       expectation, computed CPU-side in trainer.core). */
   viz: tfType.LayersModel;
 }
@@ -245,18 +255,38 @@ export function buildVLAModel(tf: TF, embedMatrix: Float32Array): VLAModels {
   const actionOutput = tf.layers
     .dense({ units: 2, activation: "linear", name: "action" })
     .apply(dense1) as tfType.SymbolicTensor;
+  // gripper: DESIRED open(0)/closed(1) at the predicted target. Off the
+  // fusion, not langPooled — for stack the answer flips once the block is in
+  // hand (grasp → release), and "is it in hand" is only visible in the image.
+  const gripOutput = tf.layers
+    .dense({ units: 1, activation: "sigmoid", name: "grip" })
+    .apply(dense1) as tfType.SymbolicTensor;
   const colorOutput = tf.layers
     .dense({ units: COLORS.length, activation: "softmax", name: "color" })
+    .apply(langPooled) as tfType.SymbolicTensor;
+  // stack's second referent ("…on the X block"); REF_NONE for lift/touch
+  const refColorOutput = tf.layers
+    .dense({ units: COLORS.length + 1, activation: "softmax", name: "ref_color" })
+    .apply(langPooled) as tfType.SymbolicTensor;
+  const taskOutput = tf.layers
+    .dense({ units: TASKS.length, activation: "softmax", name: "task" })
     .apply(langPooled) as tfType.SymbolicTensor;
 
   const model = tf.model({
     inputs: [visionInput, langInput],
-    outputs: [actionOutput, colorOutput, attnMap],
+    outputs: [
+      actionOutput,
+      gripOutput,
+      colorOutput,
+      refColorOutput,
+      taskOutput,
+      attnMap,
+    ],
   });
   // readout twin: same graph nodes, so it shares every weight with `model`
   const viz = tf.model({
     inputs: [visionInput, langInput],
-    outputs: [actionOutput, attnMap],
+    outputs: [actionOutput, gripOutput, attnMap],
   });
 
   // load the pretrained GloVe vectors into the (frozen) embedding table.
@@ -300,20 +330,44 @@ export function buildVLAModel(tf: TF, embedMatrix: Float32Array): VLAModels {
   // ACTION_HUBER_DELTA) otherwise dominates both the floor and the gradient.
   const actionLoss = (yTrue: tfType.Tensor, yPred: tfType.Tensor) =>
     tf.losses.huberLoss(yTrue, yPred, undefined, ACTION_HUBER_DELTA);
+  // gripper: plain BCE on the sigmoid, weighted — kept OUT of the Huber
+  // action loss so the calibrated action-loss numbers (convergence threshold,
+  // sweep findings) keep meaning what they meant.
+  const weightedGripLoss = (yTrue: tfType.Tensor, yPred: tfType.Tensor) =>
+    tf.tidy(() =>
+      tf.metrics.binaryCrossentropy(yTrue, yPred).mul(GRIP_LOSS_WEIGHT)
+    );
   const weightedColorLoss = (yTrue: tfType.Tensor, yPred: tfType.Tensor) =>
     tf.tidy(() =>
       tf.metrics.categoricalCrossentropy(yTrue, yPred).mul(COLOR_LOSS_WEIGHT)
     );
-  // the attention supervision: which grid cell holds the commanded block
-  // (trainer.core builds the onehot label from the same layout the IK label
-  // comes from). attnMap is already a softmax, so plain categorical CE.
+  const weightedRefColorLoss = (yTrue: tfType.Tensor, yPred: tfType.Tensor) =>
+    tf.tidy(() =>
+      tf.metrics.categoricalCrossentropy(yTrue, yPred).mul(REF_COLOR_LOSS_WEIGHT)
+    );
+  const weightedTaskLoss = (yTrue: tfType.Tensor, yPred: tfType.Tensor) =>
+    tf.tidy(() =>
+      tf.metrics.categoricalCrossentropy(yTrue, yPred).mul(TASK_LOSS_WEIGHT)
+    );
+  // the attention supervision: which grid cell holds the block the policy
+  // should currently be homing on (trainer.core builds the label from the
+  // same layout the IK label comes from — the commanded block, or the
+  // reference block during stack's carry phase). attnMap is already a
+  // softmax, so plain categorical CE.
   const weightedMapLoss = (yTrue: tfType.Tensor, yPred: tfType.Tensor) =>
     tf.tidy(() =>
       tf.metrics.categoricalCrossentropy(yTrue, yPred).mul(MAP_LOSS_WEIGHT)
     );
   model.compile({
     optimizer: tf.train.adam(LEARNING_RATE),
-    loss: [actionLoss, weightedColorLoss, weightedMapLoss],
+    loss: [
+      actionLoss,
+      weightedGripLoss,
+      weightedColorLoss,
+      weightedRefColorLoss,
+      weightedTaskLoss,
+      weightedMapLoss,
+    ],
   });
 
   return { model, viz };

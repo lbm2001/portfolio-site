@@ -66,17 +66,30 @@ export function solveIK(
   return [theta1, theta2];
 }
 
-/** Grasp target for a block of side `size` centered at floor position x: the
-    block CENTER (y = size/2) — the effector moves into the block before the
-    grasp/lift. A bigger block is grasped higher, so its size feeds the IK. */
-export function graspTarget(x: number, size = BLOCK) {
-  return { x, y: size / 2 };
+/** Grasp target for a block of side `size` at floor position x: the block
+    CENTER (y = rest + size/2) — the effector moves into the block before the
+    grasp/lift. A bigger block is grasped higher, so its size feeds the IK;
+    `rest` is the block's bottom height (>0 when it sits on another block). */
+export function graspTarget(x: number, size = BLOCK, rest = 0) {
+  return { x, y: rest + size / 2 };
 }
 
 /** IK joint angles that put the end effector at a block's grasp point. */
-export function ikToX(x: number, size = BLOCK): [number, number] {
-  const t = graspTarget(x, size);
+export function ikToX(x: number, size = BLOCK, rest = 0): [number, number] {
+  const t = graspTarget(x, size, rest);
   return solveIK(t.x - BASE.x, t.y - BASE.y);
+}
+
+/** IK joint angles that hold a carried block of side `carrySize` resting ON
+    a reference block (top at refTop, centre at refX) — the stack task's
+    placement target: the CARRIED block's centre ends up half its side above
+    the reference block's top, so releasing there seats it flush. */
+export function ikToPlace(
+  refX: number,
+  refTop: number,
+  carrySize: number
+): [number, number] {
+  return solveIK(refX - BASE.x, refTop + carrySize / 2 - BASE.y);
 }
 
 /** Forward kinematics: elbow + end-effector positions in workspace units. */

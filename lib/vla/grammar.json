@@ -1,14 +1,24 @@
 {
-  "verbs": [
-    ["pick", "up"],
-    ["grab"],
-    ["grasp"],
-    ["take"],
-    ["lift"],
-    ["fetch"],
-    ["get"],
-    ["reach", "for"]
-  ],
+  "tasks": {
+    "lift": {
+      "verbs": [
+        ["pick", "up"],
+        ["grab"],
+        ["grasp"],
+        ["take"],
+        ["lift"],
+        ["fetch"],
+        ["get"]
+      ]
+    },
+    "touch": {
+      "verbs": [["touch"], ["tap"], ["point", "at"], ["reach", "for"]]
+    },
+    "stack": {
+      "verbs": [["put"], ["place"], ["stack"], ["set"]],
+      "preps": [["on"], ["onto"], ["on", "top", "of"]]
+    }
+  },
   "articles": ["the", "a"],
   "nouns": ["block", "box", "cube", "object"],
   "fillers": ["please", "robot", "now"],
