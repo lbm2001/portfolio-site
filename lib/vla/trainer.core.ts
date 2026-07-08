@@ -11,10 +11,12 @@
 //
 // The carry phase is policy-driven, so samples are CARRY-CONDITIONED: a
 // carryFrac share render the commanded block IN THE GRIPPER of the sampled
-// pose, and the label flips to the carry-phase target — lift → REST, stack →
-// holding the block seated on the reference block. "Is a block in my hand"
-// is only visible in the image, which is exactly the state cue the network
-// has to learn. Apart from the carried block riding at the effector, labels
+// pose, set the carry_flag input to 1, and the label flips to the carry-
+// phase target — lift → REST, stack → holding the block seated on the
+// reference block. "Is a block in my hand" reaches the network as gripper
+// proprioception (the flag) AND as the carried block's pixels; the rollout
+// feeds the same flag from its own grasp state (see model.ts on why the
+// flag exists). Apart from the carried block riding at the effector, labels
 // do NOT depend on the (randomized, for robustness) rendered pose — the
 // network learns "given this scene, command and carry state, where does the
 // arm need to end up," not also implicitly infer the current pose and
@@ -59,10 +61,12 @@ import {
   blockOfColor,
   randomLayout,
   sampleCommand,
+  tokenize,
   type Layout,
 } from "./examples";
-import { TASKS, type TaskKind } from "./run-config";
+import { TASKS, runConfig, type TaskKind } from "./run-config";
 import {
+  ACTION_HUBER_DELTA,
   ATTN_GRID,
   IMG_SIZE,
   REF_NONE,
@@ -84,6 +88,8 @@ const NEAR_TARGET_FRAC = CONFIG.trainer.nearTargetFrac;
 const NEAR_TARGET_STD = CONFIG.trainer.nearTargetStd;
 const WORD_DROPOUT = CONFIG.trainer.wordDropout;
 const CARRY_FRAC = CONFIG.trainer.carryFrac;
+const WARMUP_BATCHES = CONFIG.trainer.warmupBatches;
+const WARMUP_BATCH_SIZE = CONFIG.trainer.warmupBatchSize;
 
 // Convergence: the mean action loss over a short trailing WINDOW of batches
 // stays under CONVERGE_LOSS for CONVERGE_STREAK consecutive batches (after
@@ -108,10 +114,13 @@ export interface PredictResult {
   /** Predicted ABSOLUTE target joint angles. */
   target: [number, number];
   /** Spatial attention over the ATTN_GRID×ATTN_GRID vision cells, row-major,
-      normalized so the peak cell is 1 (ready to use as overlay alpha). */
+      normalized so the peak cell is 1 (ready to use as overlay alpha). The
+      SELECTED map of the two the model computes: pick while empty-handed;
+      while carrying, the sharper of pick/place (stack → the place map on
+      the reference block; see inferTarget). */
   attn: number[];
-  /** The map's soft-argmax — where the model looks, in [0,1] image coords of
-      the silhouette view (x right, y down). */
+  /** The selected map's soft-argmax — where the model looks, in [0,1] image
+      coords of the silhouette view (x right, y down). */
   xy: [number, number];
 }
 
@@ -125,6 +134,35 @@ export interface DecodedCommand {
   colorProb: number;
   refColor: number | null;
   refProb: number;
+}
+
+/** One held-out evaluation snapshot, taken every `probeEveryN` batches when
+    probing is on (the headless sweep harness turns it on; the demo leaves it
+    off). The batch's single action-loss scalar hides WHERE a multi-task run
+    fails — these buckets are the per-(task, phase) dials the experiment plan
+    reads. */
+export interface ProbeRow {
+  batch: number;
+  /** Mean Huber action loss per "task.phase" bucket (e.g. "stack.carry"),
+      over `probeN` freshly synthesized held-out samples each. */
+  buckets: Record<string, number>;
+  /** Language-head accuracies over all probe samples (argmax vs. label). */
+  colorAcc: number;
+  refAcc: number;
+  taskAcc: number;
+  /** Swap-pair stress test: canonical "put the X block on the Y block" /
+      swapped pairs through the color/ref heads. An order-blind encoder pools
+      both to the same vector, so ~0.5 here is the structural-cap signature
+      (root cause (a) of the 2026-07 stack failure). null when stack isn't
+      enabled. */
+  pairColorAcc: number | null;
+  pairRefAcc: number | null;
+  /** Same test on TERSE forms ("X on Y") — color words at out-of-grammar
+      positions. Guards the form-generalization regression the position-aware
+      slots introduced (full-form pairs decoded 1.00 while terse commands
+      decoded ref = "none"; see dropVerbProb & friends in config.ts). */
+  pairColorAccTerse: number | null;
+  pairRefAccTerse: number | null;
 }
 
 /** 2D context in either environment (worker OffscreenCanvas / DOM canvas). */
@@ -161,6 +199,16 @@ export class VLATrainerCore {
   initialLoss = NaN;
   lossHistory: number[] = [];
   batches = 0;
+  /** Probe cadence in batches; 0 (default) = off, so the demo path pays
+      nothing. The vla-lab harness sets it (~25) for sweep runs. */
+  probeEveryN = 0;
+  /** Harness-only override of the converge.maxBatches fallback (null = use
+      CONFIG). Lets a sweep run PAST the demo budget to gauge where a config
+      genuinely converges — the number the demo budget is then set from. */
+  maxBatchesOverride: number | null = null;
+  /** Held-out samples per (task, phase) bucket per probe. */
+  probeN = 24;
+  probes: ProbeRow[] = [];
 
   private tf: TF | null = null;
   private models: VLAModels | null = null;
@@ -282,28 +330,29 @@ export class VLATrainerCore {
     return [u, v];
   }
 
-  /**
-   * One gradient step on a freshly synthesized micro-batch.
-   * Returns the batch's action loss (Huber).
-   */
-  private async trainStep(): Promise<number> {
-    const tf = this.tf!;
+  /** Backing arrays of a synthesized batch — the tensors trainStep and
+      runProbe build from. `force` pins every sample to one (task, phase)
+      bucket; the training path leaves it unset and samples both freely. */
+  private synthBatch(n: number, force?: { task?: TaskKind; carry?: boolean }) {
     const px = IMG_SIZE * IMG_SIZE * 3;
     const cells = ATTN_GRID * ATTN_GRID;
     const refClasses = COLORS.length + 1; // + the "none" class
-    const vis = new Float32Array(BATCH_SIZE * px);
-    const lang = new Int32Array(BATCH_SIZE * MAX_SEQ_LEN);
-    const ysA = new Float32Array(BATCH_SIZE * 2);
-    const ysC = new Float32Array(BATCH_SIZE * COLORS.length);
-    const ysR = new Float32Array(BATCH_SIZE * refClasses);
-    const ysT = new Float32Array(BATCH_SIZE * TASKS.length);
-    const ysM = new Float32Array(BATCH_SIZE * cells);
+    const vis = new Float32Array(n * px);
+    const lang = new Int32Array(n * MAX_SEQ_LEN);
+    /** Proprioceptive carry flag per sample (1 = block in the gripper). */
+    const carryF = new Float32Array(n);
+    const ysA = new Float32Array(n * 2);
+    const ysC = new Float32Array(n * COLORS.length);
+    const ysR = new Float32Array(n * refClasses);
+    const ysT = new Float32Array(n * TASKS.length);
+    const ysMPick = new Float32Array(n * cells);
+    const ysMPlace = new Float32Array(n * cells);
 
-    for (let i = 0; i < BATCH_SIZE; i++) {
+    for (let i = 0; i < n; i++) {
       const layout = randomLayout();
       // an executable command for a run-config task: the acted-on color is
       // present; stack also names a second present color to stack onto
-      const sentence = sampleCommand(layout);
+      const sentence = sampleCommand(layout, force?.task);
       const target = blockOfColor(layout, sentence.color);
       const ref =
         sentence.task === "stack"
@@ -313,7 +362,8 @@ export class VLATrainerCore {
       // carry-conditioned label (see the file header): a CARRY_FRAC share of
       // samples render the commanded block in the gripper and label the
       // carry-phase target instead of the grasp
-      const midCarry = Math.random() < CARRY_FRAC;
+      const midCarry = force?.carry ?? Math.random() < CARRY_FRAC;
+      carryF[i] = midCarry ? 1 : 0;
       let t1: number;
       let t2: number;
       if (!midCarry) {
@@ -351,17 +401,28 @@ export class VLATrainerCore {
       ysC[i * COLORS.length + sentence.color] = 1;
       ysR[i * refClasses + (sentence.refColor ?? REF_NONE)] = 1;
       ysT[i * TASKS.length + TASKS.indexOf(sentence.task)] = 1;
-      // attention supervision: bilinear soft label on the block the policy
-      // should currently home on (see model.ts — the action loss alone
-      // cannot sharpen the map). Reach phase → the commanded block at its
-      // rest spot; stack's carry → the REFERENCE block; lift's carry → the
-      // carried block itself, riding at the effector of the rendered pose.
-      const [u, v] = !midCarry
-        ? this.blockUV(target.x, target.size, target.y ?? 0)
-        : sentence.task === "stack"
-          ? this.blockUV(ref!.x, ref!.size, ref!.y ?? 0)
-          : this.effectorUV(a1, a2);
-      this.writeMapLabel(ysM, i * cells, u, v);
+      // attention supervision, one bilinear soft label PER MAP, both
+      // phase-INDEPENDENT (see model.ts — the action loss alone cannot
+      // sharpen the maps, and the single-map era's label flip is what the
+      // dual maps exist to remove). PICK = the commanded block wherever it
+      // renders (rest spot, or the effector while carried); PLACE = stack's
+      // reference block in BOTH phases. Lift's place label is UNIFORM —
+      // "no referent" trained as a flat map, whose centered soft-argmax is
+      // exactly 0: a stable null signal into the fusion. (First tried as an
+      // all-zero mask — but an UNtrained map still emits a soft-argmax, and
+      // through the x32 coordinate gain that wandering readout injected
+      // frame-varying noise into every lift action: the 2026-07-08 "sloppy
+      // reaching" live regression.)
+      const [pu, pv] = midCarry
+        ? this.effectorUV(a1, a2)
+        : this.blockUV(target.x, target.size, target.y ?? 0);
+      this.writeMapLabel(ysMPick, i * cells, pu, pv);
+      if (sentence.task === "stack") {
+        const [ru, rv] = this.blockUV(ref!.x, ref!.size, ref!.y ?? 0);
+        this.writeMapLabel(ysMPlace, i * cells, ru, rv);
+      } else {
+        ysMPlace.fill(1 / cells, i * cells, (i + 1) * cells);
+      }
 
       // INVERTED intensities (background 0, content sparse positive) — fed
       // raw, the near-all-white image saturates the conv branch and the
@@ -391,31 +452,289 @@ export class VLATrainerCore {
       }
     }
 
-    const xsVision = tf.tensor4d(vis, [BATCH_SIZE, IMG_SIZE, IMG_SIZE, 3]);
-    const xsLang = tf.tensor2d(lang, [BATCH_SIZE, MAX_SEQ_LEN], "int32");
-    const yAction = tf.tensor2d(ysA, [BATCH_SIZE, 2]);
-    const yColor = tf.tensor2d(ysC, [BATCH_SIZE, COLORS.length]);
-    const yRef = tf.tensor2d(ysR, [BATCH_SIZE, refClasses]);
-    const yTask = tf.tensor2d(ysT, [BATCH_SIZE, TASKS.length]);
-    const yMap = tf.tensor2d(ysM, [BATCH_SIZE, cells]);
+    return {
+      n,
+      vis,
+      lang,
+      carryF,
+      ysA,
+      ysC,
+      ysR,
+      ysT,
+      ysMPick,
+      ysMPlace,
+      refClasses,
+      cells,
+    };
+  }
+
+  /**
+   * A CHEAP language-only batch: sentences + their three text-head labels
+   * (target color, reference color, task) with NO vision render, NO IK and NO
+   * attention-map labels. Feeds languageWarmup — the whole point is that it
+   * skips everything expensive in synthBatch, so a warm-up step costs a small
+   * fraction of a full step. Same command distribution as training
+   * (randomLayout → sampleCommand across the enabled tasks) and the same
+   * word-dropout, so the warmed heads see the real token statistics.
+   */
+  private synthLangBatch(n: number) {
+    const refClasses = COLORS.length + 1; // + the "none" class (lift)
+    const lang = new Int32Array(n * MAX_SEQ_LEN);
+    const ysC = new Float32Array(n * COLORS.length);
+    const ysR = new Float32Array(n * refClasses);
+    const ysT = new Float32Array(n * TASKS.length);
+    for (let i = 0; i < n; i++) {
+      const layout = randomLayout();
+      const sentence = sampleCommand(layout);
+      ysC[i * COLORS.length + sentence.color] = 1;
+      ysR[i * refClasses + (sentence.refColor ?? REF_NONE)] = 1;
+      ysT[i * TASKS.length + TASKS.indexOf(sentence.task)] = 1;
+      for (let s = 0; s < MAX_SEQ_LEN; s++) {
+        let id = sentence.tokens[s];
+        if (id !== PAD && !LABEL_TOKEN_IDS.has(id) && Math.random() < WORD_DROPOUT)
+          id = UNK;
+        lang[i * MAX_SEQ_LEN + s] = id;
+      }
+    }
+    return { n, lang, ysC, ysR, ysT, refClasses };
+  }
+
+  /**
+   * Language warm-up: WARMUP_BATCHES text-only gradient steps on the language
+   * twin (see model.ts `lang`), run during the Loading phase before the main
+   * loop. Trains ONLY the color/ref/task heads and their conv scorers — the
+   * vision branch is not in this graph — so the pure-text decoding (incl. the
+   * prep-adjacency swap-pair binding) is already correct when the coupled
+   * vision→action policy starts, and the attention queries get clean language
+   * slots from batch 0. Near-free vs a full step; interruptible by reset
+   * (runId/running are re-checked each step). Runs inside start()'s try/catch,
+   * so a WebGL failure here rides the same cpu-fallback path.
+   */
+  private async languageWarmup(myRun: number): Promise<void> {
+    const tf = this.tf!;
+    // early-stop: track the initial loss and a short trailing mean; the text
+    // heads have effectively converged once the mean has fallen to a small
+    // fraction of where it started (a config-independent gate — the initial CE
+    // is ~Σ ln(#classes) per head, which the ratio cancels out). WARMUP_BATCHES
+    // is only the hard cap.
+    let initial = NaN;
+    const recent: number[] = [];
+    for (let k = 0; k < WARMUP_BATCHES; k++) {
+      if (!this.running || this.runId !== myRun) return;
+      const b = this.synthLangBatch(WARMUP_BATCH_SIZE);
+      const xsLang = tf.tensor2d(b.lang, [b.n, MAX_SEQ_LEN], "int32");
+      const yColor = tf.tensor2d(b.ysC, [b.n, COLORS.length]);
+      const yRef = tf.tensor2d(b.ysR, [b.n, b.refClasses]);
+      const yTask = tf.tensor2d(b.ysT, [b.n, TASKS.length]);
+      try {
+        // trainOnBatch already syncs to return the loss, so reading it here is
+        // free — no extra GPU readback.
+        const h = await this.models!.lang.trainOnBatch(
+          [xsLang],
+          [yColor, yRef, yTask]
+        );
+        const loss = Array.isArray(h) ? (h[0] as number) : (h as number);
+        if (Number.isNaN(initial)) initial = loss;
+        recent.push(loss);
+        if (recent.length > 10) recent.shift();
+      } finally {
+        xsLang.dispose();
+        yColor.dispose();
+        yRef.dispose();
+        yTask.dispose();
+      }
+      // eligible to stop after a small floor of steps, once the trailing mean
+      // has dropped to <10% of the initial loss
+      const mean = recent.reduce((a, c) => a + c, 0) / recent.length;
+      if (k >= 30 && mean < 0.1 * initial) return;
+    }
+  }
+
+  /**
+   * One gradient step on a freshly synthesized micro-batch.
+   * Returns the batch's action loss (Huber).
+   */
+  private async trainStep(): Promise<number> {
+    const tf = this.tf!;
+    const b = this.synthBatch(BATCH_SIZE);
+    const xsVision = tf.tensor4d(b.vis, [b.n, IMG_SIZE, IMG_SIZE, 3]);
+    const xsLang = tf.tensor2d(b.lang, [b.n, MAX_SEQ_LEN], "int32");
+    const xsCarry = tf.tensor2d(b.carryF, [b.n, 1]);
+    const yAction = tf.tensor2d(b.ysA, [b.n, 2]);
+    const yColor = tf.tensor2d(b.ysC, [b.n, COLORS.length]);
+    const yRef = tf.tensor2d(b.ysR, [b.n, b.refClasses]);
+    const yTask = tf.tensor2d(b.ysT, [b.n, TASKS.length]);
+    const yMapPick = tf.tensor2d(b.ysMPick, [b.n, b.cells]);
+    const yMapPlace = tf.tensor2d(b.ysMPlace, [b.n, b.cells]);
 
     try {
       const h = await this.models!.model.trainOnBatch(
-        [xsVision, xsLang],
-        [yAction, yColor, yRef, yTask, yMap]
+        [xsVision, xsLang, xsCarry],
+        [yAction, yColor, yRef, yTask, yMapPick, yMapPlace]
       );
-      // multi-output: [total, action, color, refColor, task, map] — index 1
-      // stays the Huber ACTION loss the convergence logic watches
+      // multi-output: [total, action, color, refColor, task, pickMap,
+      // placeMap] — index 1 stays the Huber ACTION loss the convergence
+      // logic watches
       return Array.isArray(h) ? (h[1] as number) : (h as number);
     } finally {
       xsVision.dispose();
       xsLang.dispose();
+      xsCarry.dispose();
       yAction.dispose();
       yColor.dispose();
       yRef.dispose();
       yTask.dispose();
-      yMap.dispose();
+      yMapPick.dispose();
+      yMapPlace.dispose();
     }
+  }
+
+  /** Huber loss of one scalar error, matching tf.losses.huberLoss. */
+  private huber(e: number): number {
+    const d = ACTION_HUBER_DELTA;
+    const a = Math.abs(e);
+    return a <= d ? 0.5 * a * a : d * (a - 0.5 * d);
+  }
+
+  /** argmax of one row of a flat row-major [n, width] array. */
+  private static argmaxRow(a: Float32Array, row: number, width: number): number {
+    let best = 0;
+    for (let k = 1; k < width; k++)
+      if (a[row * width + k] > a[row * width + best]) best = k;
+    return best;
+  }
+
+  /**
+   * Held-out per-(task, phase) evaluation — forward passes only, no gradient
+   * step. Synthesizes probeN fresh samples per enabled bucket, reads the mean
+   * Huber action loss per bucket plus language-head accuracies, and (when
+   * stack is enabled) runs the canonical swap-pair stress test. Appends one
+   * ProbeRow. Costs ~2-3 batch-equivalents of forward compute per call.
+   */
+  private async runProbe(): Promise<void> {
+    const tf = this.tf!;
+    const tasks = runConfig().tasks;
+    const buckets: Record<string, number> = {};
+    let headN = 0;
+    let colorHits = 0;
+    let refHits = 0;
+    let taskHits = 0;
+
+    for (const task of tasks) {
+      for (const carry of [false, true]) {
+        const b = this.synthBatch(this.probeN, { task, carry });
+        const r = tf.tidy(() => {
+          const v = tf.tensor4d(b.vis, [b.n, IMG_SIZE, IMG_SIZE, 3]);
+          const l = tf.tensor2d(b.lang, [b.n, MAX_SEQ_LEN], "int32");
+          const c = tf.tensor2d(b.carryF, [b.n, 1]);
+          const [action, color, ref, taskOut] = this.models!.model.predict([
+            v,
+            l,
+            c,
+          ]) as tfType.Tensor[];
+          return {
+            action: action.dataSync() as Float32Array,
+            color: color.dataSync() as Float32Array,
+            ref: ref.dataSync() as Float32Array,
+            task: taskOut.dataSync() as Float32Array,
+          };
+        });
+        let sum = 0;
+        for (let k = 0; k < b.n * 2; k++)
+          sum += this.huber(r.action[k] - b.ysA[k]);
+        buckets[`${task}.${carry ? "carry" : "reach"}`] = sum / (b.n * 2);
+        for (let i = 0; i < b.n; i++) {
+          const am = VLATrainerCore.argmaxRow;
+          if (am(r.color, i, COLORS.length) === am(b.ysC, i, COLORS.length))
+            colorHits++;
+          if (am(r.ref, i, b.refClasses) === am(b.ysR, i, b.refClasses))
+            refHits++;
+          if (am(r.task, i, TASKS.length) === am(b.ysT, i, TASKS.length))
+            taskHits++;
+        }
+        headN += b.n;
+      }
+    }
+
+    // swap-pair stress test: same word multiset, opposite roles, in TWO
+    // surface forms — the full grammar shape and a terse "X on Y" (color
+    // words at out-of-grammar positions). Decoded with zeroed vision (the
+    // heads read only the language branch); K pairs × 2 orders × 2 forms =
+    // 4K sentences in one predict.
+    let pairColorAcc: number | null = null;
+    let pairRefAcc: number | null = null;
+    let pairColorAccTerse: number | null = null;
+    let pairRefAccTerse: number | null = null;
+    if (tasks.includes("stack")) {
+      const { numColors } = runConfig();
+      const K = 16;
+      const N = 4 * K; // rows 0..2K-1 = full form, 2K..4K-1 = terse form
+      const toks = new Int32Array(N * MAX_SEQ_LEN);
+      const want: { color: number; ref: number }[] = [];
+      for (let p = 0; p < K; p++) {
+        const c1 = Math.floor(Math.random() * numColors);
+        let c2 = Math.floor(Math.random() * (numColors - 1));
+        if (c2 >= c1) c2++;
+        for (const [row, a, b2] of [
+          [2 * p, c1, c2],
+          [2 * p + 1, c2, c1],
+        ] as const) {
+          const full = tokenize(
+            `put the ${COLORS[a].name} block on the ${COLORS[b2].name} block`
+          );
+          const terse = tokenize(`${COLORS[a].name} on ${COLORS[b2].name}`);
+          toks.set(full, row * MAX_SEQ_LEN);
+          toks.set(terse, (2 * K + row) * MAX_SEQ_LEN);
+          want.push({ color: a, ref: b2 });
+        }
+      }
+      const pr = tf.tidy(() => {
+        const v = tf.zeros([N, IMG_SIZE, IMG_SIZE, 3]);
+        const l = tf.tensor2d(toks, [N, MAX_SEQ_LEN], "int32");
+        const c = tf.zeros([N, 1]);
+        const [, color, ref] = this.models!.model.predict([
+          v,
+          l,
+          c,
+        ]) as tfType.Tensor[];
+        return {
+          color: color.dataSync() as Float32Array,
+          ref: ref.dataSync() as Float32Array,
+        };
+      });
+      const acc = (offset: number) => {
+        let ch = 0;
+        let rh = 0;
+        for (let i = 0; i < 2 * K; i++) {
+          const row = offset + i;
+          if (
+            VLATrainerCore.argmaxRow(pr.color, row, COLORS.length) ===
+            want[i].color
+          )
+            ch++;
+          if (
+            VLATrainerCore.argmaxRow(pr.ref, row, COLORS.length + 1) ===
+            want[i].ref
+          )
+            rh++;
+        }
+        return [ch / (2 * K), rh / (2 * K)];
+      };
+      [pairColorAcc, pairRefAcc] = acc(0);
+      [pairColorAccTerse, pairRefAccTerse] = acc(2 * K);
+    }
+
+    this.probes.push({
+      batch: this.batches,
+      buckets,
+      colorAcc: colorHits / headN,
+      refAcc: refHits / headN,
+      taskAcc: taskHits / headN,
+      pairColorAcc,
+      pairRefAcc,
+      pairColorAccTerse,
+      pairRefAccTerse,
+    });
   }
 
   /**
@@ -472,8 +791,15 @@ export class VLATrainerCore {
     this.lossHistory = [];
     this.batches = 0;
     this.convergeStreak = 0;
+    this.probes = [];
 
     try {
+      // Language warm-up (text-only, cheap): train the color/ref/task heads to
+      // convergence BEFORE the coupled loop, so the attention queries start
+      // against clean language slots. Runs while the UI still reads "Loading".
+      await this.languageWarmup(myRun);
+      if (!this.running || this.runId !== myRun) return;
+
       // WebGL compiles each distinct kernel shader (conv2d, pooling, embedding
       // gather, the losses, Adam's update ops) the first time it's used — a
       // one-time cost that would otherwise stall the FIRST visible batch right
@@ -511,13 +837,27 @@ export class VLATrainerCore {
         const window = this.lossHistory.slice(-CONVERGE_WINDOW);
         this.smoothLoss = window.reduce((a, b) => a + b, 0) / window.length;
 
-        // converged? training's job is done — keep the model, stop the loop
-        if (this.batches >= MIN_BATCHES && this.smoothLoss < CONVERGE_LOSS) {
+        // held-out per-bucket telemetry (sweep harness only; probeEveryN
+        // defaults to 0 so the demo path skips this entirely)
+        if (this.probeEveryN > 0 && this.batches % this.probeEveryN === 0)
+          await this.runProbe();
+
+        // converged? training's job is done — keep the model, stop the loop.
+        // Both gates scale with the enabled TASK COUNT: the calibrated
+        // threshold/budget are single-task numbers, and a two-task mixture
+        // both converges slower (half the samples per task) and floors
+        // higher (see the converge comments in config.ts).
+        const nTasks = runConfig().tasks.length;
+        if (
+          this.batches >= MIN_BATCHES &&
+          this.smoothLoss < CONVERGE_LOSS * nTasks
+        ) {
           this.convergeStreak++;
         } else {
           this.convergeStreak = 0;
         }
-        if (this.convergeStreak >= CONVERGE_STREAK || this.batches >= MAX_BATCHES) {
+        const maxBatches = this.maxBatchesOverride ?? MAX_BATCHES * nTasks;
+        if (this.convergeStreak >= CONVERGE_STREAK || this.batches >= maxBatches) {
           this.snapshotPolicy(); // freeze the final weights for "try it" mode
           this.status = "converged";
           this.running = false;
@@ -578,14 +918,21 @@ export class VLATrainerCore {
     this.lossHistory = [];
     this.batches = 0;
     this.convergeStreak = 0;
+    this.probes = [];
   }
 
   private disposeModels() {
-    // the viz sub-models share layers with the main model — disposing the
+    // the viz/lang sub-models share layers with the main model — disposing the
     // main graph frees the shared weights; dispose() on the others only
-    // drops their container objects
+    // drops their container objects. The lang twin owns a SEPARATE optimizer
+    // (its Adam moment variables aren't part of any shared layer), so free
+    // those explicitly or they'd leak on each reset+restart.
+    this.models?.lang.optimizer?.dispose();
     this.models?.model.dispose();
     this.models = null;
+    // the frozen snapshot is built via buildVLAModel too, so it carries an
+    // (unused) lang optimizer of its own — free it alongside its graph.
+    this.frozenModels?.lang.optimizer?.dispose();
     this.frozenModels?.model.dispose();
     this.frozenModels = null;
   }
@@ -676,9 +1023,35 @@ export class VLATrainerCore {
     const out = tf.tidy(() => {
       const v = this.visionTensor(img);
       const l = tf.tensor2d([tokens], [1, MAX_SEQ_LEN], "int32");
-      const [action, attn] = models.viz.predict([v, l]) as tfType.Tensor[];
-      return { action: action.dataSync(), attn: attn.dataSync() };
+      // proprioceptive flag: the rollout KNOWS whether its gripper holds a
+      // block (the snap-grasp set it) — same signal training synthesized
+      const c = tf.tensor2d([carry !== null ? 1 : 0], [1, 1]);
+      const [action, pick, place] = models.viz.predict([
+        v,
+        l,
+        c,
+      ]) as tfType.Tensor[];
+      return {
+        action: action.dataSync(),
+        pick: pick.dataSync() as Float32Array,
+        place: place.dataSync() as Float32Array,
+      };
     });
+    // Which map the UI shows (the action head always sees both): the pick
+    // map while empty-handed; while carrying, whichever is sharper — during
+    // stack's carry the trained place map peaks on the reference block,
+    // while lift's place map is loss-masked (never trained) and stays
+    // diffuse, so its pick map (tracking the carried block) wins. This is
+    // what makes the gaze visibly JUMP from block A to block B at the grasp.
+    const rawPeak = (m: Float32Array) => {
+      let p = 0;
+      for (let i = 0; i < m.length; i++) if (m[i] > p) p = m[i];
+      return p;
+    };
+    const attnSel =
+      carry !== null && rawPeak(out.place) > rawPeak(out.pick)
+        ? out.place
+        : out.pick;
     // the UI's gaze point: the map's expectation in plain [0,1] image coords,
     // computed here CPU-side (the in-graph attn_grid kernel feeds the action
     // head CENTERED+GAINED coords — see config.ts attnCoordGain — so it isn't
@@ -688,8 +1061,8 @@ export class VLATrainerCore {
     let ux = 0;
     let vy = 0;
     let peak = 0;
-    for (let i = 0; i < out.attn.length; i++) {
-      const w = out.attn[i];
+    for (let i = 0; i < attnSel.length; i++) {
+      const w = attnSel[i];
       ux += w * ((i % G) + 0.5);
       vy += w * (Math.floor(i / G) + 0.5);
       if (w > peak) peak = w;
@@ -698,7 +1071,7 @@ export class VLATrainerCore {
     const inv = peak > 0 ? 1 / peak : 0;
     return {
       target: [out.action[0], out.action[1]],
-      attn: Array.from(out.attn, (a) => a * inv),
+      attn: Array.from(attnSel, (a) => a * inv),
       xy: [ux / G, vy / G],
     };
   }
@@ -714,9 +1087,11 @@ export class VLATrainerCore {
     const out = tf.tidy(() => {
       const v = tf.zeros([1, IMG_SIZE, IMG_SIZE, 3]);
       const l = tf.tensor2d([tokens], [1, MAX_SEQ_LEN], "int32");
+      const c = tf.zeros([1, 1]); // decode = empty-handed reading of the text
       const [, color, ref, task] = this.models!.model.predict([
         v,
         l,
+        c,
       ]) as tfType.Tensor[];
       return {
         color: color.dataSync(),
@@ -757,18 +1132,30 @@ export class VLATrainerCore {
     // the embedding table is FROZEN pretrained GloVe — read it from the
     // CPU-side copy loadEmbeddings() kept (syncing the 20k x 50 table off
     // the GPU every refresh would dwarf the readout it powers); only the
-    // small trainable scorer weights are pulled from the model
+    // small trainable conv-scorer kernel is pulled from the model. Bars
+    // show the TARGET slot's attention ("attn_score" — the scorer whose
+    // pooled vector the color head decodes).
     const embedTable = embeddingMatrix();
     if (!embedTable) return null;
     const w = this.models!.model.getLayer("attn_score").getWeights();
-    const kernel = w[0].arraySync() as number[][]; // [EMBED_DIM][1]
+    const kernel = w[0].arraySync() as number[][][]; // [K][EMBED_DIM][1]
     const bias = (w[1].arraySync() as number[])[0];
-    // raw scores; padding is excluded from the softmax entirely
-    const scores = tokens.map((tok) => {
+    const K = kernel.length;
+    const off = Math.floor(K / 2); // conv1d "same": window i-off .. i+off
+    // raw scores; padding is excluded from the softmax entirely. The conv
+    // window's out-of-range slots are implicit zeros in-graph, and PAD
+    // tokens embed to the all-zero row — `continue` reproduces both.
+    const scores = tokens.map((tok, i) => {
       if (tok === PAD) return -Infinity;
       let s = bias;
-      for (let d = 0; d < EMBED_DIM; d++)
-        s += embedTable[tok * EMBED_DIM + d] * kernel[d][0];
+      for (let k = 0; k < K; k++) {
+        const j = i + k - off;
+        if (j < 0 || j >= tokens.length) continue;
+        const t = tokens[j];
+        if (t === PAD) continue;
+        for (let d = 0; d < EMBED_DIM; d++)
+          s += embedTable[t * EMBED_DIM + d] * kernel[k][d][0];
+      }
       return s;
     });
     const finite = scores.filter((s) => Number.isFinite(s));

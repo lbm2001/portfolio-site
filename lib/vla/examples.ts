@@ -161,24 +161,30 @@ export interface Sentence {
 
 const pick = <T,>(a: readonly T[]): T => a[Math.floor(Math.random() * a.length)];
 
-/** A random surface form for (task, color[, refColor]): filler? verb article
-    color noun [prep article refColor noun] please?. */
+/** A random surface form for (task, color[, refColor]): filler? verb? article?
+    color noun? [prep article? refColor noun?] please?. Verb/article/noun are
+    randomly DROPPED (see the dropXxxProb comments in config.ts) so the
+    position-aware language slots also train on compressed forms ("black on
+    red", "grab red") — without this they overfit the full grammar's fixed
+    color-word positions and terse user commands decode wrongly. Preps and
+    color words never drop: they carry the task/color labels. */
 export function sampleSentence(
   task: TaskKind,
   color: number,
   refColor: number | null = null
 ): Sentence {
+  const keep = (dropProb: number) => Math.random() >= dropProb;
   const parts: string[] = [];
   if (Math.random() < CONFIG.task.fillerProb) parts.push(pick(FILLERS));
-  parts.push(...pick(TASK_VERBS[task]));
-  parts.push(pick(ARTICLES));
+  if (keep(CONFIG.task.dropVerbProb)) parts.push(...pick(TASK_VERBS[task]));
+  if (keep(CONFIG.task.dropArticleProb)) parts.push(pick(ARTICLES));
   parts.push(pick(COLORS[color].synonyms));
-  parts.push(pick(NOUNS));
+  if (keep(CONFIG.task.dropNounProb)) parts.push(pick(NOUNS));
   if (task === "stack" && refColor !== null) {
     parts.push(...pick(STACK_PREPS));
-    parts.push(pick(ARTICLES));
+    if (keep(CONFIG.task.dropArticleProb)) parts.push(pick(ARTICLES));
     parts.push(pick(COLORS[refColor].synonyms));
-    parts.push(pick(NOUNS));
+    if (keep(CONFIG.task.dropNounProb)) parts.push(pick(NOUNS));
   }
   if (Math.random() < CONFIG.task.pleaseProb) parts.push("please");
   const text = parts.join(" ");
@@ -195,10 +201,11 @@ export function sampleSentence(
 /** A random command EXECUTABLE in the given layout, for a task drawn from
     the active run config: the acted-on color is present, and stack names a
     second, distinct present color to stack onto (layouts always hold ≥2
-    blocks, so a pair always exists). */
-export function sampleCommand(layout: Layout): Sentence {
+    blocks, so a pair always exists). `forceTask` pins the task instead of
+    drawing it — the trainer's per-bucket probe batches use it. */
+export function sampleCommand(layout: Layout, forceTask?: TaskKind): Sentence {
   const tasks = runConfig().tasks;
-  const task = tasks[Math.floor(Math.random() * tasks.length)];
+  const task = forceTask ?? tasks[Math.floor(Math.random() * tasks.length)];
   if (task === "stack") {
     const [color, ref] = presentColorPair(layout);
     return sampleSentence(task, color, ref);
@@ -343,10 +350,6 @@ export const DEFAULT_LAYOUT: Layout = [
 
 export function blockOfColor(layout: Layout, color: number): BlockPos {
   return layout.find((b) => b.color === color) ?? layout[0];
-}
-
-export function hasColor(layout: Layout, color: number): boolean {
-  return layout.some((b) => b.color === color);
 }
 
 /** A random color that IS present in the given layout. */

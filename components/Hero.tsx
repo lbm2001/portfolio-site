@@ -16,7 +16,6 @@ import {
   DEFAULT_LAYOUT,
   DEFAULT_SENTENCE,
   MAX_SEQ_LEN,
-  hasColor,
   randomLayout,
   sampleCommand,
   tokenize,
@@ -1081,22 +1080,9 @@ export default function Hero() {
       setTryNote(`the policy wasn't trained on "${d.task}" — ⚙ + Reset to retrain`);
       return;
     }
-    // commands naming absent colors can't be executed in this scene
-    if (!hasColor(rolloutLayoutRef.current, d.color)) {
-      setTryNote(`no ${COLORS[d.color].name} block in this scene — ⟳ to reshuffle`);
+    if (d.task === "stack" && (d.refColor === null || d.refColor === d.color)) {
+      setTryNote("name a second color to stack onto, e.g. “put red on blue”");
       return;
-    }
-    if (d.task === "stack") {
-      if (d.refColor === null || d.refColor === d.color) {
-        setTryNote("name a second color to stack onto, e.g. “put red on blue”");
-        return;
-      }
-      if (!hasColor(rolloutLayoutRef.current, d.refColor)) {
-        setTryNote(
-          `no ${COLORS[d.refColor].name} block in this scene — ⟳ to reshuffle`
-        );
-        return;
-      }
     }
     setTryNote(null);
     armState.current = { a1: REST[0], a2: REST[1] };
@@ -1529,7 +1515,7 @@ export default function Hero() {
                   </div>
                   <div className="vla-cfg-eta">
                     est. training ~{estimateTrainingSeconds(runCfg)}s
-                    <span className="vla-cfg-eta-note"> · placeholder</span>
+                    <span className="vla-cfg-eta-note"> · on a laptop GPU</span>
                   </div>
                 </div>
               )}

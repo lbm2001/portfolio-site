@@ -46,15 +46,20 @@ export const CONFIG = {
         collapses across 7 seeds vs 1/7 at 0.2); 0.2 peaked slightly higher on
         lucky seeds but is riskier. */
     colorLossWeight: 0.6,
-    /** Weight of the auxiliary attention-map loss: cross-entropy between the
-        spatial attention map and the commanded block's grid cell. WHY IT
-        EXISTS: the action loss alone cannot train the attention — with a
-        near-uniform 16×16 map the softmax Jacobian dilutes its gradient by
-        ~1/256, and the map never sharpens (measured: loss flat at the ~0.78
-        language-only plateau for 300+ batches). CE through the softmax has
-        an undiluted (map − onehot) gradient, and the supervision is free —
-        the expert already knows which block it labeled. */
-    mapLossWeight: 2.5,
+    /** Weight of EACH auxiliary attention-map loss (the pick map AND the
+        place map — see model.ts): cross-entropy between a spatial attention
+        map and its block's grid cell. WHY IT EXISTS: the action loss alone
+        cannot train the attention — with a near-uniform 16×16 map the
+        softmax Jacobian dilutes its gradient by ~1/256, and the map never
+        sharpens (measured: loss flat at the ~0.78 language-only plateau for
+        300+ batches). CE through the softmax has an undiluted (map − label)
+        gradient, and the supervision is free — the expert already knows
+        which block it labeled. Was 2.5 in the single-map era; halved-ish to
+        1.5 per map so total attention supervision stays comparable (2.5 per
+        map re-tested 2026-07-08: no measurable gain). Lift samples carry a
+        UNIFORM place-map label — "no referent" trained as a flat map (see
+        the label comment in trainer.core for why masking was worse). */
+    mapLossWeight: 1.5,
     /** Scale of the frozen soft-argmax coordinate kernel: the fusion sees the
         gaze as (imageCoord − 0.5) × this gain. WHY: in raw [0,1] units the
         within-band position signal spans only ~0.16 while the other ~74
@@ -129,25 +134,55 @@ export const CONFIG = {
     /** Gaussian spread (rad) of that near-target pose jitter. */
     nearTargetStd: 0.5,
     /** Fraction of samples synthesized MID-CARRY: the commanded block is
-        rendered at the effector of the sampled pose and the label is the
-        carry-phase target (lift → REST; stack → the block seated on the
-        reference block). This is what makes the carry phase policy-driven —
-        the network must read "am I holding it" out of the image. UNTUNED. */
+        rendered at the effector of the sampled pose, the carry_flag input is
+        1, and the label is the carry-phase target (lift → REST; stack → the
+        block seated on the reference block). This is what makes the carry
+        phase policy-driven. The phase cue is the PROPRIOCEPTIVE FLAG plus
+        the carried block's pixels — pre-flag, pixels were the ONLY cue, and
+        when vision missed it the action head averaged the grasp/carry modes
+        (see the carry-flag note in model.ts). UNTUNED. */
     carryFrac: 0.5,
     /** Chance a non-color token becomes <unk> in training, so the encoder
         learns to shrug off unknown words in free user text. */
     wordDropout: 0.1,
+    /** LANGUAGE WARM-UP: text-only gradient steps run during the Loading phase,
+        BEFORE the main vision→action loop starts (see languageWarmup in
+        trainer.core). They train ONLY the pure-text heads — target/ref color
+        and task — plus their conv scorers, on synthesized sentences with the
+        vision branch untouched, so the color/ref/task decoding (and the
+        prep-adjacency swap-pair binding that was the hardest part to learn —
+        see model.ts) is already correct when the coupled policy starts, and
+        the pick/place attention queries get clean language slots from batch 0
+        instead of co-adapting against a still-moving language branch.
+
+        This is the CAP: warm-up early-stops once the heads' loss plateaus
+        (lift-only converges in tens of steps; stack's swap-pairs need more),
+        so the typical Loading cost is well under this. Set 0 to disable. */
+    warmupBatches: 200,
+    /** Batch size for warm-up steps ONLY (the main loop keeps batchSize=32,
+        which is load-bearing for its reliability). Bigger on purpose: warm-up
+        is a tiny text-only graph with NO images, so it's bound by fixed
+        per-step WebGL dispatch overhead, not compute — a larger batch does
+        many more samples per dispatch at almost no extra cost, cutting the
+        wall-clock for equal learning. Cheap in memory (int32 tokens + small
+        one-hot labels, no pixel tensors). */
+    warmupBatchSize: 256,
     // Convergence: mean action loss over the last `window` batches stays under
     // `loss` for `streak` consecutive batches (after `minBatches` warmup) →
     // training ends, "try it" mode unlocks. `maxBatches` is the fixed fallback.
     converge: {
-      /** Handoff threshold on the trailing-window HUBER action loss. Calibrated
-          in the 2026-07 sweep (M4, ~100ms/batch → ~10 batches/s): healthy runs
-          cross 0.02 at 150-280 batches ≈ 15-28s of training and score ~0.7-0.85
-          closed-loop reach success at handoff (0 wrong-side). Tightening to
-          0.015 (+streak 8) cost ~5s and measurably improved nothing — the
-          policy's residual ~0.03 reach error is a vision-resolution floor, not
-          undertraining. Raise toward 0.04 to hand off earlier/looser. */
+      /** Handoff threshold on the trailing-window HUBER action loss, PER
+          ENABLED TASK — trainer.core multiplies it (and maxBatches) by the
+          run config's task count, since a two-task mixture gives each task
+          half the samples and floors higher. Single-task calibration
+          (2026-07 sweep, M4, ~100ms/batch → ~10 batches/s): healthy runs
+          cross 0.02 at 150-280 batches ≈ 15-28s of training and score
+          ~0.7-0.85 closed-loop reach success at handoff (0 wrong-side); the
+          residual ~0.03 reach error is a vision-resolution floor, not
+          undertraining. 2026-07 carry-flag/dual-slot re-gauge (headless
+          SwiftShader ≈ 0.5x real GPU): lift-only 8c/4b converges ~0.012 at
+          ~410 batches, stack-only 2c/2b ~0.012 at ~380, mixed 4c/3b reaches
+          ~0.035 around batch 900 — hence the x2 scaling for two tasks. */
       loss: 0.015,
       /** Trailing window (batches) the convergence mean is taken over. Small =
           low detection lag as old high losses roll off; the streak guards
@@ -159,14 +194,17 @@ export const CONFIG = {
           crossing observed in the sweep was ~155 batches, so 100 is pure
           lucky-dip insurance and never binds on healthy runs. */
       minBatches: 100,
-      /** Fixed-budget fallback: converge regardless of loss at this batch —
-          ~45s at ~10 batches/s. Slow-but-healthy seeds (~1 in 3) land here or
-          shortly before it with a usable policy. NOTE (sweep finding): ~1 in 8
-          inits collapses to an always-one-side policy (loss flat ~0.78) and
-          NEVER recovers — no swept parameter fixes it, so a longer budget only
-          delays the fallback. Detectable early (smoothLoss > 0.4 at batch
-          ~120); an auto-restart in trainer.core is the real fix if this rate
-          bothers us. */
+      /** Fixed-budget fallback PER ENABLED TASK (trainer.core scales it by
+          the task count: lift+stack → 900, ~1.5 min at ~10 batches/s):
+          converge regardless of loss at this batch. Slow-but-healthy seeds
+          (~1 in 3) land here or shortly before it with a usable policy; the
+          2026-07 mixed-4c/3b gauge run rode to 900 with all four (task,
+          phase) probe buckets ≤ ~0.1. NOTE (sweep finding, pre-carry-flag):
+          ~1 in 8 inits collapses to an always-one-side policy (loss flat
+          ~0.78) and NEVER recovers — no swept parameter fixes it, so a
+          longer budget only delays the fallback. Detectable early
+          (smoothLoss > 0.4 at batch ~120); an auto-restart in trainer.core
+          is the real fix if this rate bothers us. */
       maxBatches: 450,
     },
   },
@@ -222,6 +260,23 @@ export const CONFIG = {
         word, and a trailing "please". */
     fillerProb: 0.25,
     pleaseProb: 0.2,
+    /** FORM augmentation: chance each scaffolding element is DROPPED from a
+        sampled sentence (verb per sentence; article/noun per occurrence),
+        yielding compressed forms like "black on red" or "grab red" alongside
+        the full grammar. WHY: the dual-slot language scorers key on LOCAL
+        CONTEXT (conv window, model.ts) — "prep on my left → I'm the
+        reference" — and these drops are what makes training COVER the
+        context variants free user text uses ("on red" and "on the red
+        block" both common), instead of only the rigid full-grammar shape.
+        Measured 2026-07-08: without form coverage, terse stack commands
+        ("black on red") decoded ref = "none" and the try-it "name a second
+        color" note fired on every compressed command. Verbs stay droppable
+        for lift too — "no verb, no prep → lift" is the task convention
+        terse commands need. Preps/colors never drop (label tokens, same
+        rule as word-dropout). */
+    dropVerbProb: 0.15,
+    dropArticleProb: 0.25,
+    dropNounProb: 0.25,
   },
 
   // ── Demonstration trajectory (lib/vla/demo.ts) ─────────────────────────
@@ -265,7 +320,7 @@ export const CONFIG = {
     /** How often (ms) the policy re-predicts its target (closed loop). */
     predictMs: 80,
     /** Distance (workspace units) from the block centre that counts as reached. */
-    graspEps: 0.03,
+    graspEps: 0.07,
     /** Consecutive close frames required to register a grasp. */
     nearFrames: 4,
     /** Frames before a reach gives up as failed. Must exceed the synced demo
@@ -285,19 +340,28 @@ export const CONFIG = {
     trailLen: 64,
     /** Throttle (ms) for refreshing the language-panel readout. */
     langMs: 300,
-    /** Silhouette render size before the live rollout's own imgSize downsample
-        (Hero's copy of the trainer render; keep ≈4x imgSize). */
-    silRender: 128,
+    /** Render size of the DISPLAYED model's-eye panel before its imgSize
+        downsample. Display-only: the policy's actual input renders inside
+        trainer.core at trainer.renderSize — this canvas just shows the
+        visitor what that input looks like, so keeping it at the same ≈4x
+        antialiasing (256, was 128) keeps the panel faithful to what the
+        model really sees. */
+    silRender: 256,
   },
 
   // ── Training-time estimate shown in the ⚙ run-config menu ──────────────
-  // DUMMY factor table — estimateTrainingSeconds (lib/vla/run-config.ts) is
-  // baseSeconds × Σ taskCost(enabled) × colorFactor × blockFactor. Replace
-  // with gauged per-config numbers once the multi-task runs are measured.
+  // estimateTrainingSeconds (lib/vla/run-config.ts) is baseSeconds ×
+  // Σ taskCost(enabled) × colorFactor × blockFactor. GAUGED 2026-07 against
+  // the carry-flag/dual-slot architecture (headless SwiftShader runs ≈ 0.5x
+  // real GPU, scaled to ~10 batches/s): lift-only ≈ 410 batches ≈ 41s,
+  // stack-only 2c/2b ≈ 380 ≈ 38s, lift+stack rides the 2-task budget (900
+  // batches ≈ 90s). The dominant cost is the PER-TASK budget scaling in
+  // trainer.core (equal taskCost, not stack-heavier); colors/blocks are
+  // small modifiers around it.
   eta: {
-    baseSeconds: 30,
-    taskCost: { lift: 1.0, stack: 2.2 },
-    colorFactor: { 2: 0.85, 4: 1.0, 8: 1.2 } as Record<number, number>,
+    baseSeconds: 42,
+    taskCost: { lift: 1.0, stack: 1.0 },
+    colorFactor: { 2: 0.9, 4: 1.0, 8: 1.1 } as Record<number, number>,
     blockFactor: { 2: 0.9, 3: 1.0, 4: 1.1 } as Record<number, number>,
   },
 

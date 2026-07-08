@@ -50,8 +50,9 @@ export function runConfig(): RunConfig {
   return current;
 }
 
-/** DUMMY training-time estimate for the ⚙ menu, from the placeholder factor
-    table in CONFIG.eta — to be replaced with gauged numbers per config. */
+/** Training-time estimate for the ⚙ menu, from the factor table in
+    CONFIG.eta (gauged 2026-07 against the carry-flag/dual-slot arch — see
+    the eta comment there for the measurement basis). */
 export function estimateTrainingSeconds(rc: RunConfig): number {
   const e = CONFIG.eta;
   const taskCost = rc.tasks.reduce((s, t) => s + e.taskCost[t], 0);
