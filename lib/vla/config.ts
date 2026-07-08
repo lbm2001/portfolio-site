@@ -74,19 +74,15 @@ export const CONFIG = {
         ~0.025 and smoothing the descent. 0.6 keeps correct-side samples in the
         quadratic zone while catching wrong-side picks early. */
     actionHuberDelta: 0.6,
-    /** Weight of the gripper BCE loss — the 1-unit sigmoid head off the
-        fusion layer predicting the DESIRED gripper state at the predicted
-        target (0 open / 1 closed; touch 0, lift 1, stack 1-then-0). Kept a
-        separate head + loss so the calibrated Huber action numbers above stay
-        untouched. UNTUNED first value for the multi-task expansion. */
-    gripLossWeight: 0.5,
     /** Weight of the auxiliary task-classification loss (langPooled → which
         of the TASKS the sentence asks for). Like the color head it's a pure
-        text decoder; it powers the decoded-task readout and try-it routing.
+        text decoder; it powers the decoded-task readout, try-it routing AND
+        the rollout's carry-end decision (stack releases where it settles,
+        lift holds) — grasping itself is proximity-snap, not an action output.
         UNTUNED. */
     taskLossWeight: 0.3,
     /** Weight of the auxiliary reference-color loss (stack's "…on the X
-        block"; COLORS.length+1 classes, last = "none" for lift/touch).
+        block"; COLORS.length+1 classes, last = "none" for lift).
         UNTUNED. */
     refColorLossWeight: 0.4,
     /** Vision CNN stack, in order. Add/remove entries to change depth; edit
@@ -132,12 +128,11 @@ export const CONFIG = {
     nearTargetFrac: 0.5,
     /** Gaussian spread (rad) of that near-target pose jitter. */
     nearTargetStd: 0.5,
-    /** Fraction of lift/stack samples synthesized MID-CARRY: the commanded
-        block is rendered at the effector of the sampled pose and the label
-        is the carry-phase target (lift → REST grip closed; stack → above the
-        reference block, grip open). This is what makes the carry phase
-        policy-driven — the network must read "am I holding it" out of the
-        image. Touch has no carry phase. UNTUNED. */
+    /** Fraction of samples synthesized MID-CARRY: the commanded block is
+        rendered at the effector of the sampled pose and the label is the
+        carry-phase target (lift → REST; stack → the block seated on the
+        reference block). This is what makes the carry phase policy-driven —
+        the network must read "am I holding it" out of the image. UNTUNED. */
     carryFrac: 0.5,
     /** Chance a non-color token becomes <unk> in training, so the encoder
         learns to shrug off unknown words in free user text. */
@@ -238,9 +233,8 @@ export const CONFIG = {
     periodMs: 5000,
     // Absolute-time trajectory phases (ms), independent of periodMs so the
     // scripted reach keeps its crisp speed regardless of the resting tail.
-    // All three task trajectories share via/reach/settle; the tails differ:
+    // Both task trajectories share via/reach/settle; the tails differ:
     //   lift : settle → liftMs up → holdMs aloft            (ends ~4.26s)
-    //   touch: settle → touchHoldMs resting ON the block → returnMs to rest
     //   stack: settle → carryMs arc to above the ref block → placeSettleMs
     //          → release → returnMs to rest                 (ends ~3.78s)
     phases: {
@@ -248,12 +242,11 @@ export const CONFIG = {
       reachMs: 672, // waypoint → block centre
       settleMs: 420, // settle on the block centre
       liftMs: 1092, // straight up back to rest
-      graspAtMs: 1430, // block grasped mid-settle (carry begins; lift/stack)
+      graspAtMs: 1430, // block grasped mid-settle (carry begins)
       holdMs: 1400, // held aloft after the lift completes
-      touchHoldMs: 600, // touch: effector rests on the block, gripper open
       carryMs: 900, // stack: block centre → above the ref block (via an arc)
       placeSettleMs: 320, // stack: settle above the ref block, then release
-      returnMs: 800, // touch/stack: empty-handed return to rest
+      returnMs: 800, // stack: empty-handed return to rest
     },
     /** Height (workspace units) of the stack demo's carry waypoint — the
         carried block swings through (midX, carryHeight) between the grasp and
@@ -303,7 +296,7 @@ export const CONFIG = {
   // with gauged per-config numbers once the multi-task runs are measured.
   eta: {
     baseSeconds: 30,
-    taskCost: { lift: 1.0, touch: 0.8, stack: 2.2 },
+    taskCost: { lift: 1.0, stack: 2.2 },
     colorFactor: { 2: 0.85, 4: 1.0, 8: 1.2 } as Record<number, number>,
     blockFactor: { 2: 0.9, 3: 1.0, 4: 1.1 } as Record<number, number>,
   },

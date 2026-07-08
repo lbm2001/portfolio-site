@@ -293,7 +293,7 @@ export class VLATrainer {
   /**
    * Policy inference against the frozen per-cycle snapshot — async (the
    * render + forward pass happen in the worker). Replies with the target
-   * angles + desired gripper state PLUS the spatial-attention readout from
+   * angles PLUS the spatial-attention readout from
    * the same pass. `carry` is the rollout's currently-held block (rendered
    * at the effector in the model's-eye view — the carry-phase state cue).
    * The caller keeps stepping toward its previous target until the reply

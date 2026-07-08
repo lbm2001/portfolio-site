@@ -44,7 +44,6 @@ export const COLORS: ColorDef[] = grammar.colors;
 
 const TASK_VERBS: Record<TaskKind, string[][]> = {
   lift: grammar.tasks.lift.verbs,
-  touch: grammar.tasks.touch.verbs,
   stack: grammar.tasks.stack.verbs,
 };
 const STACK_PREPS = grammar.tasks.stack.preps;
@@ -59,7 +58,7 @@ export const COLOR_TOKEN_IDS = new Set<number>(
 
 /** Token ids that CARRY LABEL INFORMATION — the color synonyms plus every
     task verb/preposition word. Exempt from training word-dropout: dropping
-    the verb to <unk> while the task/grip labels still say "stack" would be
+    the verb to <unk> while the task label still says "stack" would be
     label noise, exactly like dropping the color word (the original reason
     this exemption exists). Articles/nouns/fillers remain droppable, which is
     all the robustness the dropout was ever buying. */

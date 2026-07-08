@@ -29,6 +29,7 @@ import {
   estimateTrainingSeconds,
   setRunConfig,
   type RunConfig,
+  type TaskKind,
 } from "@/lib/vla/run-config";
 import { DEMO_PERIOD_MS, demoPose, makeDemoPlan, type DemoPlan } from "@/lib/vla/demo";
 import { IMG_SIZE } from "@/lib/vla/model";
@@ -41,13 +42,14 @@ import { CONFIG } from "@/lib/vla/config";
 // TensorFlow.js behavioral-cloning loop — hosted in a Web Worker off the main
 // thread (lib/vla/trainer.worker.ts, via the lib/vla/trainer.ts proxy) so
 // gradient steps never fight this component's 60fps rAF loop — against an
-// analytical-IK expert, over the ⚙ run config's task set (lift / touch /
-// stack, 2-4 blocks from a 2/4/8-color palette; lib/vla/run-config.ts): each
+// analytical-IK expert, over the ⚙ run config's task set (lift / stack,
+// 2-4 blocks from a 2/4/8-color palette; lib/vla/run-config.ts): each
 // scene's slot-grammar command names one block to act on (stack names two).
 // The displayed demonstration swaps every cycle while thousands of examples
-// train invisibly; the Rollout runs policy-driven episodes whose grasp/
-// release decisions come from the policy's own gripper output. Once the
-// action loss converges, training stops and the Rollout box becomes
+// train invisibly; the Rollout runs policy-driven episodes — a block snaps
+// to the effector within graspEps, and the carry phase (lift it home /
+// place it on the reference block) follows the policy's predictions. Once
+// the action loss converges, training stops and the Rollout box becomes
 // interactive: type your own command, run it, reshuffle the blocks.
 
 const ACCENT = "#e12d1a"; // = --red; canvases can't read CSS vars cheaply
@@ -67,35 +69,36 @@ const SETTLE_EPS = CONFIG.rollout.settleEps; // rad/joint: carry-phase settle te
 const TOP_HOLD = CONFIG.rollout.topHold;
 const RETURN_FRAMES = CONFIG.rollout.returnFrames;
 
-// The episode machine is TASK-AGNOSTIC — it never needs to know which task
-// was commanded, because the policy's grip output makes every decision:
-//   reach     → settle over a block: grip ≥ 0.5 grasps (→ carry), < 0.5 is a
-//               touch (→ touchhold, then return empty)
-//   carry     → policy-driven with the block in hand; settling with grip
-//               < 0.5 releases it where it hovers (stack), settling with the
-//               grip still closed is a completed lift (→ hold, then done)
-//   touchhold → resting on the touched block for a beat
-//   hold      → holding the carried block wherever the policy parked it
-//   return    → scripted empty-handed return to rest
+// The episode machine:
+//   reach → settle over a block: it SNAPS to the effector (graspEps — the
+//           gripper is not an action output) and the carry phase begins
+//   carry → policy-driven with the block in hand; once the arm settles at
+//           the predicted target, the TASK decides the ending — stack
+//           releases the block where it hovers, lift holds it aloft
+//   hold  → holding the carried block wherever the policy parked it
+//   return→ scripted empty-handed return to rest
 interface Episode {
-  phase: "reach" | "carry" | "touchhold" | "hold" | "return";
+  phase: "reach" | "carry" | "hold" | "return";
   f: number; // frames in the current phase
   near: number;
   nearColor: number; // COLORS index of the block being hovered, or -1
   settle: number; // consecutive frames within SETTLE_EPS of the carry target
   color: number; // COLORS index of the commanded block
+  /** which carry ending this episode gets (stack releases, lift holds). */
+  task: TaskKind;
   tokens: number[];
   from: { a1: number; a2: number };
   carry: number | null;
 }
 
-const newEpisode = (color: number, tokens: number[]): Episode => ({
+const newEpisode = (color: number, tokens: number[], task: TaskKind): Episode => ({
   phase: "reach",
   f: 0,
   near: 0,
   nearColor: -1,
   settle: 0,
   color,
+  task,
   tokens,
   from: { a1: REST[0], a2: REST[1] },
   carry: null,
@@ -141,10 +144,6 @@ export default function Hero() {
   const armState = useRef({ a1: REST[0], a2: REST[1] });
   const trailRef = useRef<{ x: number; y: number }[]>([]);
   const targetRef = useRef<[number, number] | null>(null);
-  // the DESIRED gripper state (sigmoid, ≥0.5 = closed) riding along with the
-  // rollout's last prediction — the grasp/release decision signal and the
-  // Action Head's third readout
-  const gripRef = useRef<number | null>(null);
   // the spatial-attention readout riding along with the rollout's last
   // prediction: where the (frozen) policy is looking, drawn as a gaze marker
   // on the Rollout canvas (xy is in [0,1] silhouette image coords)
@@ -309,17 +308,14 @@ export default function Hero() {
     };
 
     // the Action Head's live output — the policy's current predicted target
-    // joint angles + desired gripper (null → em dashes when nothing is being
-    // predicted). The grip value is the raw sigmoid (≥0.5 reads as "close").
-    const setActionVals = (t: [number, number] | null, g: number | null) => {
+    // joint angles (null → em dashes when nothing is being predicted)
+    const setActionVals = (t: [number, number] | null) => {
       const el = actionValsRef.current;
-      if (!el || el.children.length < 3) return;
+      if (!el || el.children.length < 2) return;
       const v0 = el.children[0].lastElementChild;
       const v1 = el.children[1].lastElementChild;
-      const v2 = el.children[2].lastElementChild;
       if (v0) v0.textContent = t ? fmtAngle(t[0]) : "—";
       if (v1) v1.textContent = t ? fmtAngle(t[1]) : "—";
-      if (v2) v2.textContent = g !== null ? g.toFixed(2) : "—";
     };
 
     // small idle sway around the rest pose — "there is something here"
@@ -346,7 +342,6 @@ export default function Hero() {
           layout: demoLayoutRef.current,
           accent: ACCENT,
           carry: p.carry,
-          grip: p.carry !== null,
         });
         return;
       }
@@ -376,7 +371,6 @@ export default function Hero() {
             layout: demoLayoutRef.current,
             accent: ACCENT,
             carry: pose.carry,
-            grip: pose.carry !== null,
           });
           return;
         }
@@ -433,7 +427,6 @@ export default function Hero() {
         layout: demoLayoutRef.current,
         accent: ACCENT,
         carry,
-        grip: carry !== null,
       });
     };
 
@@ -498,16 +491,16 @@ export default function Hero() {
 
     // advance one episode by a frame; ends by nulling the episode (arm left
     // at REST) — training re-syncs a fresh attempt on the next demo cycle,
-    // converged waits for the next command. Phases are gripper-driven — see
-    // the Episode doc comment for the machine.
+    // converged waits for the next command. See the Episode doc comment for
+    // the machine.
     const runEpisode = (ep: Episode, now: number, W: number, H: number) => {
       const arm = armState.current;
       const trainer = trainerRef.current!;
       if (ep.phase === "reach" || ep.phase === "carry") {
-        // the model predicts an ABSOLUTE target + desired grip (refreshed
-        // every PREDICT_MS); the step direction is recomputed every FRAME
-        // from that target against the arm's actual current pose, so the step
-        // naturally shrinks as it closes in (proportional control)
+        // the model predicts an ABSOLUTE target (refreshed every PREDICT_MS);
+        // the step direction is recomputed every FRAME from that target
+        // against the arm's actual current pose, so the step naturally
+        // shrinks as it closes in (proportional control)
         if (now - lastPredRef.current > PREDICT_MS && !predInFlightRef.current) {
           // frozen per-cycle snapshot (training) / final weights (converged) —
           // the arm still re-predicts every PREDICT_MS as it moves (closed
@@ -532,7 +525,6 @@ export default function Hero() {
               predInFlightRef.current = false;
               if (r && episodeRef.current === ep && ep.phase === phaseAtRequest) {
                 targetRef.current = r.target;
-                gripRef.current = r.grip;
                 // the same forward pass carries the policy's gaze — drawn as
                 // a marker on the rollout scene while the phase is live
                 gazeRef.current = r.xy;
@@ -572,22 +564,16 @@ export default function Hero() {
           ep.near = touched >= 0 && touched === ep.nearColor ? ep.near + 1 : touched >= 0 ? 1 : 0;
           ep.nearColor = touched;
           if (touched >= 0 && ep.near >= NEAR_FRAMES) {
-            // the policy's grip output decides what contact MEANS: close and
-            // pick it up, or just touch it and withdraw
-            if ((gripRef.current ?? 1) >= 0.5) {
-              ep.phase = "carry"; // grasp whatever it settled on
-              ep.carry = touched;
-              ep.settle = 0;
-              ep.f = 0;
-              // force a fresh prediction — the model must now SEE the block
-              // in the gripper (in-flight reach replies are phase-dropped)
-              targetRef.current = null;
-              lastPredRef.current = 0;
-            } else {
-              ep.phase = "touchhold";
-              ep.from = { ...arm };
-              ep.f = 0;
-            }
+            // SNAP grasp: the settled-on block attaches to the effector (the
+            // gripper is not an action output) and the carry phase begins
+            ep.phase = "carry";
+            ep.carry = touched;
+            ep.settle = 0;
+            ep.f = 0;
+            // force a fresh prediction — the model must now SEE the block
+            // in the gripper (in-flight reach replies are phase-dropped)
+            targetRef.current = null;
+            lastPredRef.current = 0;
           } else if (ep.f > REACH_TIMEOUT) {
             ep.phase = "return";
             ep.from = { ...arm };
@@ -604,7 +590,7 @@ export default function Hero() {
             Math.abs(t[1] - arm.a2) < SETTLE_EPS;
           ep.settle = settled ? ep.settle + 1 : 0;
           if (ep.settle >= NEAR_FRAMES) {
-            if ((gripRef.current ?? 1) < 0.5) {
+            if (ep.task === "stack") {
               // release: the block lands where it's dropped (on the block
               // beneath it, or the floor), then the arm withdraws
               landCarry(ep);
@@ -613,7 +599,7 @@ export default function Hero() {
               ep.from = { ...arm };
               ep.f = 0;
             } else {
-              // grip stays closed where the policy parked — a completed lift
+              // lift: hold the block wherever the policy parked
               ep.phase = "hold";
               ep.f = 0;
             }
@@ -626,18 +612,9 @@ export default function Hero() {
             ep.f = 0;
           }
         }
-      } else if (ep.phase === "touchhold" || ep.phase === "hold") {
-        // motionless beat: resting ON the block (touch) / holding it aloft
-        // (lift) — then withdraw (touch) or end the episode (lift done)
-        if (ep.f > TOP_HOLD) {
-          if (ep.phase === "touchhold") {
-            ep.phase = "return";
-            ep.from = { ...arm };
-            ep.f = 0;
-          } else {
-            endEpisode();
-          }
-        }
+      } else if (ep.phase === "hold") {
+        // motionless beat holding the block aloft, then the lift is done
+        if (ep.f > TOP_HOLD) endEpisode();
       } else {
         const u = ep.f / RETURN_FRAMES;
         arm.a1 = lerp(ep.from.a1, REST[0], ease(u));
@@ -668,10 +645,9 @@ export default function Hero() {
           layout: rolloutLayoutRef.current,
           accent: ACCENT,
           carry: ep?.carry ?? null,
-          grip: (ep?.carry ?? null) !== null,
         });
         drawGaze(ctx, W, H);
-        setActionVals(targetRef.current, gripRef.current);
+        setActionVals(targetRef.current);
         return;
       }
 
@@ -697,7 +673,6 @@ export default function Hero() {
             arm.a2 = REST[1];
             trailRef.current = [];
             targetRef.current = null;
-            gripRef.current = null;
             gazeRef.current = null;
             trainer.snapshotPolicy();
             // the snapshot freezes the policy at THIS many seen demonstrations —
@@ -706,7 +681,8 @@ export default function Hero() {
             setRolloutSamples(trainer.samples);
             episodeRef.current = newEpisode(
               demoSentenceRef.current.color,
-              demoSentenceRef.current.tokens
+              demoSentenceRef.current.tokens,
+              demoSentenceRef.current.task
             );
           }
           const ep = episodeRef.current;
@@ -730,16 +706,9 @@ export default function Hero() {
             : null,
         lossNorm: trainer?.lossNorm() ?? 1,
         carry: ep?.carry ?? null,
-        // the effector dot doubles as the PHYSICAL gripper state: closed
-        // exactly while a block is held (the grip PREDICTION is the numeric
-        // Action Head readout — desire vs. state)
-        grip: (ep?.carry ?? null) !== null,
       });
       drawGaze(ctx, W, H);
-      setActionVals(
-        st === "idle" ? null : targetRef.current,
-        st === "idle" ? null : gripRef.current
-      );
+      setActionVals(st === "idle" ? null : targetRef.current);
     };
 
     const endEpisode = () => {
@@ -748,7 +717,6 @@ export default function Hero() {
       arm.a2 = REST[1];
       trailRef.current = [];
       targetRef.current = null;
-      gripRef.current = null;
       gazeRef.current = null;
       episodeRef.current = null;
     };
@@ -966,7 +934,6 @@ export default function Hero() {
         episodeRef.current = null;
         trailRef.current = [];
         targetRef.current = null;
-        gripRef.current = null;
         gazeRef.current = null;
         visGazeRef.current = null;
         armState.current = { a1: REST[0], a2: REST[1] };
@@ -1004,7 +971,6 @@ export default function Hero() {
       rolloutCycleRef.current = -1;
       trailRef.current = [];
       targetRef.current = null;
-      gripRef.current = null;
       gazeRef.current = null;
       visGazeRef.current = null;
       armState.current = { a1: REST[0], a2: REST[1] };
@@ -1046,7 +1012,6 @@ export default function Hero() {
     rolloutCycleRef.current = -1;
     trailRef.current = [];
     targetRef.current = null;
-    gripRef.current = null;
     gazeRef.current = null;
     visGazeRef.current = null;
     armState.current = { a1: REST[0], a2: REST[1] };
@@ -1137,9 +1102,8 @@ export default function Hero() {
     armState.current = { a1: REST[0], a2: REST[1] };
     trailRef.current = [];
     targetRef.current = null;
-    gripRef.current = null;
     gazeRef.current = null;
-    episodeRef.current = newEpisode(d.color, tokens);
+    episodeRef.current = newEpisode(d.color, tokens, d.task);
   };
 
   const randomizeBlocks = () => {
@@ -1148,7 +1112,6 @@ export default function Hero() {
     episodeRef.current = null;
     trailRef.current = [];
     targetRef.current = null;
-    gripRef.current = null;
     gazeRef.current = null;
     armState.current = { a1: REST[0], a2: REST[1] };
     setTryNote(null);
@@ -1210,7 +1173,6 @@ export default function Hero() {
     episodeRef.current = null;
     trailRef.current = [];
     targetRef.current = null;
-    gripRef.current = null;
     gazeRef.current = null;
     armState.current = { a1: REST[0], a2: REST[1] };
     setTryNote(null);
@@ -1404,8 +1366,7 @@ export default function Hero() {
       </div>
 
       {/* Action Head — where the vision + language wires merge; shows the
-          policy's current output (the predicted target joint angles + the
-          desired gripper state, sigmoid 0=open..1=closed) */}
+          policy's current output (the predicted target joint angles) */}
       <div className="vla-node vla-action" ref={actionCardRef}>
         <div className="vla-label">Action Head</div>
         <div className="vla-action-vals" ref={actionValsRef}>
@@ -1415,10 +1376,6 @@ export default function Hero() {
           </span>
           <span>
             <span className="vla-av-k">elbow</span>
-            <span className="vla-av-v">—</span>
-          </span>
-          <span>
-            <span className="vla-av-k">gripper</span>
             <span className="vla-av-v">—</span>
           </span>
         </div>

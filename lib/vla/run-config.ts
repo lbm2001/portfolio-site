@@ -19,7 +19,7 @@
 import { CONFIG } from "./config";
 
 /** Task order is the task head's class order — never reorder. */
-export const TASKS = ["lift", "touch", "stack"] as const;
+export const TASKS = ["lift", "stack"] as const;
 export type TaskKind = (typeof TASKS)[number];
 
 export interface RunConfig {

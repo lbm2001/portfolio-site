@@ -1,28 +1,28 @@
 // The real thing behind the hero's "Start Training" button: an asynchronous
-// behavioral-cloning loop over the run-config's task set (lift/touch/stack
-// on 2..4 blocks from a 2/4/8-color palette — see lib/vla/run-config.ts).
+// behavioral-cloning loop over the run-config's task set (lift/stack on
+// 2..4 blocks from a 2/4/8-color palette — see lib/vla/run-config.ts).
 // Each batch synthesizes (scene layout, pose, command) states — random block
 // placements, per-task sentences from the slot grammar with ~10% word-dropout
 // to <unk> — renders each state through the same silhouette pipeline the live
 // rollout uses, labels it with the analytical-IK expert's ABSOLUTE target
-// joint angles + desired gripper state (plus color/ref-color/task for the
-// auxiliary heads), and runs one trainOnBatch step.
+// joint angles (plus color/ref-color/task for the auxiliary heads), and runs
+// one trainOnBatch step. Grasping itself is not an action output: a block
+// SNAPS to the effector within graspEps (see Hero.tsx).
 //
-// The carry phase is policy-driven, so lift/stack samples are CARRY-
-// CONDITIONED: a carryFrac share render the commanded block IN THE GRIPPER
-// of the sampled pose, and the label flips to the carry-phase target —
-// lift → REST with the grip closed, stack → holding the block seated on the
-// reference block with the grip open (release). "Is a block in my hand" is
-// only visible in the image, which is exactly the state cue the network has
-// to learn. Apart from the carried block riding at the effector, labels do
-// NOT depend on the (randomized, for robustness) rendered pose — the network
-// learns "given this scene, command and carry state, where does the arm need
-// to end up," not also implicitly infer the current pose and subtract. The
-// Rollout arm computes its own delta from the predicted target against its
-// actual known current pose (see Hero.tsx's drawArm) and steps toward it;
-// the plotted curve is the genuine action loss (Huber regression to that
-// absolute target), and the Rollout is driven purely by model.predict on
-// its own live silhouette view.
+// The carry phase is policy-driven, so samples are CARRY-CONDITIONED: a
+// carryFrac share render the commanded block IN THE GRIPPER of the sampled
+// pose, and the label flips to the carry-phase target — lift → REST, stack →
+// holding the block seated on the reference block. "Is a block in my hand"
+// is only visible in the image, which is exactly the state cue the network
+// has to learn. Apart from the carried block riding at the effector, labels
+// do NOT depend on the (randomized, for robustness) rendered pose — the
+// network learns "given this scene, command and carry state, where does the
+// arm need to end up," not also implicitly infer the current pose and
+// subtract. The Rollout arm computes its own delta from the predicted target
+// against its actual known current pose (see Hero.tsx's drawArm) and steps
+// toward it; the plotted curve is the genuine action loss (Huber regression
+// to that absolute target), and the Rollout is driven purely by
+// model.predict on its own live silhouette view.
 //
 // Training stops by itself once the trailing-window action loss crosses the
 // convergence threshold — that switches the hero into "try it" mode where
@@ -107,10 +107,6 @@ export type TrainerStatus =
 export interface PredictResult {
   /** Predicted ABSOLUTE target joint angles. */
   target: [number, number];
-  /** Predicted DESIRED gripper state at that target, sigmoid in [0,1]
-      (≥0.5 = closed). Drives the grasp/release decisions in Hero's episode
-      machine and the Action Head readout. */
-  grip: number;
   /** Spatial attention over the ATTN_GRID×ATTN_GRID vision cells, row-major,
       normalized so the peak cell is 1 (ready to use as overlay alpha). */
   attn: number[];
@@ -121,7 +117,7 @@ export interface PredictResult {
 
 /** What the language heads decode from a token sequence (vision zeroed) —
     the "decoded target" readout and try-it routing. refColor is null when
-    the ref head picks its "none" class (lift/touch commands). */
+    the ref head picks its "none" class (lift commands). */
 export interface DecodedCommand {
   task: TaskKind;
   taskProb: number;
@@ -298,7 +294,6 @@ export class VLATrainerCore {
     const vis = new Float32Array(BATCH_SIZE * px);
     const lang = new Int32Array(BATCH_SIZE * MAX_SEQ_LEN);
     const ysA = new Float32Array(BATCH_SIZE * 2);
-    const ysG = new Float32Array(BATCH_SIZE);
     const ysC = new Float32Array(BATCH_SIZE * COLORS.length);
     const ysR = new Float32Array(BATCH_SIZE * refClasses);
     const ysT = new Float32Array(BATCH_SIZE * TASKS.length);
@@ -316,27 +311,22 @@ export class VLATrainerCore {
           : null;
 
       // carry-conditioned label (see the file header): a CARRY_FRAC share of
-      // lift/stack samples render the commanded block in the gripper and
-      // label the carry-phase target instead of the grasp
-      const midCarry = sentence.task !== "touch" && Math.random() < CARRY_FRAC;
+      // samples render the commanded block in the gripper and label the
+      // carry-phase target instead of the grasp
+      const midCarry = Math.random() < CARRY_FRAC;
       let t1: number;
       let t2: number;
-      let grip: number;
       if (!midCarry) {
         // reach phase: the grasp point (the IK label depends on the block's
         // SIZE too — grasp height = size/2 — so a bigger commanded block
-        // resolves to a higher reach). Desired grip AT the target: touch
-        // stays open, lift/stack close to pick the block up.
+        // resolves to a higher reach)
         [t1, t2] = ikToX(target.x, target.size, target.y ?? 0);
-        grip = sentence.task === "touch" ? 0 : 1;
       } else if (sentence.task === "lift") {
-        // carrying → bring it home, keep holding
+        // carrying → bring it home
         [t1, t2] = REST;
-        grip = 1;
       } else {
-        // carrying → hold the block seated on the reference block, let go
+        // carrying → hold the block seated on the reference block
         [t1, t2] = ikToPlace(ref!.x, (ref!.y ?? 0) + ref!.size, target.size);
-        grip = 0;
       }
 
       let a1: number;
@@ -358,7 +348,6 @@ export class VLATrainerCore {
       // pose (see Hero.tsx).
       ysA[i * 2] = t1;
       ysA[i * 2 + 1] = t2;
-      ysG[i] = grip;
       ysC[i * COLORS.length + sentence.color] = 1;
       ysR[i * refClasses + (sentence.refColor ?? REF_NONE)] = 1;
       ysT[i * TASKS.length + TASKS.indexOf(sentence.task)] = 1;
@@ -405,7 +394,6 @@ export class VLATrainerCore {
     const xsVision = tf.tensor4d(vis, [BATCH_SIZE, IMG_SIZE, IMG_SIZE, 3]);
     const xsLang = tf.tensor2d(lang, [BATCH_SIZE, MAX_SEQ_LEN], "int32");
     const yAction = tf.tensor2d(ysA, [BATCH_SIZE, 2]);
-    const yGrip = tf.tensor2d(ysG, [BATCH_SIZE, 1]);
     const yColor = tf.tensor2d(ysC, [BATCH_SIZE, COLORS.length]);
     const yRef = tf.tensor2d(ysR, [BATCH_SIZE, refClasses]);
     const yTask = tf.tensor2d(ysT, [BATCH_SIZE, TASKS.length]);
@@ -414,16 +402,15 @@ export class VLATrainerCore {
     try {
       const h = await this.models!.model.trainOnBatch(
         [xsVision, xsLang],
-        [yAction, yGrip, yColor, yRef, yTask, yMap]
+        [yAction, yColor, yRef, yTask, yMap]
       );
-      // multi-output: [total, action, grip, color, refColor, task, map] —
-      // index 1 stays the Huber ACTION loss the convergence logic watches
+      // multi-output: [total, action, color, refColor, task, map] — index 1
+      // stays the Huber ACTION loss the convergence logic watches
       return Array.isArray(h) ? (h[1] as number) : (h as number);
     } finally {
       xsVision.dispose();
       xsLang.dispose();
       yAction.dispose();
-      yGrip.dispose();
       yColor.dispose();
       yRef.dispose();
       yTask.dispose();
@@ -615,7 +602,7 @@ export class VLATrainerCore {
    * Policy inference on the LIVE (still-training) model: render the given
    * state (pose + block layout + carried block) to the same model's-eye view
    * the training samples use, run the viz twin, return the predicted
-   * ABSOLUTE target joint angles + desired gripper state plus the spatial-
+   * ABSOLUTE target joint angles plus the spatial-
    * attention readout (not a delta — the caller subtracts its own known
    * current pose to get the step direction; see Hero.tsx's drawArm). Also
    * serves the Vision Encoder panel's live "where the model looks" heatmap
@@ -675,7 +662,7 @@ export class VLATrainerCore {
   }
 
   /** Render the state, run the given models' viz twin, return the predicted
-      target angles + gripper + attention readout (one forward pass for all). */
+      target angles + attention readout (one forward pass for both). */
   private inferTarget(
     models: VLAModels,
     a1: number,
@@ -689,12 +676,8 @@ export class VLATrainerCore {
     const out = tf.tidy(() => {
       const v = this.visionTensor(img);
       const l = tf.tensor2d([tokens], [1, MAX_SEQ_LEN], "int32");
-      const [action, grip, attn] = models.viz.predict([v, l]) as tfType.Tensor[];
-      return {
-        action: action.dataSync(),
-        grip: grip.dataSync()[0],
-        attn: attn.dataSync(),
-      };
+      const [action, attn] = models.viz.predict([v, l]) as tfType.Tensor[];
+      return { action: action.dataSync(), attn: attn.dataSync() };
     });
     // the UI's gaze point: the map's expectation in plain [0,1] image coords,
     // computed here CPU-side (the in-graph attn_grid kernel feeds the action
@@ -715,7 +698,6 @@ export class VLATrainerCore {
     const inv = peak > 0 ? 1 / peak : 0;
     return {
       target: [out.action[0], out.action[1]],
-      grip: out.grip,
       attn: Array.from(out.attn, (a) => a * inv),
       xy: [ux / G, vy / G],
     };
@@ -732,7 +714,7 @@ export class VLATrainerCore {
     const out = tf.tidy(() => {
       const v = tf.zeros([1, IMG_SIZE, IMG_SIZE, 3]);
       const l = tf.tensor2d([tokens], [1, MAX_SEQ_LEN], "int32");
-      const [, , color, ref, task] = this.models!.model.predict([
+      const [, color, ref, task] = this.models!.model.predict([
         v,
         l,
       ]) as tfType.Tensor[];

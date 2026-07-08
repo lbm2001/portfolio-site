@@ -23,10 +23,9 @@
 // the FROZEN per-cycle snapshot (the rollout's policy); "predictLive" runs
 // the still-training model (the Vision Encoder panel's live gaze heatmap).
 // Both carry the rollout's carried-block state (rendered at the effector in
-// the model's-eye view) and reply with a full PredictResult — target angles,
-// desired gripper state, plus the spatial-attention map — from one forward
-// pass. "decode" replies with the language heads' full DecodedCommand
-// (task + color + ref color).
+// the model's-eye view) and reply with a full PredictResult — target angles
+// plus the spatial-attention map — from one forward pass. "decode" replies
+// with the language heads' full DecodedCommand (task + color + ref color).
 //
 // `gen` is the proxy's reset-generation counter: it's echoed on every state
 // post so the proxy can drop state messages that were already in flight when

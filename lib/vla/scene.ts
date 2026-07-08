@@ -52,17 +52,13 @@ export interface PaintOpts {
   lossNorm?: number;
   /** COLORS index of the block held at the gripper (its floor spot empties). */
   carry?: number | null;
-  /** Gripper state readout on the effector dot: false = open (white centre),
-      true/undefined = closed (solid grey — the pre-gripper look, so call
-      sites that don't pass it render as before). */
-  grip?: boolean;
 }
 
 export function paintScene(
   ctx: CanvasRenderingContext2D,
   W: number,
   H: number,
-  { a1, a2, layout, accent, trail, lossNorm = 0, carry, grip }: PaintOpts
+  { a1, a2, layout, accent, trail, lossNorm = 0, carry }: PaintOpts
 ) {
   const m = sceneMap(W, H);
   const bx = m.X(BASE.x);
@@ -144,21 +140,12 @@ export function paintScene(
   ctx.fill();
   ctx.stroke();
 
-  // end effector — on top of everything; doubles as the gripper readout:
-  // closed = the familiar solid grey dot, open = a grey ring with a white
-  // centre. Callers that don't pass `grip` keep the solid-grey look.
+  // end effector — a solid grey dot on top of everything; stays the same
+  // grey whether reaching or carrying a block
+  ctx.fillStyle = "#6f6f6f";
   ctx.beginPath();
   ctx.arc(ex, ey, 4, 0, 7);
-  if (grip === false) {
-    ctx.fillStyle = "#fff";
-    ctx.fill();
-    ctx.lineWidth = 2.2;
-    ctx.strokeStyle = "#6f6f6f";
-    ctx.stroke();
-  } else {
-    ctx.fillStyle = "#6f6f6f";
-    ctx.fill();
-  }
+  ctx.fill();
 }
 
 // Blocks render a touch larger in the model's-eye view: a display-size block

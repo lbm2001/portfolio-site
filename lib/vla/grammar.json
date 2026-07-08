@@ -8,11 +8,9 @@
         ["take"],
         ["lift"],
         ["fetch"],
-        ["get"]
+        ["get"],
+        ["reach", "for"]
       ]
-    },
-    "touch": {
-      "verbs": [["touch"], ["tap"], ["point", "at"], ["reach", "for"]]
     },
     "stack": {
       "verbs": [["put"], ["place"], ["stack"], ["set"]],

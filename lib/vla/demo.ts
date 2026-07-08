@@ -6,8 +6,6 @@
 //   lift : descend to the commanded block's CENTER, grasp, lift STRAIGHT UP
 //          to the rest pose, hold aloft, release (the block resets to the
 //          floor for the next cycle — never carried back down)
-//   touch: descend to the block's center and REST there, gripper open the
-//          whole time, then return empty-handed
 //   stack: descend, grasp, swing through a raised carry waypoint to just
 //          above the REFERENCE block, settle, release — the block stays
 //          seated there for the rest of the cycle (see DemoPose.placed)
@@ -41,10 +39,9 @@ const SETTLE_MS = CONFIG.demo.phases.settleMs; // settle on the block center
 const LIFT_MS = CONFIG.demo.phases.liftMs; // lift: straight up back to rest
 const GRASP_AT_MS = CONFIG.demo.phases.graspAtMs; // grasped mid-settle (lift/stack)
 const HOLD_MS = CONFIG.demo.phases.holdMs; // lift: held aloft at the top
-const TOUCH_HOLD_MS = CONFIG.demo.phases.touchHoldMs; // touch: resting on the block
 const CARRY_MS = CONFIG.demo.phases.carryMs; // stack: grasp -> above the ref block
 const PLACE_SETTLE_MS = CONFIG.demo.phases.placeSettleMs; // stack: settle, then release
-const RETURN_MS = CONFIG.demo.phases.returnMs; // touch/stack: return to rest
+const RETURN_MS = CONFIG.demo.phases.returnMs; // stack: return to rest
 const CARRY_HEIGHT = CONFIG.demo.carryHeight;
 
 export interface DemoPlan {
@@ -62,7 +59,7 @@ export interface DemoPlan {
 export interface DemoPose {
   a1: number;
   a2: number;
-  /** COLORS index of the carried block, or null (gripper open ⇔ null). */
+  /** COLORS index of the carried block, or null. */
   carry: number | null;
   /** stack: the carried block has been RELEASED onto the reference block —
       Hero seats it there in the demo layout so the scene shows the result. */
@@ -129,18 +126,7 @@ export function demoPose(plan: DemoPlan, t: number): DemoPose {
     return null; // past the approach — task-specific tail below
   };
 
-  if (plan.task === "touch") {
-    // settle ON the block (gripper open throughout), then return empty
-    const holdEnd = settleStart + TOUCH_HOLD_MS;
-    const returnEnd = holdEnd + RETURN_MS;
-    pose =
-      approach() ??
-      (ms < holdEnd
-        ? plan.reach
-        : ms < returnEnd
-          ? seg(plan.reach, REST, (ms - holdEnd) / RETURN_MS)
-          : REST);
-  } else if (plan.task === "stack") {
+  if (plan.task === "stack") {
     // grasp mid-settle, swing through the carry waypoint to above the ref
     // block, settle, release (the block stays seated), return empty
     const liftStart = settleStart + SETTLE_MS;
