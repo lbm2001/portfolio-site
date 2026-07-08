@@ -187,11 +187,23 @@ export const CONFIG = {
   task: {
     /** Token slots per command (padded/truncated to this). */
     maxSeqLen: 12,
-    /** The two cleanly-reachable floor BANDS [lo, hi] one block is placed in
-        per side (the centre is a near-singular dead zone; see examples.ts).
-        Inner edges (0.31/0.69) are set for the LARGEST block's elbow limit. */
+    /** The two cleanly-reachable floor BANDS [lo, hi] blocks are placed in per
+        side (the centre is a near-singular dead zone; see examples.ts). Inner
+        edges (0.31/0.69) are set for the LARGEST block's elbow limit. */
     placeLeft: [0.11, 0.31] as [number, number],
     placeRight: [0.69, 0.89] as [number, number],
+    /** Chance a side gets a SECOND block (else one). So a scene holds 2-4
+        blocks total, each a distinct color — the extra distractors make the
+        language-grounding (which of 8 color words → which of up to 4 blocks)
+        harder. Two blocks share one band, so they can only both be placed when
+        neither is too big; see randomLayout's reject-and-fallback in
+        examples.ts. Set to 0 to restore the strict one-per-side task. */
+    twoPerSideProb: 0.6,
+    /** Extra clearance (workspace units) required between two same-side blocks'
+        silhouettes, on top of their (boosted) half-widths — keeps them from
+        occluding each other AND lands them in different attention cells (one
+        16×16 cell ≈ 0.078 units) so the map can score them apart. */
+    minBlockGap: 0.03,
     /** Grammar sampling probabilities: chance a sentence gets a leading filler
         word, and a trailing "please". */
     fillerProb: 0.25,

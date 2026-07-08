@@ -144,6 +144,13 @@ export default function Hero() {
   // left off instead of jumping ahead by the real wall-clock pause length
   const pausedAccumRef = useRef(0);
   const pauseStartRef = useRef<number | null>(null);
+  // wall-clock origin of the demonstration trajectory clock. Anchored to the
+  // click (not the huge performance.now uptime) so the first cycle begins at
+  // t=0 — the resting default demonstration already on screen — instead of
+  // snapping into a random mid-reach. Offset +500ms so the arm holds that
+  // initial pose for half a second before it starts moving (no harsh jump on
+  // click). Pause duration is folded in via pausedAccumRef, not this.
+  const trainStartRef = useRef(0);
 
   // demonstration state — a fresh layout/sentence/trajectory every cycle
   const demoLayoutRef = useRef(DEFAULT_LAYOUT);
@@ -167,7 +174,11 @@ export default function Hero() {
   const silThumbRef = useRef<HTMLCanvasElement | null>(null);
 
   const [status, setStatus] = useState<TrainerStatus>("idle");
-  const [hud, setHud] = useState({ lossText: "—", samples: 0 });
+  const [hud, setHud] = useState({ lossText: "—", samples: 0, batches: 0 });
+  // demonstrations the CURRENTLY rolled-out policy has seen: the sample count
+  // frozen into the per-cycle snapshot during training, or the final count
+  // once converged (see drawArm's snapshot boundary + onUpdate).
+  const [rolloutSamples, setRolloutSamples] = useState(0);
   const [demoSentence, setDemoSentence] = useState<Sentence>(DEFAULT_SENTENCE);
   const [userSentence, setUserSentence] = useState<Sentence | null>(null);
   const [tryText, setTryText] = useState("");
@@ -291,9 +302,29 @@ export default function Hero() {
       let carry: number | null = null;
 
       if (st === "training" || st === "loading") {
-        // subtract accumulated paused time so the cycle resumes exactly
-        // where it left off instead of jumping ahead by the pause length
-        const effectiveNow = now - pausedAccumRef.current;
+        // clock measured from the click (trainStartRef), minus accumulated
+        // paused time so the cycle resumes exactly where it left off
+        const effectiveNow = now - trainStartRef.current - pausedAccumRef.current;
+        if (effectiveNow < 0) {
+          // the half-second hold right after the click: sit on the initial
+          // demonstration (t=0 → resting pose over the default layout) so the
+          // pipeline eases in instead of the arm snapping into motion
+          if (!demoPlanRef.current)
+            demoPlanRef.current = makeDemoPlan(
+              demoLayoutRef.current,
+              demoSentenceRef.current.color
+            );
+          const pose = demoPose(demoPlanRef.current, 0);
+          demoPoseRef.current = { a1: pose.a1, a2: pose.a2, carry: pose.carry };
+          paintScene(ctx, W, H, {
+            a1: pose.a1,
+            a2: pose.a2,
+            layout: demoLayoutRef.current,
+            accent: ACCENT,
+            carry: pose.carry,
+          });
+          return;
+        }
         const cycle = Math.floor(effectiveNow / DEMO_PERIOD_MS);
         if (cycle !== lastCycleRef.current || !demoPlanRef.current) {
           const first = lastCycleRef.current === -1;
@@ -505,6 +536,10 @@ export default function Hero() {
             targetRef.current = null;
             gazeRef.current = null;
             trainer.snapshotPolicy();
+            // the snapshot freezes the policy at THIS many seen demonstrations —
+            // surface it on the Rollout so the attempt is read as "this is what
+            // N examples of training buys you" (updates once per demo cycle)
+            setRolloutSamples(trainer.samples);
             episodeRef.current = newEpisode(
               demoSentenceRef.current.color,
               demoSentenceRef.current.tokens
@@ -747,6 +782,9 @@ export default function Hero() {
         gazeRef.current = null;
         visGazeRef.current = null;
         armState.current = { a1: REST[0], a2: REST[1] };
+        // the interactive policy is the final model — show the full training
+        // budget it saw, not the last per-cycle snapshot count
+        setRolloutSamples(trainer.samples);
         // detach the rollout scene from the demo's: during training
         // rolloutLayoutRef holds the SAME objects as demoLayoutRef (assigned,
         // not copied), so dragging a rollout block would also move it in the
@@ -757,7 +795,11 @@ export default function Hero() {
     const now = performance.now();
     if (now - lastHudRef.current > 150 && !Number.isNaN(trainer.loss)) {
       lastHudRef.current = now;
-      setHud({ lossText: trainer.loss.toFixed(3), samples: trainer.samples });
+      setHud({
+        lossText: trainer.loss.toFixed(3),
+        samples: trainer.samples,
+        batches: trainer.batches,
+      });
     }
   };
 
@@ -785,9 +827,12 @@ export default function Hero() {
       userSentenceRef.current = null;
       pausedAccumRef.current = 0;
       pauseStartRef.current = null;
+      // half-second hold on the initial demonstration before the arm moves
+      trainStartRef.current = performance.now() + 500;
       setUserSentence(null);
       setDecoded(null);
       setTokenBars([]);
+      setRolloutSamples(0);
       void trainer.start(onUpdate);
     }
   };
@@ -811,13 +856,15 @@ export default function Hero() {
     userSentenceRef.current = null;
     pausedAccumRef.current = 0;
     pauseStartRef.current = null;
+    trainStartRef.current = 0;
     setDemoSentence(DEFAULT_SENTENCE);
     setUserSentence(null);
     setTryText("");
     setTryNote(null);
     setTokenBars([]);
     setDecoded(null);
-    setHud({ lossText: "—", samples: 0 });
+    setRolloutSamples(0);
+    setHud({ lossText: "—", samples: 0, batches: 0 });
   };
 
   /** "Try it" mode: run the user's own sentence through the trained policy. */
@@ -1183,8 +1230,18 @@ export default function Hero() {
             {tryNote && <div className="vla-try-note">{tryNote}</div>}
           </div>
         )}
-        <div className="vla-label">
-          {status === "converged" ? "Policy — your command" : "Rollout"}
+        <div className="vla-out-head">
+          <div className="vla-label">
+            {status === "converged" ? "Policy — your command" : "Rollout"}
+          </div>
+          {rolloutSamples > 0 &&
+            (status === "training" ||
+              status === "paused" ||
+              status === "converged") && (
+              <div className="vla-seen">
+                trained on {rolloutSamples.toLocaleString()} demonstrations
+              </div>
+            )}
         </div>
         <canvas
           className="vla-canvas"
@@ -1208,14 +1265,19 @@ export default function Hero() {
           <div className="vla-status-col">
             <span className="vla-status-text">{statusText}</span>
             {live && hud.samples > 0 && (
-              <span className="vla-status-sub">
-                {hud.samples.toLocaleString()} ex
-              </span>
+              <>
+                <span className="vla-status-sub">
+                  {hud.samples.toLocaleString()} examples
+                </span>
+                <span className="vla-status-sub">
+                  {hud.batches.toLocaleString()} batches
+                </span>
+              </>
             )}
           </div>
         </div>
         <div className="vla-loss">
-          <div className="vla-loss-label">browser training · MSE loss</div>
+          <div className="vla-loss-label">Huber (smooth L1) Loss</div>
           <canvas className="vla-loss-canvas" ref={lossRef} />
         </div>
         <div className="vla-loss-val">{hud.lossText}</div>

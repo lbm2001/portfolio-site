@@ -5,11 +5,11 @@
 // (filler? verb article color-word noun please?) so hundreds of surface
 // forms collapse onto 8 intents. The word inventory lives in grammar.json
 // (single source of truth shared with scripts/gen-embeddings-data.mjs).
-// Every scene places exactly TWO blocks, one per side, with colors drawn
-// from the eight without replacement — so vision only ever has to tell two
-// colors apart at once, not localize one among a crowd, which keeps
-// training fast; the wider palette makes the language-grounding (which of
-// eight words → which of two blocks) the harder part.
+// Each scene places 1-2 blocks per side (2-4 total), with colors drawn from
+// the eight without replacement — so every block is a unique color and the
+// task is to localize the named one among up to four. The wider palette makes
+// the language-grounding (which of eight words → which of up to four blocks)
+// the harder part.
 //
 // Token ids index the pretrained GloVe table (vocab.gen.ts / public/vla/):
 // 0 is <pad>, 1 is <unk>, then the ~20k-word GloVe vocab. Only the grammar
@@ -57,6 +57,62 @@ export function registerFullVocab(words: string[]) {
   fullVocab = new Map(words.map((w, i) => [w, i + 2]));
 }
 
+// ---- typo tolerance for user-typed words ----
+//
+// A misspelling ("puple") is in neither the full GloVe list nor CORE_VOCAB, so
+// it tokenizes to <unk> — a ZERO row in the embedding table (embeddings.ts), so
+// the language track goes silent, not wrong. To recover the intent we fuzzy-map
+// an OOV word to the nearest CORE_VOCAB entry (the color synonyms + grammar
+// words). We deliberately DON'T fuzz over the full 20k GloVe list: the tight
+// dictionary is both cheaper and safer ("puple" -> "purple", never "pupil").
+//
+// Distance is Optimal String Alignment (Levenshtein + adjacent transposition at
+// cost 1), since transpositions ("purpel", "gerner") are the commonest typo.
+// This only ever runs on the `?? UNK` branch below — i.e. never on the training
+// hot path, whose sentences are built from in-vocab grammar words.
+
+const MAX_EDITS = 2;
+
+/** OSA edit distance, early-exiting once every cell in a row exceeds `max`. */
+function editDist(a: string, b: string, max: number): number {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  let prevPrev: number[] = [];
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    let rowMin = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      let v = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1])
+        v = Math.min(v, prevPrev[j - 2] + 1); // adjacent transposition
+      cur[j] = v;
+      if (v < rowMin) rowMin = v;
+    }
+    if (rowMin > max) return max + 1; // no cell can still beat the budget
+    prevPrev = prev;
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+/** Token id of the nearest CORE_VOCAB word within the edit budget, or undefined.
+    Budget scales down for short words so 2-3 letter garbage can't match a color
+    (color words are >=3 chars, e.g. "reb" -> "red" still resolves at budget 1). */
+function correctWord(word: string): number | undefined {
+  const budget = Math.min(MAX_EDITS, word.length <= 3 ? 1 : MAX_EDITS);
+  let best: string | undefined;
+  let bestD = budget + 1;
+  for (const cand in CORE_VOCAB) {
+    const d = editDist(word, cand, bestD - 1); // only care if it strictly beats best
+    if (d < bestD) {
+      bestD = d;
+      best = cand;
+    }
+  }
+  return best === undefined ? undefined : CORE_VOCAB[best];
+}
+
 /** Lowercase, strip punctuation, map OOV words to <unk>, pad to MAX_SEQ_LEN. */
 export function tokenize(sentence: string): number[] {
   const words = sentence
@@ -66,7 +122,8 @@ export function tokenize(sentence: string): number[] {
     .filter(Boolean);
   const tokens = new Array<number>(MAX_SEQ_LEN).fill(PAD);
   for (let i = 0; i < Math.min(words.length, MAX_SEQ_LEN); i++) {
-    tokens[i] = fullVocab?.get(words[i]) ?? CORE_VOCAB[words[i]] ?? UNK;
+    const w = words[i];
+    tokens[i] = fullVocab?.get(w) ?? CORE_VOCAB[w] ?? correctWord(w) ?? UNK;
   }
   return tokens;
 }
@@ -110,11 +167,19 @@ export interface BlockPos {
 export type Layout = BlockPos[];
 
 /**
- * TWO blocks per scene — one on each side of the arm — with each block placed
- * at a RANDOM position across its full cleanly-reachable side of the floor
- * (was a ±0.02 pinprick around fixed 0.16/0.84). The colors are drawn from the
- * palette without replacement, so vision still only has to tell two colors
- * apart.
+ * 1-2 blocks PER SIDE (2-4 per scene), each placed at a RANDOM position across
+ * its cleanly-reachable side of the floor. Colors are drawn from the palette
+ * without replacement, so every block is a distinct color and the named target
+ * is unambiguous — but vision now has to pick it out among up to four, not two.
+ *
+ * Two blocks sharing one ~0.20-wide band would occlude each other (a block is
+ * up to 0.16 wide, boosted ×silBlockScale in the model's-eye view). placeSide
+ * reject-samples same-side positions/sizes until their silhouettes clear by
+ * minBlockGap; if no attempt fits within the attempt budget (both drawn large),
+ * it falls back to a SINGLE block rather than force an occluding overlap — so
+ * two-per-side naturally biases toward smaller blocks, and huge pairs simply
+ * don't happen. The unfilled color slot is just left unused (colors stay
+ * unique among the blocks actually placed).
  *
  * Reachable-floor analysis (arm base (0.5,0.2), links 0.32+0.26, grasp at
  * y=0.06): the annulus outer radius 0.58 covers the whole floor out to
@@ -144,17 +209,58 @@ export type Layout = BlockPos[];
  */
 const PLACE_L: [number, number] = CONFIG.task.placeLeft; // left band [lo, hi]
 const PLACE_R: [number, number] = CONFIG.task.placeRight; // right band [lo, hi]
+const TWO_PROB = CONFIG.task.twoPerSideProb;
+const MIN_GAP = CONFIG.task.minBlockGap;
+
 const inBand = ([lo, hi]: [number, number]) => lo + Math.random() * (hi - lo);
 const randSize = () => BLOCK_MIN + Math.random() * (BLOCK_MAX - BLOCK_MIN);
-export function randomLayout(): Layout {
-  const c1 = Math.floor(Math.random() * COLORS.length);
-  let c2 = Math.floor(Math.random() * (COLORS.length - 1));
-  if (c2 >= c1) c2++;
-  // c1/c2 are already a uniform random pair, so which color lands on which
-  // side is random too — c1 left, c2 right.
+
+/** Half-width a block occupies in the MODEL'S-EYE view (silBlockScale boost) —
+    the wider of the two views, so clearing this clears the display too. */
+const silHalf = (size: number) => (size * CONFIG.render.silBlockScale) / 2;
+
+/** k distinct color indices, uniformly without replacement (partial shuffle). */
+function pickColors(k: number): number[] {
+  const pool = COLORS.map((_, i) => i);
+  for (let i = 0; i < k; i++) {
+    const j = i + Math.floor(Math.random() * (pool.length - i));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  return pool.slice(0, k);
+}
+
+/** Lay `colors` (1 or 2) into one band. For two we CONSTRUCT a non-overlapping
+    placement rather than reject-sample: draw both sizes, require their center
+    separation to clear both silhouettes plus MIN_GAP, then place the left block
+    anywhere its clearance still fits before the band end and the right block
+    anywhere past that clearance — so both keep full positional freedom and the
+    pair always fits. Only a pair whose required clearance exceeds the whole
+    band (both drawn large — the band is just ~0.20 wide) can't share it; that
+    pair drops to a single block (see randomLayout's doc comment). */
+function placeSide(band: [number, number], colors: number[]): BlockPos[] {
+  const [lo, hi] = band;
+  if (colors.length === 1)
+    return [{ color: colors[0], x: inBand(band), size: randSize() }];
+  const sizeL = randSize();
+  const sizeR = randSize();
+  const sep = silHalf(sizeL) + silHalf(sizeR) + MIN_GAP;
+  if (sep > hi - lo)
+    return [{ color: colors[0], x: inBand(band), size: sizeL }];
+  const xL = lo + Math.random() * (hi - lo - sep); // left block, clearance still fits
+  const xR = xL + sep + Math.random() * (hi - (xL + sep)); // right block, past the clearance
   return [
-    { color: c1, x: inBand(PLACE_L), size: randSize() },
-    { color: c2, x: inBand(PLACE_R), size: randSize() },
+    { color: colors[0], x: xL, size: sizeL },
+    { color: colors[1], x: xR, size: sizeR },
+  ];
+}
+
+export function randomLayout(): Layout {
+  const nL = 1 + (Math.random() < TWO_PROB ? 1 : 0);
+  const nR = 1 + (Math.random() < TWO_PROB ? 1 : 0);
+  const colors = pickColors(nL + nR); // unique across the whole scene
+  return [
+    ...placeSide(PLACE_L, colors.slice(0, nL)),
+    ...placeSide(PLACE_R, colors.slice(nL)),
   ];
 }
 
