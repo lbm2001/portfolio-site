@@ -11,14 +11,14 @@ export default (phase) => {
     transpilePackages: ["mini-vla"],
   };
 
-  // Local dev installs mini-vla as `file:../mini-vla` — a symlink whose realpath
-  // is a SIBLING directory, outside the root Turbopack infers from this repo's
-  // lockfile, so `next dev` can't resolve it. Widen the root to the parent that
-  // holds both repos. DEV ONLY: production installs mini-vla as a normal
-  // node_modules copy (a `github:` git-ref dep) already inside the root, and the
-  // OpenNext build forces its own trace root via NEXT_PRIVATE_OUTPUT_TRACE_ROOT
-  // — declaring turbopack.root there just conflicts with it and breaks
-  // resolution.
+  // mini-vla is pinned to a `github:` git-ref (a normal node_modules copy inside
+  // the project root), which resolves with no help. This dev-only root widening
+  // is a safety net for LOCAL mini-vla development: if you temporarily switch the
+  // dep to `file:../mini-vla`, that symlink's realpath is a SIBLING dir outside
+  // the lockfile-inferred root and `next dev` can't resolve it without this.
+  // Harmless with the git-ref. Must stay DEV ONLY: the OpenNext build forces its
+  // own trace root via NEXT_PRIVATE_OUTPUT_TRACE_ROOT, and a turbopack.root that
+  // disagrees with it silently breaks module resolution.
   if (phase === PHASE_DEVELOPMENT_SERVER) {
     nextConfig.turbopack = { root: path.resolve(import.meta.dirname, "..") };
   }
