@@ -30,13 +30,18 @@ export function vocabWords(): string[] | null {
   return words;
 }
 
-/** Fetch + dequantize (idempotent; concurrent callers share one promise). */
-export function loadEmbeddings(): Promise<Float32Array> {
+/** Fetch + dequantize (idempotent; concurrent callers share one promise).
+    `assetBase` locates the generated `embeddings-50d.bin` + `vocab.txt` — the
+    portfolio serves them from `/vla` (its default); another host (mini-vla's
+    demo/eval) points it at wherever it serves the package's assets/. */
+export function loadEmbeddings({
+  assetBase = "/vla",
+}: { assetBase?: string } = {}): Promise<Float32Array> {
   if (loading) return loading;
   loading = (async () => {
     const [binRes, wordsRes] = await Promise.all([
-      fetch("/vla/embeddings-50d.bin"),
-      fetch("/vla/vocab.txt"),
+      fetch(`${assetBase}/embeddings-50d.bin`),
+      fetch(`${assetBase}/vocab.txt`),
     ]);
     if (!binRes.ok || !wordsRes.ok)
       throw new Error("embedding assets failed to load");

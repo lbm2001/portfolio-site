@@ -40,6 +40,39 @@ export function effectorPx(W: number, H: number, a1: number, a2: number) {
   return { x: m.X(ex), y: m.Y(ey) };
 }
 
+/**
+ * Host-controlled cosmetics for the DISPLAY renderer (paintScene only). The
+ * defaults are the current hex values, so an omitted palette is pixel-identical
+ * to before. NOTE: paintSilhouette deliberately takes NO palette — it renders
+ * the model's OBSERVATION, whose tones are tuned so the color head keys on the
+ * blocks, not the robot; that look versions with the model, not the host.
+ */
+export interface ScenePalette {
+  /** Floor line. */
+  floor: string;
+  /** Base pedestal + foot. */
+  pedestal: string;
+  /** Arm links + joint outlines. */
+  link: string;
+  /** Revolute joint dot fill. */
+  joint: string;
+  /** OPEN (approaching) effector jaw: fill + its thin outline. */
+  effectorOpen: string;
+  effectorOpenEdge: string;
+  /** CLOSED (grasping) effector jaw fill. */
+  effectorClosed: string;
+}
+
+export const DEFAULT_PALETTE: ScenePalette = {
+  floor: "#e6e6e6",
+  pedestal: "#2b2b2b",
+  link: "#8a8a8a",
+  joint: "#fff",
+  effectorOpen: "#fff",
+  effectorOpenEdge: "#6f6f6f",
+  effectorClosed: "#6f6f6f",
+};
+
 export interface PaintOpts {
   a1: number;
   a2: number;
@@ -55,13 +88,26 @@ export interface PaintOpts {
   /** Gripper state: 1 = closed (pinched jaws), 0 = open (splayed jaws).
       Omitted → the plain solid-dot effector (idle sway, no grasp in play). */
   grip?: 0 | 1;
+  /** Cosmetic colors for the arm/pedestal/effector — the host owns the look
+      (defaults = the current values). */
+  palette?: ScenePalette;
 }
 
 export function paintScene(
   ctx: CanvasRenderingContext2D,
   W: number,
   H: number,
-  { a1, a2, layout, accent, trail, lossNorm = 0, carry, grip }: PaintOpts
+  {
+    a1,
+    a2,
+    layout,
+    accent,
+    trail,
+    lossNorm = 0,
+    carry,
+    grip,
+    palette = DEFAULT_PALETTE,
+  }: PaintOpts
 ) {
   const m = sceneMap(W, H);
   const bx = m.X(BASE.x);
@@ -73,7 +119,7 @@ export function paintScene(
   const ey = m.Y(BASE.y + Math.sin(a1) * L1 + Math.sin(a1 + a2) * L2);
 
   // floor line — full width
-  ctx.strokeStyle = "#e6e6e6";
+  ctx.strokeStyle = palette.floor;
   ctx.lineWidth = 1.5;
   ctx.beginPath();
   ctx.moveTo(0, m.floorY);
@@ -114,12 +160,12 @@ export function paintScene(
   }
 
   // base pedestal, from the shoulder joint down to the floor
-  ctx.fillStyle = "#2b2b2b";
+  ctx.fillStyle = palette.pedestal;
   ctx.fillRect(bx - 5, by, 10, m.floorY - by);
   ctx.fillRect(bx - 13, m.floorY - 6, 26, 6);
 
   // links + revolute joints
-  ctx.strokeStyle = "#8a8a8a";
+  ctx.strokeStyle = palette.link;
   ctx.lineCap = "round";
   ctx.lineWidth = 7;
   ctx.beginPath();
@@ -132,8 +178,8 @@ export function paintScene(
   ctx.lineTo(ex, ey);
   ctx.stroke();
   ctx.lineWidth = 2;
-  ctx.strokeStyle = "#8a8a8a";
-  ctx.fillStyle = "#fff";
+  ctx.strokeStyle = palette.link;
+  ctx.fillStyle = palette.joint;
   ctx.beginPath();
   ctx.arc(bx, by, 4.5, 0, 7);
   ctx.fill();
@@ -149,13 +195,13 @@ export function paintScene(
   ctx.beginPath();
   ctx.arc(ex, ey, 4, 0, 7);
   if (grip === 0) {
-    ctx.fillStyle = "#fff";
+    ctx.fillStyle = palette.effectorOpen;
     ctx.fill();
     ctx.lineWidth = 1.2;
-    ctx.strokeStyle = "#6f6f6f";
+    ctx.strokeStyle = palette.effectorOpenEdge;
     ctx.stroke();
   } else {
-    ctx.fillStyle = "#6f6f6f";
+    ctx.fillStyle = palette.effectorClosed;
     ctx.fill();
   }
 }

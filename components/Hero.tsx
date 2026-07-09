@@ -2,14 +2,13 @@
 
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { profile, resumeDownloadName } from "@/lib/content";
+import { REST, clamp } from "@/lib/vla/geometry";
 import {
-  REST,
-  THETA1_RANGE,
-  THETA2_RANGE,
-  clamp,
-  effectorOverBlock,
-} from "@/lib/vla/geometry";
-import { effectorPx, paintScene, paintSilhouette, sceneMap } from "@/lib/vla/scene";
+  paintScene,
+  paintSilhouette,
+  sceneMap,
+  type ScenePalette,
+} from "@/lib/vla/scene";
 import {
   COLORS,
   DEFAULT_LAYOUT,
@@ -19,6 +18,7 @@ import {
   sampleCommand,
   tokenize,
   type BlockPos,
+  type Layout,
   type Sentence,
 } from "@/lib/vla/examples";
 import {
@@ -30,6 +30,11 @@ import {
 import { DEMO_PERIOD_MS, demoPose, makeDemoPlan, type DemoPlan } from "@/lib/vla/demo";
 import { IMG_SIZE } from "@/lib/vla/model";
 import { VLATrainer, type TrainerStatus } from "@/lib/vla/trainer";
+import {
+  RolloutEngine,
+  type RolloutFrame,
+  type RolloutPhase,
+} from "@/lib/vla/rollout";
 import { CONFIG } from "@/lib/vla/config";
 
 // Live Vision-Language-Action hero: four pipeline boxes ringed around the
@@ -50,68 +55,28 @@ import { CONFIG } from "@/lib/vla/config";
 
 const ACCENT = "#e12d1a"; // = --red; canvases can't read CSS vars cheaply
 
-// Rollout control + episode timing are knobs — tune in lib/vla/config.ts
-// (CONFIG.rollout). Episode counts are frames at ~60fps; reachTimeout must stay
-// above the synced demo cycle (DEMO_PERIOD_MS in frames) so a training rollout
-// is bounded by the cycle reset, not by giving up early.
-const STEP_GAIN = CONFIG.rollout.stepGain;
-const PREDICT_MS = CONFIG.rollout.predictMs;
-const TRAIL_LEN = CONFIG.rollout.trailLen;
+// The demo/rollout scenes' cosmetic look is owned HERE (host-side) and passed
+// into paintScene as a palette. These match the renderer's defaults, so the
+// visible output is unchanged — the point is that the look now lives with the
+// host, not the model. (paintSilhouette takes no palette: the model's-eye view
+// versions with the model.)
+const SCENE_PALETTE: ScenePalette = {
+  floor: "#e6e6e6",
+  pedestal: "#2b2b2b",
+  link: "#8a8a8a",
+  joint: "#fff",
+  effectorOpen: "#fff",
+  effectorOpenEdge: "#6f6f6f",
+  effectorClosed: "#6f6f6f",
+};
+
+// The rollout state machine — phases (reach → carry → hold → return), the
+// learned-grasp gate, carry attachment, and stepping toward the last async-
+// predicted target — lives in lib/vla/rollout.ts (RolloutEngine). Hero only
+// drives it and paints the RolloutFrames it returns. LANG_MS is the shared
+// throttle for the language + vision-gaze readouts (CONFIG.rollout).
 const LANG_MS = CONFIG.rollout.langMs;
-const GRIP_RADIUS = CONFIG.gripper.radius; // effector disk radius for the grasp predicate
-const GRIP_THRESHOLD = CONFIG.gripper.threshold; // sigmoid ≥ this = "close"
-const NEAR_FRAMES = CONFIG.rollout.nearFrames;
-const REACH_TIMEOUT = CONFIG.rollout.reachTimeout;
-const SETTLE_EPS = CONFIG.rollout.settleEps; // rad/joint: carry-phase settle test
-const TOP_HOLD = CONFIG.rollout.topHold;
-const RETURN_FRAMES = CONFIG.rollout.returnFrames;
 
-// The episode machine:
-//   reach → approach with the gripper OPEN; the grasp fires on the LEARNED
-//           gripper action: the effector fully over a block (effectorOverBlock)
-//           AND the policy's predicted gripper crossing open→closed there, held
-//           NEAR_FRAMES. A policy that keeps the gripper closed the whole way
-//           never arms (no rising edge) → it can't enter a block with a closed
-//           gripper, which is what forces the open approach. Then carry begins.
-//   carry → policy-driven with the block in hand; once the arm settles at
-//           the predicted target, the block is held aloft
-//   hold  → holding the carried block wherever the policy parked it
-//   return→ scripted empty-handed return to rest
-interface Episode {
-  phase: "reach" | "carry" | "hold" | "return";
-  f: number; // frames in the current phase
-  near: number;
-  nearColor: number; // COLORS index of the block being hovered, or -1
-  settle: number; // consecutive frames within SETTLE_EPS of the carry target
-  color: number; // COLORS index of the commanded block
-  tokens: number[];
-  from: { a1: number; a2: number };
-  carry: number | null;
-  /** Latest predicted gripper sigmoid (0=open → 1=closed); starts open. */
-  predGrip: number;
-  /** True once the gripper has been seen OPEN during this attempt — the
-      rising-edge guard: without a prior open frame the grasp can't arm, so an
-      always-closed policy never grabs. */
-  sawOpen: boolean;
-}
-
-const newEpisode = (color: number, tokens: number[]): Episode => ({
-  phase: "reach",
-  f: 0,
-  near: 0,
-  nearColor: -1,
-  settle: 0,
-  color,
-  tokens,
-  from: { a1: REST[0], a2: REST[1] },
-  carry: null,
-  predGrip: 0,
-  sawOpen: false,
-});
-
-const ease = (x: number) =>
-  x <= 0 ? 0 : x >= 1 ? 1 : (1 - Math.cos(x * Math.PI)) / 2;
-const lerp = (a: number, b: number, u: number) => a + (b - a) * u;
 const fmtAngle = (v: number) => `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(2)}`;
 
 /** Resize a canvas to its CSS box at devicePixelRatio; returns a cleared ctx. */
@@ -146,26 +111,25 @@ export default function Hero() {
 
   const trainerRef = useRef<VLATrainer | null>(null);
   const statusRef = useRef<TrainerStatus>("idle");
+  // the DISPLAY pose for the non-episode states (idle / converged-waiting sway,
+  // not-ready rest). The rollout's own arm pose during an episode lives inside
+  // the RolloutEngine and comes back on each RolloutFrame.
   const armState = useRef({ a1: REST[0], a2: REST[1] });
-  const trailRef = useRef<{ x: number; y: number }[]>([]);
-  const targetRef = useRef<[number, number] | null>(null);
-  // the spatial-attention readout riding along with the rollout's last
-  // prediction: where the (frozen) policy is looking, drawn as a gaze marker
-  // on the Rollout canvas (xy is in [0,1] silhouette image coords)
-  const gazeRef = useRef<[number, number] | null>(null);
+  // the whole policy-rollout state machine (episode, arm, target, gaze, trail,
+  // predict throttle/in-flight guard) — Hero drives it and paints its frames.
+  const engineRef = useRef<RolloutEngine | null>(null);
+  if (engineRef.current === null) engineRef.current = new RolloutEngine();
   // live-model attention over the DEMONSTRATION state — the Vision Encoder
   // panel's heatmap (ATTN_GRID² weights, peak-normalized by the trainer)
   const visGazeRef = useRef<number[] | null>(null);
-  const lastPredRef = useRef(0);
   const lastHudRef = useRef(0);
   const lastLangRef = useRef(0);
   const lastVisGazeRef = useRef(0);
   // in-flight guards for the async trainer-worker round-trips: never queue a
-  // second predict (or language-readout / gaze) request while one is
-  // outstanding. On a slow GPU a request can take longer than its throttle
-  // interval — an unbounded FIFO backlog in the worker would starve training
-  // entirely.
-  const predInFlightRef = useRef(false);
+  // second language-readout / gaze request while one is outstanding. On a slow
+  // GPU a request can take longer than its throttle interval — an unbounded
+  // FIFO backlog in the worker would starve training entirely. (The rollout's
+  // own predict guard lives inside the RolloutEngine.)
   const langInFlightRef = useRef(false);
   const visGazeInFlightRef = useRef(false);
   // paused-duration accounting so the demo cycle resumes exactly where it
@@ -194,7 +158,6 @@ export default function Hero() {
 
   // rollout state
   const rolloutLayoutRef = useRef(DEFAULT_LAYOUT);
-  const episodeRef = useRef<Episode | null>(null);
   const activeTokensRef = useRef<number[]>(DEFAULT_SENTENCE.tokens);
   const userSentenceRef = useRef<Sentence | null>(null);
   // which demo cycle the current training rollout episode belongs to — the
@@ -357,6 +320,7 @@ export default function Hero() {
           accent: ACCENT,
           carry: p.carry,
           grip: p.grip,
+          palette: SCENE_PALETTE,
         });
         return;
       }
@@ -393,6 +357,7 @@ export default function Hero() {
             accent: ACCENT,
             carry: pose.carry,
             grip: pose.grip,
+            palette: SCENE_PALETTE,
           });
           return;
         }
@@ -441,6 +406,7 @@ export default function Hero() {
         accent: ACCENT,
         carry,
         grip: grip ?? 0,
+        palette: SCENE_PALETTE,
       });
     };
 
@@ -452,14 +418,14 @@ export default function Hero() {
     const drawGaze = (
       ctx: CanvasRenderingContext2D,
       W: number,
-      H: number
+      H: number,
+      gaze: [number, number] | null,
+      phase: RolloutPhase | null
     ) => {
-      const g = gazeRef.current;
-      const phase = episodeRef.current?.phase;
-      if (!g || (phase !== "reach" && phase !== "carry")) return;
+      if (!gaze || (phase !== "reach" && phase !== "carry")) return;
       const sc = CONFIG.render.sceneScale;
-      const wx = 0.5 + (g[0] - 0.5) / sc;
-      const wy = (CONFIG.render.floorY - g[1]) / sc;
+      const wx = 0.5 + (gaze[0] - 0.5) / sc;
+      const wy = (CONFIG.render.floorY - gaze[1]) / sc;
       const m = sceneMap(W, H);
       const px = m.X(wx);
       const py = m.Y(wy);
@@ -478,154 +444,30 @@ export default function Hero() {
       ctx.stroke();
     };
 
-    // advance one episode by a frame; ends by nulling the episode (arm left
-    // at REST) — training re-syncs a fresh attempt on the next demo cycle,
-    // converged waits for the next command. See the Episode doc comment for
-    // the machine.
-    const runEpisode = (ep: Episode, now: number, W: number, H: number) => {
-      const arm = armState.current;
-      const trainer = trainerRef.current!;
-      if (ep.phase === "reach" || ep.phase === "carry") {
-        // the model predicts an ABSOLUTE target (refreshed every PREDICT_MS);
-        // the step direction is recomputed every FRAME from that target
-        // against the arm's actual current pose, so the step naturally
-        // shrinks as it closes in (proportional control)
-        if (now - lastPredRef.current > PREDICT_MS && !predInFlightRef.current) {
-          // frozen per-cycle snapshot (training) / final weights (converged) —
-          // the arm still re-predicts every PREDICT_MS as it moves (closed
-          // loop), just against fixed weights for the whole attempt. The
-          // prediction is ASYNC (render + forward pass in the trainer
-          // worker); the arm keeps stepping toward its previous target until
-          // the reply lands, and a reply for an episode that has since ended
-          // (or switched phase — its render carried the wrong carry state) is
-          // dropped instead of re-arming a cleared targetRef.
-          lastPredRef.current = now;
-          predInFlightRef.current = true;
-          const phaseAtRequest = ep.phase;
-          void trainer
-            .predictFrozenTarget(
-              arm.a1,
-              arm.a2,
-              ep.tokens,
-              rolloutLayoutRef.current,
-              ep.phase === "carry" ? ep.carry : null
-            )
-            .then((r) => {
-              predInFlightRef.current = false;
-              if (r && episodeRef.current === ep && ep.phase === phaseAtRequest) {
-                targetRef.current = r.target;
-                // the same forward pass carries the policy's gaze — drawn as
-                // a marker on the rollout scene while the phase is live
-                gazeRef.current = r.xy;
-                // and the gripper command — the reach gate closes on its
-                // rising edge over a block
-                ep.predGrip = r.grip;
-              }
-            });
-        }
-        const t = targetRef.current;
-        if (t) {
-          arm.a1 = clamp(
-            arm.a1 + clamp(t[0] - arm.a1, -Math.PI, Math.PI) * STEP_GAIN,
-            THETA1_RANGE[0],
-            THETA1_RANGE[1]
-          );
-          arm.a2 = clamp(
-            arm.a2 + clamp(t[1] - arm.a2, -Math.PI, Math.PI) * STEP_GAIN,
-            THETA2_RANGE[0],
-            THETA2_RANGE[1]
-          );
-          trailRef.current.push(effectorPx(W, H, arm.a1, arm.a2));
-          if (trailRef.current.length > TRAIL_LEN) trailRef.current.shift();
-        }
+    // The async policy call the engine steps against: the FROZEN per-cycle
+    // snapshot (training) / final weights (converged). The engine keeps stepping
+    // toward its last target until each reply lands (see RolloutEngine.step).
+    const predictFrozen = (
+      a1: number,
+      a2: number,
+      tokens: number[],
+      layout: Layout,
+      carry: number | null
+    ) =>
+      trainerRef.current
+        ? trainerRef.current.predictFrozenTarget(a1, a2, tokens, layout, carry)
+        : Promise.resolve(null);
 
-        if (ep.phase === "reach") {
-          // LEARNED grasp gate. Contact = the effector fully over SOME block —
-          // not just the commanded one — so a wrong-side reach visibly acts on
-          // the wrong block instead of hovering until the timeout. The grasp
-          // only fires on the RISING EDGE of the predicted gripper close while
-          // over the block (and only after the gripper was seen OPEN during the
-          // approach), held NEAR_FRAMES — the same effectorOverBlock predicate
-          // the training label uses.
-          const closing = ep.predGrip >= GRIP_THRESHOLD;
-          let over = -1;
-          for (const b of rolloutLayoutRef.current) {
-            if (effectorOverBlock(arm.a1, arm.a2, b, GRIP_RADIUS)) {
-              over = b.color;
-              break;
-            }
-          }
-          ep.near =
-            over >= 0 && closing && ep.sawOpen && over === ep.nearColor
-              ? ep.near + 1
-              : over >= 0 && closing && ep.sawOpen
-                ? 1
-                : 0;
-          ep.nearColor = over;
-          // record an open frame AFTER the gate read, so the first close frame
-          // still counts as a rising edge against a prior open one
-          if (!closing) ep.sawOpen = true;
-          if (ep.near >= NEAR_FRAMES) {
-            // GRASP: the block the gripper closed over attaches to the effector
-            // and the carry phase begins
-            ep.phase = "carry";
-            ep.carry = over;
-            ep.settle = 0;
-            ep.f = 0;
-            // force a fresh prediction — the model must now SEE the block
-            // in the gripper (in-flight reach replies are phase-dropped)
-            targetRef.current = null;
-            lastPredRef.current = 0;
-          } else if (ep.f > REACH_TIMEOUT) {
-            ep.phase = "return";
-            ep.from = { ...arm };
-            ep.carry = null;
-            ep.f = 0;
-          }
-        } else {
-          // carry: policy-driven with the block in hand. "Settled" = the arm
-          // has effectively arrived at the predicted target (there may be no
-          // block to be near — the target is wherever the policy wants to go).
-          const settled =
-            t !== null &&
-            Math.abs(t[0] - arm.a1) < SETTLE_EPS &&
-            Math.abs(t[1] - arm.a2) < SETTLE_EPS;
-          ep.settle = settled ? ep.settle + 1 : 0;
-          if (ep.settle >= NEAR_FRAMES) {
-            // hold the block aloft wherever the policy parked it
-            ep.phase = "hold";
-            ep.f = 0;
-          } else if (ep.f > REACH_TIMEOUT) {
-            // carry never settled — drop the block and give up (it resets to
-            // its floor spot once the episode ends)
-            ep.carry = null;
-            ep.phase = "return";
-            ep.from = { ...arm };
-            ep.f = 0;
-          }
-        }
-      } else if (ep.phase === "hold") {
-        // motionless beat holding the block aloft, then the lift is done
-        if (ep.f > TOP_HOLD) endEpisode();
-      } else {
-        const u = ep.f / RETURN_FRAMES;
-        arm.a1 = lerp(ep.from.a1, REST[0], ease(u));
-        arm.a2 = lerp(ep.from.a2, REST[1], ease(u));
-        if (u >= 1) endEpisode();
-      }
-      if (episodeRef.current) ep.f++;
-    };
-
-    // The drawn gripper state for a rollout arm: closed once a block is in
-    // hand (carry/hold); during the reach it mirrors the policy's predicted
-    // gripper command so the viewer sees it close as it settles over the block;
-    // failed return, idle, or no episode shows it OPEN (a resting gripper is
-    // open — including before training starts).
-    const gripOf = (ep: Episode | null): 0 | 1 => {
-      if (!ep) return 0;
-      if (ep.carry !== null) return 1;
-      if (ep.phase === "reach") return ep.predGrip >= GRIP_THRESHOLD ? 1 : 0;
-      return 0;
+    // The engine keeps its trail in workspace effector coords (renderer-neutral);
+    // map to canvas px here — identical to the old effectorPx pushes, since
+    // effectorPx === sceneMap ∘ fk.
+    const trailToPx = (
+      trail: { x: number; y: number }[],
+      W: number,
+      H: number
+    ) => {
+      const m = sceneMap(W, H);
+      return trail.map((p) => ({ x: m.X(p.x), y: m.Y(p.y) }));
     };
 
     // rollout: during training the episode runs in LOCKSTEP with the
@@ -639,29 +481,38 @@ export default function Hero() {
       const trainer = trainerRef.current;
       const arm = armState.current;
       const st = statusRef.current;
+      const engine = engineRef.current!;
 
       if (st === "paused") {
-        // frozen: redraw current pose, advance nothing (matches the demo)
-        const ep = episodeRef.current;
+        // frozen: redraw the engine's current pose, advance nothing (matches
+        // the demo). The rollout arm lives in the engine now, so the frozen pose
+        // is engine.frame() — NOT the wiggling armState.
+        const f = engine.frame();
         paintScene(ctx, W, H, {
-          a1: arm.a1,
-          a2: arm.a2,
+          a1: f.a1,
+          a2: f.a2,
           layout: rolloutLayoutRef.current,
           accent: ACCENT,
-          carry: ep?.carry ?? null,
-          grip: gripOf(ep),
+          carry: f.carry,
+          grip: f.grip,
+          palette: SCENE_PALETTE,
         });
-        drawGaze(ctx, W, H);
-        setActionVals(targetRef.current, gripOf(ep));
+        drawGaze(ctx, W, H, f.gaze, f.phase);
+        setActionVals(f.target, f.grip);
         return;
       }
+
+      // f = the engine frame when an episode is (or was) live this frame; null
+      // for the non-episode display states (idle / converged-waiting sway,
+      // not-ready rest) that paint the wiggling armState with an empty rollout.
+      let f: RolloutFrame | null = null;
 
       if (st === "idle") {
         [arm.a1, arm.a2] = wiggle(now, 2.6, 4.1);
       } else if (trainer?.ready) {
         if (st === "converged") {
-          const ep = episodeRef.current;
-          if (ep) runEpisode(ep, now, W, H);
+          if (engine.hasEpisode)
+            f = engine.step(now, rolloutLayoutRef.current, predictFrozen);
           else [arm.a1, arm.a2] = wiggle(now, 2.6, 4.1); // waiting for command
         } else {
           // training: a fresh synced attempt at every new demonstration cycle,
@@ -673,56 +524,45 @@ export default function Hero() {
             // viewer can drag the rollout's blocks once converged, so sharing
             // objects would leak one box's positions into the other
             rolloutLayoutRef.current = demoLayoutRef.current.map((b) => ({ ...b }));
-            arm.a1 = REST[0];
-            arm.a2 = REST[1];
-            trailRef.current = [];
-            targetRef.current = null;
-            gazeRef.current = null;
             trainer.snapshotPolicy();
             // the snapshot freezes the policy at THIS many seen demonstrations —
             // surface it on the Rollout so the attempt is read as "this is what
             // N examples of training buys you" (updates once per demo cycle)
             setRolloutSamples(trainer.samples);
-            episodeRef.current = newEpisode(
+            engine.begin(
               demoSentenceRef.current.color,
               demoSentenceRef.current.tokens
             );
           }
-          const ep = episodeRef.current;
-          if (ep) runEpisode(ep, now, W, H);
-          // else: this cycle's attempt is done — hold at REST until the next
+          // step the live attempt, or hold at REST (engine.frame()) between the
+          // end of one attempt and the next cycle's re-sync
+          f = engine.hasEpisode
+            ? engine.step(now, rolloutLayoutRef.current, predictFrozen)
+            : engine.frame();
         }
       } else {
         arm.a1 = REST[0];
         arm.a2 = REST[1];
       }
 
-      const ep = episodeRef.current;
+      // single paint: from the engine frame when an episode is live, else the
+      // wiggling/rest display pose with an empty rollout state.
       paintScene(ctx, W, H, {
-        a1: arm.a1,
-        a2: arm.a2,
+        a1: f ? f.a1 : arm.a1,
+        a2: f ? f.a2 : arm.a2,
         layout: rolloutLayoutRef.current,
         accent: ACCENT,
         trail:
-          ep?.phase === "reach" || ep?.phase === "carry"
-            ? trailRef.current
+          f && (f.phase === "reach" || f.phase === "carry")
+            ? trailToPx(f.trail, W, H)
             : null,
         lossNorm: trainer?.lossNorm() ?? 1,
-        carry: ep?.carry ?? null,
-        grip: gripOf(ep),
+        carry: f ? f.carry : null,
+        grip: f ? f.grip : 0,
+        palette: SCENE_PALETTE,
       });
-      drawGaze(ctx, W, H);
-      setActionVals(st === "idle" ? null : targetRef.current, gripOf(ep));
-    };
-
-    const endEpisode = () => {
-      const arm = armState.current;
-      arm.a1 = REST[0];
-      arm.a2 = REST[1];
-      trailRef.current = [];
-      targetRef.current = null;
-      gazeRef.current = null;
-      episodeRef.current = null;
+      drawGaze(ctx, W, H, f ? f.gaze : null, f ? f.phase : null);
+      setActionVals(st === "idle" ? null : f ? f.target : null, f ? f.grip : 0);
     };
 
     const drawVision = (now: number) => {
@@ -929,10 +769,7 @@ export default function Hero() {
       setStatusBoth(trainer.status);
       if (trainer.status === "converged") {
         // auto-episodes end; the rollout waits for the user's command
-        episodeRef.current = null;
-        trailRef.current = [];
-        targetRef.current = null;
-        gazeRef.current = null;
+        engineRef.current!.reset();
         visGazeRef.current = null;
         armState.current = { a1: REST[0], a2: REST[1] };
         // the interactive policy is the final model — show the full training
@@ -965,11 +802,8 @@ export default function Hero() {
       trainer.resume();
       setStatusBoth("training");
     } else if (trainer.status === "idle") {
-      episodeRef.current = null;
+      engineRef.current!.reset();
       rolloutCycleRef.current = -1;
-      trailRef.current = [];
-      targetRef.current = null;
-      gazeRef.current = null;
       visGazeRef.current = null;
       armState.current = { a1: REST[0], a2: REST[1] };
       userSentenceRef.current = null;
@@ -998,11 +832,8 @@ export default function Hero() {
   const onReset = () => {
     trainerRef.current?.reset();
     setStatusBoth("idle");
-    episodeRef.current = null;
+    engineRef.current!.reset();
     rolloutCycleRef.current = -1;
-    trailRef.current = [];
-    targetRef.current = null;
-    gazeRef.current = null;
     visGazeRef.current = null;
     armState.current = { a1: REST[0], a2: REST[1] };
     // clones — the rollout's blocks are draggable; DEFAULT_LAYOUT stays pristine
@@ -1059,19 +890,13 @@ export default function Hero() {
     });
     setTryNote(null);
     armState.current = { a1: REST[0], a2: REST[1] };
-    trailRef.current = [];
-    targetRef.current = null;
-    gazeRef.current = null;
-    episodeRef.current = newEpisode(d.color, tokens);
+    engineRef.current!.begin(d.color, tokens);
   };
 
   const randomizeBlocks = () => {
     rolloutLayoutRef.current = randomLayout();
     // abort any in-flight episode so the arm re-plans against the new scene
-    episodeRef.current = null;
-    trailRef.current = [];
-    targetRef.current = null;
-    gazeRef.current = null;
+    engineRef.current!.reset();
     armState.current = { a1: REST[0], a2: REST[1] };
     setTryNote(null);
   };
@@ -1129,10 +954,7 @@ export default function Hero() {
       band: b.x < 0.5 ? CONFIG.task.placeLeft : CONFIG.task.placeRight,
     };
     // cancel the current attempt; the viewer re-runs once blocks are placed
-    episodeRef.current = null;
-    trailRef.current = [];
-    targetRef.current = null;
-    gazeRef.current = null;
+    engineRef.current!.reset();
     armState.current = { a1: REST[0], a2: REST[1] };
     setTryNote(null);
     // a dragged block rests on the floor
