@@ -118,7 +118,12 @@ async function buildOne(source, contentRepo, file) {
   const fmParsed = parseProjectMd(mdText);
 
   const publicDir = path.join(root, "public", "projects", slug);
-  fs.mkdirSync(publicDir, { recursive: true });
+  // Create the per-slug dir lazily, on the first asset that downloads, so
+  // asset-less projects leave no empty directory behind.
+  const writeAsset = (base, bytes) => {
+    fs.mkdirSync(publicDir, { recursive: true });
+    fs.writeFileSync(path.join(publicDir, base), bytes);
+  };
 
   // Download every relatively-referenced image and rewrite its path.
   let body = fmParsed.body;
@@ -130,7 +135,7 @@ async function buildOne(source, contentRepo, file) {
     const base = path.basename(rel);
     try {
       const bytes = await ghFile(contentRepo, inContentDir(rel));
-      fs.writeFileSync(path.join(publicDir, base), bytes);
+      writeAsset(base, bytes);
       body = body.split(`](${rel}`).join(`](/projects/${slug}/${base}`);
     } catch (e) {
       console.warn(`  ! asset ${rel} for ${slug}: ${e.message}`);
@@ -146,7 +151,7 @@ async function buildOne(source, contentRepo, file) {
       const base = path.basename(lk.href);
       try {
         const bytes = await ghFile(contentRepo, inContentDir(lk.href));
-        fs.writeFileSync(path.join(publicDir, base), bytes);
+        writeAsset(base, bytes);
         links.push({ label: lk.label, href: `/projects/${slug}/${base}` });
         continue;
       } catch (e) {

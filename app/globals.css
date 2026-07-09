@@ -70,14 +70,6 @@ a {
   color: #333;
   text-decoration: none;
 }
-.nav-mini {
-  opacity: 0;
-  transition: opacity 0.3s ease;
-  border-radius: 3px;
-  pointer-events: none;
-  flex-shrink: 0;
-}
-
 /* Hamburger toggle — hidden on desktop, shown on phones (see @media below).
    Two bars that cross into an X when the menu is open. */
 .nav-burger {
@@ -966,13 +958,6 @@ a {
     height: auto;
     min-height: 560px;
   }
-}
-
-/* return/episode chart strip below hero */
-.wk-chart {
-  width: 100%;
-  height: 48px;
-  display: block;
 }
 
 /* ---- Sections ---- */

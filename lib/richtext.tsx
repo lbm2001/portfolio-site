@@ -94,7 +94,7 @@ const figure = {
 marked.use({ gfm: true, extensions: [blockMath, inlineMath, figure] });
 
 /** Markdown body -> HTML string, rendered at build time. */
-export function renderMarkdown(md: string): string {
+function renderMarkdown(md: string): string {
   return marked.parse(md, { async: false }) as string;
 }
 

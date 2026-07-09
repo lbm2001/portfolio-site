@@ -36,7 +36,6 @@
     ".next/dev/types/**/*.ts"
   ],
   "exclude": [
-    "node_modules",
-    "design_handoff_portfolio"
+    "node_modules"
   ]
 }

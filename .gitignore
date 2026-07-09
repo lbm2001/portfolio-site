@@ -52,6 +52,12 @@ next-env.d.ts
 # `next dev` and typecheck work without a fetch.
 /public/blog/
 
+# Project images fetched at build time from the content repo (config/projects.sources.json)
+# by scripts/gen-projects-data.mjs, which is their source of truth (<contentDir>/assets/).
+# The parsed lib/projects-data.json stays committed so `next dev` and typecheck work
+# without a fetch; with no GITHUB_TOKEN the text renders but the images 404.
+/public/projects/
+
 # VLA embedding assets copied from node_modules/mini-vla/assets/ on predev/
 # prebuild (scripts/copy-vla-assets.mjs). The mini-vla package is their source
 # of truth.
