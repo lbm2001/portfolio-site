@@ -52,13 +52,16 @@ export interface PaintOpts {
   lossNorm?: number;
   /** COLORS index of the block held at the gripper (its floor spot empties). */
   carry?: number | null;
+  /** Gripper state: 1 = closed (pinched jaws), 0 = open (splayed jaws).
+      Omitted → the plain solid-dot effector (idle sway, no grasp in play). */
+  grip?: 0 | 1;
 }
 
 export function paintScene(
   ctx: CanvasRenderingContext2D,
   W: number,
   H: number,
-  { a1, a2, layout, accent, trail, lossNorm = 0, carry }: PaintOpts
+  { a1, a2, layout, accent, trail, lossNorm = 0, carry, grip }: PaintOpts
 ) {
   const m = sceneMap(W, H);
   const bx = m.X(BASE.x);
@@ -140,12 +143,44 @@ export function paintScene(
   ctx.fill();
   ctx.stroke();
 
-  // end effector — a solid grey dot on top of everything; stays the same
-  // grey whether reaching or carrying a block
+  // end effector — a small gripper on top of everything. With no grip state
+  // (idle sway) it's the plain solid dot; otherwise it draws OPEN (two splayed
+  // jaws + hollow centre) while approaching and CLOSED (pinched jaws + filled
+  // knuckle) once it's grasping — the visible realism payoff of the learned
+  // gripper action.
+  ctx.strokeStyle = "#6f6f6f";
   ctx.fillStyle = "#6f6f6f";
-  ctx.beginPath();
-  ctx.arc(ex, ey, 4, 0, 7);
-  ctx.fill();
+  ctx.lineCap = "round";
+  if (grip === undefined) {
+    ctx.beginPath();
+    ctx.arc(ex, ey, 4, 0, 7);
+    ctx.fill();
+  } else if (grip === 1) {
+    // closed: jaws pinched together over a filled knuckle
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.moveTo(ex - 2, ey + 1);
+    ctx.lineTo(ex - 2.5, ey - 6);
+    ctx.moveTo(ex + 2, ey + 1);
+    ctx.lineTo(ex + 2.5, ey - 6);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(ex, ey, 2.4, 0, 7);
+    ctx.fill();
+  } else {
+    // open: two jaws splayed outward, hollow centre
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.moveTo(ex - 2.5, ey + 1);
+    ctx.lineTo(ex - 6.5, ey - 5.5);
+    ctx.moveTo(ex + 2.5, ey + 1);
+    ctx.lineTo(ex + 6.5, ey - 5.5);
+    ctx.stroke();
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.arc(ex, ey, 2.4, 0, 7);
+    ctx.stroke();
+  }
 }
 
 // Blocks render a touch larger in the model's-eye view: a display-size block

@@ -46,6 +46,10 @@ export interface DemoPose {
   a2: number;
   /** COLORS index of the carried block, or null. */
   carry: number | null;
+  /** Gripper state: 1 = closed (grasping/carrying), 0 = open. Closes just
+      after arriving at the block centre and stays closed through the lift/hold
+      — the visible open→close→lift the learned rollout also produces. */
+  grip: 0 | 1;
 }
 
 const jitter = (amp: number) => (Math.random() - 0.5) * 2 * amp;
@@ -104,6 +108,10 @@ export function demoPose(plan: DemoPlan, t: number): DemoPose {
         ? seg(plan.reach, REST, (ms - liftStart) / LIFT_MS)
         : REST);
   const carry = ms >= GRASP_AT_MS && ms < releaseAt ? plan.color : null;
+  // gripper closes during the same window the block is carried: open through
+  // via/reach, closes just after arriving at centre (GRASP_AT_MS), stays
+  // closed through the lift + hold aloft.
+  const grip: 0 | 1 = ms >= GRASP_AT_MS && ms < releaseAt ? 1 : 0;
 
-  return { a1: pose[0], a2: pose[1], carry };
+  return { a1: pose[0], a2: pose[1], carry, grip };
 }

@@ -5,8 +5,11 @@
 // the slot grammar with ~10% word-dropout to <unk> — renders each state
 // through the same silhouette pipeline the live rollout uses, labels it with
 // the analytical-IK expert's ABSOLUTE target joint angles (plus color for the
-// auxiliary head), and runs one trainOnBatch step. Grasping itself is not an
-// action output: a block SNAPS to the effector within graspEps (see Hero.tsx).
+// auxiliary head), and runs one trainOnBatch step. Grasping is now a LEARNED
+// action: a sigmoid gripper head is trained (BCE) to close exactly when the
+// effector is fully over the commanded block — the shared effectorOverBlock
+// predicate (geometry.ts) — and the rollout turns its rising edge into the
+// physical grasp (see Hero.tsx), instead of the old bare proximity snap.
 //
 // The carry phase is policy-driven, so samples are CARRY-CONDITIONED: a
 // carryFrac share render the commanded block IN THE GRIPPER of the sampled
@@ -46,6 +49,7 @@ import {
   THETA1_RANGE,
   THETA2_RANGE,
   clamp,
+  effectorOverBlock,
   fk,
   ikToX,
 } from "./geometry";
@@ -83,6 +87,10 @@ const NEAR_TARGET_FRAC = CONFIG.trainer.nearTargetFrac;
 const NEAR_TARGET_STD = CONFIG.trainer.nearTargetStd;
 const WORD_DROPOUT = CONFIG.trainer.wordDropout;
 const CARRY_FRAC = CONFIG.trainer.carryFrac;
+const GRASP_FRAC = CONFIG.trainer.graspFrac;
+const GRASP_JITTER_STD = CONFIG.trainer.graspJitterStd;
+const GRIP_RADIUS = CONFIG.gripper.radius;
+const GRIP_THRESHOLD = CONFIG.gripper.threshold;
 const WARMUP_BATCHES = CONFIG.trainer.warmupBatches;
 const WARMUP_BATCH_SIZE = CONFIG.trainer.warmupBatchSize;
 
@@ -115,6 +123,9 @@ export interface PredictResult {
   /** The map's soft-argmax — where the model looks, in [0,1] image
       coords of the silhouette view (x right, y down). */
   xy: [number, number];
+  /** The gripper head's sigmoid output (0=open → 1=closed). The rollout
+      turns its rising edge over a block into the physical grasp (Hero.tsx). */
+  grip: number;
 }
 
 /** What the color head decodes from a token sequence (vision zeroed) —
@@ -135,6 +146,11 @@ export interface ProbeRow {
   buckets: Record<string, number>;
   /** Color-head accuracy over all probe samples (argmax vs. label). */
   colorAcc: number;
+  /** Gripper-head accuracy over all probe samples ((sigmoid≥threshold) vs.
+      the 0/1 close label) — the "did the gripper actually learn" dial: it
+      should sit high AND the head's mean output should not collapse to a
+      constant (measured separately in the sweep). */
+  gripAcc: number;
 }
 
 /** 2D context in either environment (worker OffscreenCanvas / DOM canvas). */
@@ -315,6 +331,8 @@ export class VLATrainerCore {
     const ysA = new Float32Array(n * 2);
     const ysC = new Float32Array(n * COLORS.length);
     const ysMPick = new Float32Array(n * cells);
+    /** Gripper "close now" label per sample (1 = should be closed). */
+    const ysG = new Float32Array(n);
 
     for (let i = 0; i < n; i++) {
       const layout = randomLayout();
@@ -326,6 +344,11 @@ export class VLATrainerCore {
       // samples render the commanded block in the gripper and label the
       // carry-phase target (REST — bring it home) instead of the grasp
       const midCarry = force?.carry ?? Math.random() < CARRY_FRAC;
+      // among empty-handed samples, a GRASP_FRAC share are "grasp-now"
+      // positives: posed tightly at the block's IK grasp pose so the effector
+      // sits fully over the block, guaranteeing a dense supply of close-now
+      // examples for the gripper head (see graspFrac in config.ts).
+      const graspNow = !midCarry && Math.random() < GRASP_FRAC;
       carryF[i] = midCarry ? 1 : 0;
       let t1: number;
       let t2: number;
@@ -341,13 +364,26 @@ export class VLATrainerCore {
 
       let a1: number;
       let a2: number;
-      if (Math.random() < NEAR_TARGET_FRAC) {
+      if (graspNow) {
+        // tight jitter around the grasp pose so effectorOverBlock is reliably
+        // true — the action label stays put (t1/t2 = the grasp pose)
+        a1 = clamp(t1 + this.gauss(GRASP_JITTER_STD), THETA1_RANGE[0], THETA1_RANGE[1]);
+        a2 = clamp(t2 + this.gauss(GRASP_JITTER_STD), THETA2_RANGE[0], THETA2_RANGE[1]);
+      } else if (Math.random() < NEAR_TARGET_FRAC) {
         a1 = clamp(t1 + this.gauss(NEAR_TARGET_STD), THETA1_RANGE[0], THETA1_RANGE[1]);
         a2 = clamp(t2 + this.gauss(NEAR_TARGET_STD), THETA2_RANGE[0], THETA2_RANGE[1]);
       } else {
         a1 = THETA1_RANGE[0] + Math.random() * (THETA1_RANGE[1] - THETA1_RANGE[0]);
         a2 = THETA2_RANGE[0] + Math.random() * (THETA2_RANGE[1] - THETA2_RANGE[0]);
       }
+
+      // THE gripper label (the shared invariant): close iff already carrying,
+      // or the effector is fully over the commanded block. Identical predicate
+      // to the rollout grasp gate (Hero.tsx) — that consistency is what stops
+      // the "hold closed the whole time and snap on arrival" degenerate. Most
+      // far/near poses give 0; grasp-now (and mid-carry) poses give 1.
+      ysG[i] =
+        midCarry || effectorOverBlock(a1, a2, target, GRIP_RADIUS) ? 1 : 0;
 
       // ABSOLUTE target joint angles, not a delta from the sampled pose:
       // the label doesn't depend on the (randomized, for robustness) pose
@@ -404,6 +440,7 @@ export class VLATrainerCore {
       ysA,
       ysC,
       ysMPick,
+      ysG,
       cells,
     };
   }
@@ -489,14 +526,15 @@ export class VLATrainerCore {
     const yAction = tf.tensor2d(b.ysA, [b.n, 2]);
     const yColor = tf.tensor2d(b.ysC, [b.n, COLORS.length]);
     const yMapPick = tf.tensor2d(b.ysMPick, [b.n, b.cells]);
+    const yGrip = tf.tensor2d(b.ysG, [b.n, 1]);
 
     try {
       const h = await this.models!.model.trainOnBatch(
         [xsVision, xsLang, xsCarry],
-        [yAction, yColor, yMapPick]
+        [yAction, yColor, yMapPick, yGrip]
       );
-      // multi-output: [total, action, color, map] — index 1 stays the Huber
-      // ACTION loss the convergence logic watches
+      // multi-output: [total, action, color, map, grip] — index 1 stays the
+      // Huber ACTION loss the convergence logic watches
       return Array.isArray(h) ? (h[1] as number) : (h as number);
     } finally {
       xsVision.dispose();
@@ -505,6 +543,7 @@ export class VLATrainerCore {
       yAction.dispose();
       yColor.dispose();
       yMapPick.dispose();
+      yGrip.dispose();
     }
   }
 
@@ -534,6 +573,7 @@ export class VLATrainerCore {
     const buckets: Record<string, number> = {};
     let headN = 0;
     let colorHits = 0;
+    let gripHits = 0;
 
     for (const carry of [false, true]) {
       const b = this.synthBatch(this.probeN, { carry });
@@ -541,7 +581,7 @@ export class VLATrainerCore {
         const v = tf.tensor4d(b.vis, [b.n, IMG_SIZE, IMG_SIZE, 3]);
         const l = tf.tensor2d(b.lang, [b.n, MAX_SEQ_LEN], "int32");
         const c = tf.tensor2d(b.carryF, [b.n, 1]);
-        const [action, color] = this.models!.model.predict([
+        const [action, color, , grip] = this.models!.model.predict([
           v,
           l,
           c,
@@ -549,6 +589,7 @@ export class VLATrainerCore {
         return {
           action: action.dataSync() as Float32Array,
           color: color.dataSync() as Float32Array,
+          grip: grip.dataSync() as Float32Array,
         };
       });
       let sum = 0;
@@ -559,6 +600,8 @@ export class VLATrainerCore {
         const am = VLATrainerCore.argmaxRow;
         if (am(r.color, i, COLORS.length) === am(b.ysC, i, COLORS.length))
           colorHits++;
+        // gripper accuracy: thresholded sigmoid vs. the 0/1 close label
+        if ((r.grip[i] >= GRIP_THRESHOLD ? 1 : 0) === b.ysG[i]) gripHits++;
       }
       headN += b.n;
     }
@@ -567,6 +610,7 @@ export class VLATrainerCore {
       batch: this.batches,
       buckets,
       colorAcc: colorHits / headN,
+      gripAcc: gripHits / headN,
     });
   }
 
@@ -851,7 +895,7 @@ export class VLATrainerCore {
       // proprioceptive flag: the rollout KNOWS whether its gripper holds a
       // block (the snap-grasp set it) — same signal training synthesized
       const c = tf.tensor2d([carry !== null ? 1 : 0], [1, 1]);
-      const [action, pick] = models.viz.predict([
+      const [action, pick, grip] = models.viz.predict([
         v,
         l,
         c,
@@ -859,6 +903,7 @@ export class VLATrainerCore {
       return {
         action: action.dataSync(),
         pick: pick.dataSync() as Float32Array,
+        grip: grip.dataSync() as Float32Array,
       };
     });
     // the attention map the UI shows — it tracks the commanded block whether
@@ -885,6 +930,7 @@ export class VLATrainerCore {
       target: [out.action[0], out.action[1]],
       attn: Array.from(attnSel, (a) => a * inv),
       xy: [ux / G, vy / G],
+      grip: out.grip[0],
     };
   }
 

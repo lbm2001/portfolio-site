@@ -63,7 +63,8 @@ declare global {
 
 /** Simulate closed-loop episodes against the trained core — same integrator
     shape as Hero's rollout (proportional step toward the latest prediction,
-    re-predict every few frames, proximity snap-grasp, settle-then-release). */
+    re-predict every few frames, learned gripper grasp on the rising edge over
+    a block, settle-then-release). */
 async function closedLoopEval(
   core: import("@/lib/vla/trainer.core").VLATrainerCore,
   episodes: number
@@ -71,8 +72,10 @@ async function closedLoopEval(
   const { randomLayout, sampleCommand, blockOfColor } = await import(
     "@/lib/vla/examples"
   );
-  const { REST, fk } = await import("@/lib/vla/geometry");
+  const { REST, effectorOverBlock } = await import("@/lib/vla/geometry");
   const R = CONFIG.rollout;
+  const GRIP_RADIUS = CONFIG.gripper.radius;
+  const GRIP_THRESHOLD = CONFIG.gripper.threshold;
   const PRED_EVERY = 6; // frames between re-predictions ≈ Hero's predictMs
   const MAX_FRAMES = 300; // SwiftShader predicts are ~50-250ms each — keep
   // the worst-case predict count bounded (episodes × MAX_FRAMES/PRED_EVERY)
@@ -99,6 +102,8 @@ async function closedLoopEval(
     let near = 0;
     let settle = 0;
     let grasped = false;
+    let predGrip = 0;
+    let sawOpen = false;
 
     for (let f = 0; f < MAX_FRAMES; f++) {
       if (f % PRED_EVERY === 0) {
@@ -108,14 +113,18 @@ async function closedLoopEval(
           // reach-phase prediction wobble, skipping the first transient
           (jitterSum += Math.hypot(p.target[0] - prevPred[0], p.target[1] - prevPred[1])), jitterN++;
         prevPred = pred = p.target;
+        predGrip = p.grip;
       }
       a1 += (pred[0] - a1) * R.stepGain;
       a2 += (pred[1] - a2) * R.stepGain;
-      const { ex, ey } = fk(a1, a2);
 
       if (carry === null) {
-        const gy = (target.y ?? 0) + target.size / 2;
-        if (Math.hypot(ex - target.x, ey - gy) < R.graspEps) {
+        // learned grasp gate — SAME predicate as training + Hero: effector
+        // fully over the commanded block AND the predicted gripper closing on
+        // the rising edge (a prior open frame required)
+        const closing = predGrip >= GRIP_THRESHOLD;
+        const over = effectorOverBlock(a1, a2, target, GRIP_RADIUS);
+        if (over && closing && sawOpen) {
           if (++near >= R.nearFrames) {
             carry = cmd.color;
             grasped = true;
@@ -124,6 +133,7 @@ async function closedLoopEval(
             prevPred = null; // carry phase — jitter metric stays reach-only
           }
         } else near = 0;
+        if (!closing) sawOpen = true;
       } else if (
         Math.abs(pred[0] - a1) < R.settleEps &&
         Math.abs(pred[1] - a2) < R.settleEps

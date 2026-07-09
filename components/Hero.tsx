@@ -7,8 +7,7 @@ import {
   THETA1_RANGE,
   THETA2_RANGE,
   clamp,
-  fk,
-  graspTarget,
+  effectorOverBlock,
 } from "@/lib/vla/geometry";
 import { effectorPx, paintScene, paintSilhouette, sceneMap } from "@/lib/vla/scene";
 import {
@@ -43,8 +42,9 @@ import { CONFIG } from "@/lib/vla/config";
 // palette; lib/vla/run-config.ts): each scene's slot-grammar command names
 // one block to pick up. The displayed demonstration swaps every cycle while
 // thousands of examples train invisibly; the Rollout runs policy-driven
-// episodes — a block snaps to the effector within graspEps, and the carry
-// phase (lift it home) follows the policy's predictions. Once the action
+// episodes — the arm approaches with an open gripper and the LEARNED gripper
+// action closes it over the block (attaching it), then the carry phase (lift
+// it home) follows the policy's predictions. Once the action
 // loss converges, training stops and the Rollout box becomes interactive:
 // type your own command, run it, reshuffle the blocks.
 
@@ -58,7 +58,8 @@ const STEP_GAIN = CONFIG.rollout.stepGain;
 const PREDICT_MS = CONFIG.rollout.predictMs;
 const TRAIL_LEN = CONFIG.rollout.trailLen;
 const LANG_MS = CONFIG.rollout.langMs;
-const GRASP_EPS = CONFIG.rollout.graspEps; // workspace units from block center
+const GRIP_RADIUS = CONFIG.gripper.radius; // effector disk radius for the grasp predicate
+const GRIP_THRESHOLD = CONFIG.gripper.threshold; // sigmoid ≥ this = "close"
 const NEAR_FRAMES = CONFIG.rollout.nearFrames;
 const REACH_TIMEOUT = CONFIG.rollout.reachTimeout;
 const SETTLE_EPS = CONFIG.rollout.settleEps; // rad/joint: carry-phase settle test
@@ -66,8 +67,12 @@ const TOP_HOLD = CONFIG.rollout.topHold;
 const RETURN_FRAMES = CONFIG.rollout.returnFrames;
 
 // The episode machine:
-//   reach → settle over a block: it SNAPS to the effector (graspEps — the
-//           gripper is not an action output) and the carry phase begins
+//   reach → approach with the gripper OPEN; the grasp fires on the LEARNED
+//           gripper action: the effector fully over a block (effectorOverBlock)
+//           AND the policy's predicted gripper crossing open→closed there, held
+//           NEAR_FRAMES. A policy that keeps the gripper closed the whole way
+//           never arms (no rising edge) → it can't enter a block with a closed
+//           gripper, which is what forces the open approach. Then carry begins.
 //   carry → policy-driven with the block in hand; once the arm settles at
 //           the predicted target, the block is held aloft
 //   hold  → holding the carried block wherever the policy parked it
@@ -82,6 +87,12 @@ interface Episode {
   tokens: number[];
   from: { a1: number; a2: number };
   carry: number | null;
+  /** Latest predicted gripper sigmoid (0=open → 1=closed); starts open. */
+  predGrip: number;
+  /** True once the gripper has been seen OPEN during this attempt — the
+      rising-edge guard: without a prior open frame the grasp can't arm, so an
+      always-closed policy never grabs. */
+  sawOpen: boolean;
 }
 
 const newEpisode = (color: number, tokens: number[]): Episode => ({
@@ -94,6 +105,8 @@ const newEpisode = (color: number, tokens: number[]): Episode => ({
   tokens,
   from: { a1: REST[0], a2: REST[1] },
   carry: null,
+  predGrip: 0,
+  sawOpen: false,
 });
 
 const ease = (x: number) =>
@@ -172,7 +185,12 @@ export default function Hero() {
   const demoSentenceRef = useRef<Sentence>(DEFAULT_SENTENCE);
   const demoPlanRef = useRef<DemoPlan | null>(null);
   const lastCycleRef = useRef(-1);
-  const demoPoseRef = useRef({ a1: REST[0], a2: REST[1], carry: null as number | null });
+  const demoPoseRef = useRef({
+    a1: REST[0],
+    a2: REST[1],
+    carry: null as number | null,
+    grip: 0 as 0 | 1,
+  });
 
   // rollout state
   const rolloutLayoutRef = useRef(DEFAULT_LAYOUT);
@@ -331,6 +349,7 @@ export default function Hero() {
           layout: demoLayoutRef.current,
           accent: ACCENT,
           carry: p.carry,
+          grip: p.grip,
         });
         return;
       }
@@ -338,6 +357,7 @@ export default function Hero() {
       let a1: number;
       let a2: number;
       let carry: number | null = null;
+      let grip: 0 | 1 | undefined;
 
       if (st === "training" || st === "loading") {
         // clock measured from the click (trainStartRef), minus accumulated
@@ -353,13 +373,19 @@ export default function Hero() {
               demoSentenceRef.current
             );
           const pose = demoPose(demoPlanRef.current, 0);
-          demoPoseRef.current = { a1: pose.a1, a2: pose.a2, carry: pose.carry };
+          demoPoseRef.current = {
+            a1: pose.a1,
+            a2: pose.a2,
+            carry: pose.carry,
+            grip: pose.grip,
+          };
           paintScene(ctx, W, H, {
             a1: pose.a1,
             a2: pose.a2,
             layout: demoLayoutRef.current,
             accent: ACCENT,
             carry: pose.carry,
+            grip: pose.grip,
           });
           return;
         }
@@ -390,20 +416,23 @@ export default function Hero() {
         a1 = pose.a1;
         a2 = pose.a2;
         carry = pose.carry;
+        grip = pose.grip;
       } else {
         // idle OR converged: the demonstrations stop once the policy is
         // trained — the arm returns to the resting sway (the CSS also fades
-        // the box back to its dormant, pre-training transparency)
+        // the box back to its dormant, pre-training transparency). No grip
+        // state → the plain solid-dot effector.
         [a1, a2] = wiggle(now, 0, 1.7);
       }
 
-      demoPoseRef.current = { a1, a2, carry };
+      demoPoseRef.current = { a1, a2, carry, grip: grip ?? 0 };
       paintScene(ctx, W, H, {
         a1,
         a2,
         layout: demoLayoutRef.current,
         accent: ACCENT,
         carry,
+        grip,
       });
     };
 
@@ -480,6 +509,9 @@ export default function Hero() {
                 // the same forward pass carries the policy's gaze — drawn as
                 // a marker on the rollout scene while the phase is live
                 gazeRef.current = r.xy;
+                // and the gripper command — the reach gate closes on its
+                // rising edge over a block
+                ep.predGrip = r.grip;
               }
             });
         }
@@ -500,26 +532,36 @@ export default function Hero() {
         }
 
         if (ep.phase === "reach") {
-          // contact test: the effector settles over SOME block — not just the
-          // commanded one — so a wrong-side reach visibly acts on the wrong
-          // block instead of hovering next to it until the timeout
-          const e = fk(arm.a1, arm.a2);
-          let touched = -1;
+          // LEARNED grasp gate. Contact = the effector fully over SOME block —
+          // not just the commanded one — so a wrong-side reach visibly acts on
+          // the wrong block instead of hovering until the timeout. The grasp
+          // only fires on the RISING EDGE of the predicted gripper close while
+          // over the block (and only after the gripper was seen OPEN during the
+          // approach), held NEAR_FRAMES — the same effectorOverBlock predicate
+          // the training label uses.
+          const closing = ep.predGrip >= GRIP_THRESHOLD;
+          let over = -1;
           for (const b of rolloutLayoutRef.current) {
-            // grasp height follows block size AND rest height
-            const g = graspTarget(b.x, b.size, b.y ?? 0);
-            if (Math.hypot(e.ex - g.x, e.ey - g.y) < GRASP_EPS) {
-              touched = b.color;
+            if (effectorOverBlock(arm.a1, arm.a2, b, GRIP_RADIUS)) {
+              over = b.color;
               break;
             }
           }
-          ep.near = touched >= 0 && touched === ep.nearColor ? ep.near + 1 : touched >= 0 ? 1 : 0;
-          ep.nearColor = touched;
-          if (touched >= 0 && ep.near >= NEAR_FRAMES) {
-            // SNAP grasp: the settled-on block attaches to the effector (the
-            // gripper is not an action output) and the carry phase begins
+          ep.near =
+            over >= 0 && closing && ep.sawOpen && over === ep.nearColor
+              ? ep.near + 1
+              : over >= 0 && closing && ep.sawOpen
+                ? 1
+                : 0;
+          ep.nearColor = over;
+          // record an open frame AFTER the gate read, so the first close frame
+          // still counts as a rising edge against a prior open one
+          if (!closing) ep.sawOpen = true;
+          if (ep.near >= NEAR_FRAMES) {
+            // GRASP: the block the gripper closed over attaches to the effector
+            // and the carry phase begins
             ep.phase = "carry";
-            ep.carry = touched;
+            ep.carry = over;
             ep.settle = 0;
             ep.f = 0;
             // force a fresh prediction — the model must now SEE the block
@@ -566,6 +608,17 @@ export default function Hero() {
       if (episodeRef.current) ep.f++;
     };
 
+    // The drawn gripper state for a rollout arm: closed once a block is in
+    // hand (carry/hold); during the reach it mirrors the policy's predicted
+    // gripper command so the viewer sees it close as it settles over the block;
+    // failed return (or no episode) shows it open / plain.
+    const gripOf = (ep: Episode | null): 0 | 1 | undefined => {
+      if (!ep) return undefined;
+      if (ep.carry !== null) return 1;
+      if (ep.phase === "reach") return ep.predGrip >= GRIP_THRESHOLD ? 1 : 0;
+      return 0;
+    };
+
     // rollout: during training the episode runs in LOCKSTEP with the
     // demonstration — same scene + command, restarted each demo cycle — so
     // the two can be compared side by side; converged runs user commands;
@@ -587,6 +640,7 @@ export default function Hero() {
           layout: rolloutLayoutRef.current,
           accent: ACCENT,
           carry: ep?.carry ?? null,
+          grip: gripOf(ep),
         });
         drawGaze(ctx, W, H);
         setActionVals(targetRef.current);
@@ -646,6 +700,7 @@ export default function Hero() {
             : null,
         lossNorm: trainer?.lossNorm() ?? 1,
         carry: ep?.carry ?? null,
+        grip: gripOf(ep),
       });
       drawGaze(ctx, W, H);
       setActionVals(st === "idle" ? null : targetRef.current);

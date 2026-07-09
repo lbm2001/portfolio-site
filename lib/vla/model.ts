@@ -55,9 +55,10 @@
 // missed that cue the action head averaged the modes (a 0.12-0.43 loss
 // oscillation). The flag feeds the attention QUERY too: "block at the
 // effector" changes what the commanded block looks like. Honesty note: this
-// is gripper proprioception, which a real robot has (the demo's grasp is
-// already a proximity snap, not a learned action); no expert-side
-// information crosses at inference.
+// is gripper proprioception (a sensed STATE), which a real robot has — and it
+// is distinct from the gripper COMMAND head (see gripperOutput below): the
+// policy commands the gripper to close AND senses whether it is holding,
+// exactly as a real robot does. No expert-side information crosses at inference.
 //
 // Everything below is STANDARD tfjs layers (reshape/dot/softmax activation/
 // dense) plus the one custom AttentionPooling layer the language branch
@@ -79,6 +80,7 @@ export const IMG_SIZE = CONFIG.model.imgSize;
 export const LEARNING_RATE = CONFIG.model.learningRate;
 export const COLOR_LOSS_WEIGHT = CONFIG.model.colorLossWeight;
 export const MAP_LOSS_WEIGHT = CONFIG.model.mapLossWeight;
+export const GRIPPER_LOSS_WEIGHT = CONFIG.model.gripperLossWeight;
 export const ACTION_HUBER_DELTA = CONFIG.model.actionHuberDelta;
 
 /** Spatial size after one conv stage (+ optional pool). */
@@ -101,15 +103,17 @@ export const ATTN_GRID = CONFIG.model.conv.reduce(
 
 export interface VLAModels {
   /** Main policy (the one that trains): [vision, tokens, carry] →
-      [action angles (2), color softmax, attention map [G*G]]. The map is a
-      trained OUTPUT, not just a readout — see mapLossWeight in config.ts for
-      why the action loss alone can't train the attention. color reads the
-      pooled language slot — a pure text decoder. */
+      [action angles (2), color softmax, attention map [G*G], gripper (1)]. The
+      map is a trained OUTPUT, not just a readout — see mapLossWeight in
+      config.ts for why the action loss alone can't train the attention. color
+      reads the pooled language slot — a pure text decoder. gripper is the
+      learned "close now" command (last output; see below). */
   model: tfType.LayersModel;
   /** Inference/readout twin sharing every layer (no weights of its own):
-      same inputs → [action angles (2), attention map [G*G]]. One predict on
-      this yields the action AND the "where is the model looking" viz in a
-      single pass (trainer.core computes its expectation CPU-side). */
+      same inputs → [action angles (2), attention map [G*G], gripper (1)]. One
+      predict on this yields the action, the "where is the model looking" viz
+      AND the gripper command in a single pass (trainer.core computes the map
+      expectation CPU-side). */
   viz: tfType.LayersModel;
   /** Language-only training twin: [tokens] → [color]. Shares the embedding +
       conv scorer + color head with `model` (no weights of its own), but its
@@ -286,15 +290,26 @@ export function buildVLAModel(tf: TF, embedMatrix: Float32Array): VLAModels {
   const colorOutput = tf.layers
     .dense({ units: COLORS.length, activation: "softmax", name: "color" })
     .apply(langTarget) as tfType.SymbolicTensor;
+  // gripper COMMAND: a learned "close now" head (0=open → 1=closed). It reads
+  // the fused hidden dense1 — being "over the block" is a VISUAL fact, so it
+  // needs the vision→attention pathway, not the language slot alone. Trained by
+  // BCE against the shared effectorOverBlock predicate (trainer.core), it fires
+  // ~0 while approaching and ~1 only when the effector is fully over the block;
+  // the rollout turns its rising edge into the physical grasp (Hero.tsx). It is
+  // APPENDED LAST so every existing positional output read stays valid. Kept OUT
+  // of the lang twin (that graph has no vision node → no "over the block" fact).
+  const gripperOutput = tf.layers
+    .dense({ units: 1, activation: "sigmoid", name: "gripper" })
+    .apply(dense1) as tfType.SymbolicTensor;
 
   const model = tf.model({
     inputs: [visionInput, langInput, carryInput],
-    outputs: [actionOutput, colorOutput, pickMap],
+    outputs: [actionOutput, colorOutput, pickMap, gripperOutput],
   });
   // readout twin: same graph nodes, so it shares every weight with `model`
   const viz = tf.model({
     inputs: [visionInput, langInput, carryInput],
-    outputs: [actionOutput, pickMap],
+    outputs: [actionOutput, pickMap, gripperOutput],
   });
   // language-only training twin: the color head reached from `langInput`
   // alone (no vision node in the graph), so a gradient step touches only the
@@ -360,9 +375,17 @@ export function buildVLAModel(tf: TF, embedMatrix: Float32Array): VLAModels {
     tf.tidy(() =>
       tf.metrics.categoricalCrossentropy(yTrue, yPred).mul(MAP_LOSS_WEIGHT)
     );
+  // gripper: plain binary cross-entropy on the sigmoid head, scaled down like
+  // the other aux heads so it nudges (not dominates) the shared trunk. The
+  // action Huber stays output 0 so trainStep's convergence read (loss index 1)
+  // is unchanged.
+  const weightedGripLoss = (yTrue: tfType.Tensor, yPred: tfType.Tensor) =>
+    tf.tidy(() =>
+      tf.metrics.binaryCrossentropy(yTrue, yPred).mul(GRIPPER_LOSS_WEIGHT)
+    );
   model.compile({
     optimizer: tf.train.adam(LEARNING_RATE),
-    loss: [actionLoss, weightedColorLoss, weightedMapLoss],
+    loss: [actionLoss, weightedColorLoss, weightedMapLoss, weightedGripLoss],
   });
   // language warm-up twin: plain (unweighted) cross-entropy on the color head —
   // in isolation there's no action loss to balance against, so the config

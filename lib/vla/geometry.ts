@@ -89,6 +89,36 @@ export function fk(a1: number, a2: number) {
   return { j1x, j1y, ex, ey };
 }
 
+/**
+ * THE grasp predicate: is the effector disk fully inside a block's footprint?
+ * Center = fk(a1,a2).ex/ey, radius = gripRadius; the block footprint is
+ * x ∈ [b.x − s/2, b.x + s/2], y ∈ [b.y, b.y + s] (s = b.size, b.y = the block's
+ * bottom/rest height, 0 on the floor). "Fully contained" (not just center-in)
+ * so the closed gripper genuinely straddles the block.
+ *
+ * This is the SINGLE shared "correct-to-close" test used identically by the
+ * training label (trainer.core synthBatch) and the rollout/eval grasp gate
+ * (Hero.tsx, vla-lab) — keeping the network's supervision and the physical
+ * grasp condition provably the same fact. Keep gripRadius ≤ ~min block/2
+ * (≈0.04) or the disk can never fit inside the smallest block.
+ */
+export function effectorOverBlock(
+  a1: number,
+  a2: number,
+  block: { x: number; size: number; y?: number },
+  gripRadius: number
+): boolean {
+  const { ex, ey } = fk(a1, a2);
+  const s = block.size;
+  const rest = block.y ?? 0;
+  return (
+    ex - gripRadius >= block.x - s / 2 &&
+    ex + gripRadius <= block.x + s / 2 &&
+    ey - gripRadius >= rest &&
+    ey + gripRadius <= rest + s
+  );
+}
+
 export function clamp(v: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, v));
 }

@@ -75,6 +75,13 @@ export const CONFIG = {
         ~0.025 and smoothing the descent. 0.6 keeps correct-side samples in the
         quadratic zone while catching wrong-side picks early. */
     actionHuberDelta: 0.6,
+    /** Weight of the auxiliary gripper-command loss (binary cross-entropy on
+        the sigmoid "close now" head, see model.ts). Small like the color head:
+        the gripper is an easy, near-deterministic function of "is the effector
+        over the block", so it needs only a light nudge — but non-zero, or the
+        head has no gradient and collapses to a constant. Raise toward ~0.6 (and
+        raise trainer.graspFrac) if the head learns "always closed". */
+    gripperLossWeight: 0.3,
     /** Vision CNN stack, in order. Add/remove entries to change depth; edit
         filters/kernel/stride/pool to retune a stage. The LAST stage's output
         map is what the language-conditioned spatial attention scores (see
@@ -127,6 +134,20 @@ export const CONFIG = {
         action head averaged the grasp/carry modes (see the carry-flag note
         in model.ts). UNTUNED. */
     carryFrac: 0.5,
+    /** Fraction of the EMPTY-HANDED samples posed as "grasp-now" positives: the
+        commanded block's IK pose, tightly jittered so the effector sits fully
+        over the block (gripper.radius) and the gripper label is 1 ("close"). WHY
+        A DEDICATED CLASS: fully-over-the-block is a small target, so relying on
+        the ordinary near-target jitter to land there leaves the gripper head's
+        positives too sparse and it collapses to always-open. This guarantees a
+        steady stream of clean close-now examples. The action label stays the
+        grasp pose (stay put); the gripper label still comes from the shared
+        effectorOverBlock predicate, so a jitter that strays off the block is
+        correctly labeled 0 — the class only BIASES the pose distribution. */
+    graspFrac: 0.15,
+    /** Gaussian spread (rad) of the grasp-class pose jitter — tight so the
+        effector reliably stays fully over the (possibly smallest) block. */
+    graspJitterStd: 0.05,
     /** Chance a non-color token becomes <unk> in training, so the encoder
         learns to shrug off unknown words in free user text. */
     wordDropout: 0.1,
@@ -208,9 +229,30 @@ export const CONFIG = {
     /** Per-scene blocks randomize their side length in [min, max]. Bigger =
         grasped higher (grasp target is the block CENTRE, y=size/2) and shifts
         the near-singular dead zone, which is why the placement bands below are
-        sized for the largest block. */
-    min: 0.08,
+        sized for the largest block. FLOOR raised to 0.12 for the LEARNED
+        gripper: the grasp fires only when the effector disk (gripper.radius
+        0.025) is FULLY inside the block footprint (effectorOverBlock), so the
+        in-block tolerance is (size/2 − radius) per axis; at the old 0.08 floor
+        that window (±0.015) was tighter than the policy's ~0.03-0.05 reach
+        floor and closed-loop grasps missed the small blocks (measured
+        graspRate ~0.13). 0.12 gives ±0.035+ and restores healthy grasping
+        while keeping a 0.12-0.16 size spread for the size-reading task. */
+    min: 0.12,
     max: 0.16,
+  },
+
+  // ── Learned gripper (lib/vla/geometry.ts, model.ts, Hero.tsx) ──────────
+  gripper: {
+    /** Radius (workspace units) of the effector "disk" the grasp predicate
+        (effectorOverBlock, geometry.ts) must fit fully inside a block's
+        footprint before a close counts. Kept well under the smallest block's
+        half-width (min 0.08 → 0.04) so even the smallest block can contain it;
+        small enough that the arm must be genuinely centered, not just adjacent. */
+    radius: 0.025,
+    /** Sigmoid threshold above which the gripper head's output counts as
+        "closed". Used identically by the rollout grasp gate (Hero.tsx) and the
+        headless eval (vla-lab). */
+    threshold: 0.5,
   },
 
   // ── Task / language space (lib/vla/examples.ts) ────────────────────────
