@@ -1,27 +1,22 @@
 #!/usr/bin/env node
-// Pulls each project's data straight from its GitHub repo at BUILD time and
-// writes lib/projects-data.json, which lib/content.ts imports as a static module
-// (same pattern as gen-resume-data.mjs / lib/resume-data.json). Doing this at build time
-// keeps ALL fetching out of the request path: Cloudflare Workers (OpenNext) has
-// no runtime filesystem or reliable outbound fetch during render, so the site
+// Pulls each project's data at BUILD time and writes lib/projects-data.json,
+// which lib/content.ts imports as a static module (same pattern as
+// gen-resume-data.mjs / lib/resume-data.json). Doing this at build time keeps
+// ALL fetching out of the request path: Cloudflare Workers (OpenNext) has no
+// runtime filesystem or reliable outbound fetch during render, so the site
 // serves a fully static, pre-fetched snapshot.
 //
-// Everything a project exposes to the site lives in ONE self-contained
-// `portfolio/` directory in its repo (dir + file are set in config/projects.sources.json):
-//   portfolio/README.md      frontmatter + Markdown body (GitHub renders it when
-//                            you open the folder)
-//   portfolio/assets/*.png   images the README references relatively
-//   portfolio/paper.pdf      an optional paper linked from the frontmatter
-//
-// Per repo it reads:
-//   - GitHub repo metadata:  description -> blurb (fallback), topics -> tags
-//                            (fallback), html_url -> the "Code" link.
-//   - portfolio/README.md:   frontmatter (title/venue/period/blurb/tags/links/
-//                            aiAssisted) + a Markdown body.
-//   - referenced assets:     images and paper links that are RELATIVE to the
-//                            README are resolved inside portfolio/, downloaded
-//                            into public/projects/<slug>/, and the body's paths
-//                            are rewritten to /projects/...
+// Content (README + assets + an optional paper) lives in ONE PRIVATE repo,
+// config.contentRepo (currently lbm2001/portfolio-project-content), one
+// directory per project:
+//   <contentDir>/README.md      frontmatter + Markdown body
+//   <contentDir>/assets/*.png   images the README references relatively
+//   <contentDir>/paper.pdf      an optional paper linked from the frontmatter
+// Each project's own repo (config/projects.sources.json's `repo`) supplies
+// only public GitHub metadata (description -> blurb fallback, topics -> tags
+// fallback, html_url -> the "Code" link) and, unless overridden, the derived
+// slug/contentDir (both default to the repo name, e.g. lbm2001/mujopy ->
+// "mujopy"; set `slug`/`contentDir` on a project entry to override).
 //
 // ROBUST BY DESIGN: this NEVER fails the build. If the token is missing or a
 // repo/file can't be fetched, the previous entry from the committed
@@ -100,14 +95,18 @@ function periodKey(s) {
   return Number.isNaN(t) ? 0 : t;
 }
 
-async function buildOne(source, dir, file) {
-  const { slug, repo } = source;
-  // Resolve a path written RELATIVE to the README (which lives in `dir/`) to its
-  // location in the repo, e.g. dir="portfolio" + "assets/x.png" -> "portfolio/assets/x.png".
-  const inDir = (rel) => (dir ? `${dir}/${rel}` : rel);
+async function buildOne(source, contentRepo, file) {
+  const { repo } = source;
+  const repoName = repo.split("/")[1];
+  const slug = source.slug ?? repoName;
+  const contentDir = source.contentDir ?? repoName;
+  // Resolve a path written RELATIVE to the README (which lives at the root of
+  // <contentDir> in contentRepo) to its location there, e.g. contentDir="mujopy"
+  // + "assets/x.png" -> "mujopy/assets/x.png".
+  const inContentDir = (rel) => `${contentDir}/${rel}`;
 
   const meta = await ghJson(`https://api.github.com/repos/${repo}`);
-  const mdText = (await ghFile(repo, inDir(file))).toString("utf8");
+  const mdText = (await ghFile(contentRepo, inContentDir(file))).toString("utf8");
   const fmParsed = parseProjectMd(mdText);
 
   const publicDir = path.join(root, "public", "projects", slug);
@@ -122,7 +121,7 @@ async function buildOne(source, dir, file) {
   for (const rel of assets) {
     const base = path.basename(rel);
     try {
-      const bytes = await ghFile(repo, inDir(rel));
+      const bytes = await ghFile(contentRepo, inContentDir(rel));
       fs.writeFileSync(path.join(publicDir, base), bytes);
       body = body.split(`](${rel}`).join(`](/projects/${slug}/${base}`);
     } catch (e) {
@@ -131,13 +130,13 @@ async function buildOne(source, dir, file) {
   }
 
   // Links: Code (repo) is always first, then the frontmatter links. If a link's
-  // href is relative (e.g. a paper PDF inside portfolio/), download it too.
+  // href is relative (e.g. a paper PDF next to the README), download it too.
   const links = [{ label: "Code", href: meta.html_url }];
   for (const lk of fmParsed.links || []) {
     if (!/^https?:|^\//.test(lk.href)) {
       const base = path.basename(lk.href);
       try {
-        const bytes = await ghFile(repo, inDir(lk.href));
+        const bytes = await ghFile(contentRepo, inContentDir(lk.href));
         fs.writeFileSync(path.join(publicDir, base), bytes);
         links.push({ label: lk.label, href: `/projects/${slug}/${base}` });
         continue;
@@ -177,14 +176,15 @@ async function main() {
 
   const out = [];
   for (const source of config.projects) {
+    const slug = source.slug ?? source.repo.split("/")[1];
     try {
-      out.push(await buildOne(source, config.dir, config.file));
-      console.log(`gen-projects-data: fetched ${source.slug} <- ${source.repo}`);
+      out.push(await buildOne(source, config.contentRepo, config.file));
+      console.log(`gen-projects-data: fetched ${slug} <- ${source.repo}`);
     } catch (e) {
       console.warn(
-        `gen-projects-data: ${source.slug} failed (${e.message}) — keeping existing entry`,
+        `gen-projects-data: ${slug} failed (${e.message}) — keeping existing entry`,
       );
-      if (byslug[source.slug]) out.push(byslug[source.slug]);
+      if (byslug[slug]) out.push(byslug[slug]);
     }
   }
 
