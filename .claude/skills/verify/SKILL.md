@@ -23,13 +23,20 @@ description: How to build, launch and drive this portfolio site (esp. the live V
   (`~/Library/Caches/ms-playwright/chromium-*/…`) and args
   `--use-angle=swiftshader --enable-unsafe-swiftshader` — tfjs-webgl works on
   SwiftShader, just slower (~4-6 batches/s vs ~10 on real GPU).
-- Viewport must be ≥1100px wide or the whole pipeline (`.vla-node`,
-  `.vla-bar`) is `display:none` (mobile fallback).
-- Key selectors: `.vla-cfg-btn` (⚙ run-config menu), `.vla-bar .vla-btn`
-  (Start Training / Pause), `.vla-status-text` (Idle/Loading/Training/Ready),
-  `.vla-prompt` (demo command), `.vla-decoded` (language readout),
-  `.vla-action-vals` (shoulder/elbow/gripper), `.vla-try-input` /
-  `.vla-try-btn` / `.vla-try-shuffle` (converged try-it), `.vla-try-note`.
+- **The viewport picks the task**, so both tiers need driving:
+  - ≥1100px (e.g. 1440×900): the desktop ring; trains 8 colors / ≤4 blocks.
+  - <1100px (e.g. 390×844): the pipeline is `display:none` until you click
+    `.hero-demo-btn` ("Mini VLA Demo"), which stacks it. Trains 4 colors /
+    ≤3 blocks — a smaller task, so it converges sooner than desktop.
+- Key selectors: `.vla-bar .vla-btn` (Start Training / Pause),
+  `.vla-status-text` (Idle/Loading/Training/Ready), `.vla-status-sub`
+  (idle: the task profile + ETA; live: examples/batches), `.hero-demo-btn` /
+  `.vla-close` (mobile open/close), `.vla-prompt` (demo command),
+  `.vla-decoded` (language readout), `.vla-action-vals`
+  (shoulder/elbow/gripper), `.vla-try-input` / `.vla-try-btn` /
+  `.vla-try-shuffle` (converged try-it), `.vla-try-chip` (mobile-only preset
+  commands, one per trained color), `.vla-try-note` (fires when a command
+  names a color the run never trained, or one absent from the scene).
 - Training ends at `converge.maxBatches` (CONFIG) at the latest — on
   SwiftShader budget ~2-5 min until status "Ready". Wait with
   `waitForFunction` on `.vla-status-text === "Ready"`, generous timeout.

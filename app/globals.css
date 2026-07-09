@@ -803,6 +803,32 @@ a {
   border-color: rgba(0, 0, 0, 0.22);
   padding: 8px 10px;
 }
+/* One tap per color the run actually trained on. Mobile only: above the
+   breakpoint every color in the palette is trained, so free text can't miss
+   and there is nothing to discover. Rendered on both tiers regardless — the
+   chips are derived from the run config, and hiding them in CSS keeps the
+   markup identical across the breakpoint. */
+.vla-try-presets {
+  display: none;
+}
+.vla-try-chip {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 999px;
+  padding: 6px 11px 6px 8px;
+  font: 500 12px/1 var(--font-mono);
+  color: var(--body);
+  background: transparent;
+  border: 1px solid var(--border);
+}
+.vla-try-chip-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+}
 /* e.g. "no purple block in this scene — ⟳ to reshuffle" */
 .vla-try-note {
   position: absolute;
@@ -843,10 +869,12 @@ a {
   flex-direction: column;
   gap: 4px;
 }
-/* background progress: examples consumed by the training loop */
+/* idle: the task this run would train (the ⚙ menu used to say it).
+   live: background progress — examples consumed by the training loop. */
 .vla-status-sub {
   font: 500 9px/1 var(--font-mono);
   color: var(--muted);
+  white-space: nowrap;
 }
 .vla-dot {
   width: 8px;
@@ -936,83 +964,6 @@ a {
   background: transparent;
   color: var(--ink);
   border-color: rgba(0, 0, 0, 0.22);
-}
-
-/* ⚙ run-config menu (idle only): what to train — palette size, scene
-   density, task set — plus the (placeholder) training-time estimate. Anchored
-   to the gear inside the control bar; opens UPWARD so it never covers it. */
-.vla-cfg {
-  position: relative;
-}
-.vla-cfg-btn {
-  padding: 10px 12px;
-  font-size: 14px;
-  line-height: 1;
-}
-.vla-cfg-btn.is-open {
-  border-color: var(--ink);
-}
-.vla-cfg-pop {
-  position: absolute;
-  bottom: calc(100% + 10px);
-  right: -8px;
-  z-index: 9;
-  width: 232px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  padding: 12px 14px;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.09);
-}
-.vla-cfg-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.vla-cfg-k {
-  font: 500 9.5px/1 var(--font-mono);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--muted);
-  width: 46px;
-  flex: none;
-}
-.vla-cfg-opts {
-  display: flex;
-  gap: 4px;
-  flex: 1;
-}
-.vla-cfg-opt {
-  cursor: pointer;
-  flex: 1;
-  padding: 6px 0;
-  font: 600 10.5px/1 var(--font-mono);
-  color: var(--body);
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  white-space: nowrap;
-}
-.vla-cfg-opt.is-sel {
-  background: var(--ink);
-  border-color: var(--ink);
-  color: #fff;
-}
-.vla-cfg-opt:disabled {
-  opacity: 0.35;
-  cursor: default;
-}
-.vla-cfg-eta {
-  font: 500 10px/1.4 var(--font-mono);
-  color: var(--body);
-  border-top: 1px solid var(--border);
-  padding-top: 9px;
-}
-.vla-cfg-eta-note {
-  color: var(--muted);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1200,13 +1151,28 @@ a {
   .hero.demo-open .vla-try-input {
     font-size: 16px;
   }
+  /* the trained palette, one tap each: typing is the highest-friction step on a
+     phone, and the mobile profile only learns four of the eight colors */
+  .hero.demo-open .vla-try-presets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    flex: 1 0 100%;
+  }
+  /* in flow under the chips. Absolute (`top: 100%`) it would hang over the
+     rollout canvas, which on desktop is only ever a 10px gap away. */
+  .hero.demo-open .vla-try-note {
+    position: static;
+    flex: 1 0 100%;
+    margin-top: 0;
+  }
 
   /* in flow inside the sticky topbar. Status and the controls never fit on one
      320px row beside the curve, so the curve drops to a full-width second row
      underneath them — carrying the mini-vla link, since the label does not fit. */
   .hero.demo-open .vla-bar {
     display: flex;
-    position: relative; /* containing block for the ⚙ popover */
+    position: static;
     left: auto;
     bottom: auto;
     transform: none;
@@ -1229,21 +1195,6 @@ a {
   .hero.demo-open .vla-loss-canvas {
     height: 26px;
   }
-  /* Re-anchor the ⚙ popover to the BAR rather than the gear: 232px hung off a
-     button near the bar's right edge falls off a 320px screen. Spanning the
-     bar's width can't. It also opens DOWNWARD here — the bar is at the top of
-     the viewport now, so there is nothing above it to open into. */
-  .hero.demo-open .vla-cfg {
-    position: static;
-  }
-  .hero.demo-open .vla-cfg-pop {
-    top: calc(100% + 10px);
-    bottom: auto;
-    left: 8px;
-    right: 8px;
-    width: auto;
-  }
-
   /* Stacked, the pipeline reads top-to-bottom, so each card's title reads from
      its top centre instead of hugging the left corner. Scoped to the live
      states: idle (and converged, upstream) still park the label dead centre of

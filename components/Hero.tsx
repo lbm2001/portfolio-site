@@ -35,7 +35,6 @@ import {
 } from "mini-vla/task";
 import {
   CONFIG,
-  DEFAULT_RUN_CONFIG,
   estimateTrainingSeconds,
   setRunConfig,
   type RunConfig,
@@ -54,9 +53,9 @@ import {
 // TensorFlow.js behavioral-cloning loop — hosted in a Web Worker off the main
 // thread (mini-vla's trainer.worker.ts, via the mini-vla/trainer proxy) so
 // gradient steps never fight this component's 60fps rAF loop — against an
-// analytical-IK expert on pick-up commands (2-4 blocks from a 2/4/8-color
-// palette; mini-vla/config): each scene's slot-grammar command names
-// one block to pick up. The displayed demonstration swaps every cycle while
+// analytical-IK expert on pick-up commands (the viewport's task profile — see
+// DESKTOP_RUN_CONFIG / MOBILE_RUN_CONFIG): each scene's slot-grammar command
+// names one block to pick up. The displayed demonstration swaps every cycle while
 // thousands of examples train invisibly; the Rollout runs policy-driven
 // episodes — the arm approaches with an open gripper and the LEARNED gripper
 // action closes it over the block (attaching it), then the carry phase (lift
@@ -95,6 +94,23 @@ const fmtAngle = (v: number) => `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(2)
 // cards vertically. Kept in sync with the `max-width: 1099px` block in
 // globals.css — layoutWires needs to know which geometry it is drawing for.
 const STACKED_MQ = "(max-width: 1099px)";
+
+// What gets trained is no longer the viewer's choice (there is no ⚙ menu): the
+// viewport picks it. Desktop trains the full task; a phone trains a smaller one
+// — fewer colors, sparser scenes — because it pays for every gradient step in
+// battery and heat.
+//
+// mini-vla cannot make this call itself. The trainer runs in a Web Worker, and
+// a Worker has no `matchMedia`, so the host resolves the profile and ships it
+// through `trainer.start(onUpdate, cfg)` — which also installs it on this
+// thread's samplers via setRunConfig (the two threads hold separate copies).
+const DESKTOP_RUN_CONFIG: RunConfig = { numColors: 8, maxBlocks: 4 };
+const MOBILE_RUN_CONFIG: RunConfig = { numColors: 4, maxBlocks: 3 };
+
+/** The colors a run of `cfg` can actually put in a scene: mini-vla's samplers
+    draw from the FIRST numColors palette entries, so the mobile profile only
+    ever shows (and only ever learns) red / black / blue / yellow. */
+const activePalette = (cfg: RunConfig) => COLORS.slice(0, cfg.numColors);
 
 /** Resize a canvas to its CSS box at devicePixelRatio; returns a cleared ctx. */
 function fitCanvas(c: HTMLCanvasElement, fallbackW = 190, fallbackH = 186) {
@@ -190,16 +206,34 @@ export default function Hero() {
 
   const [status, setStatus] = useState<TrainerStatus>("idle");
   const [hud, setHud] = useState({ lossText: "—", samples: 0, batches: 0 });
-  // the ⚙ run config (palette / density / task set) picked before training.
-  // Mirrored into a ref because the rAF-loop closures (demo-cycle command
-  // sampling) mount once and would otherwise capture the initial state.
-  const [runCfg, setRunCfgState] = useState<RunConfig>(DEFAULT_RUN_CONFIG);
-  const runCfgRef = useRef<RunConfig>(DEFAULT_RUN_CONFIG);
-  const setRunCfg = (next: RunConfig) => {
+  // The task profile this run trains on, resolved from the viewport. Desktop is
+  // the SSR default: the bar is display:none below the breakpoint until the
+  // viewer opens the demo, so the post-mount correction is never seen. Mirrored
+  // into a ref because the rAF-loop closures (demo-cycle command sampling) mount
+  // once and would otherwise capture the initial value.
+  const [runCfg, setRunCfgState] = useState<RunConfig>(DESKTOP_RUN_CONFIG);
+  const runCfgRef = useRef<RunConfig>(DESKTOP_RUN_CONFIG);
+  // Latched from Start until Reset. setRunConfig installs per-thread module
+  // state, so letting the profile follow the media query mid-run would leave
+  // this thread's randomLayout() sampling scenes the worker isn't training on.
+  const cfgLockedRef = useRef(false);
+  const syncRunCfg = useCallback(() => {
+    if (cfgLockedRef.current) return;
+    const next = window.matchMedia(STACKED_MQ).matches
+      ? MOBILE_RUN_CONFIG
+      : DESKTOP_RUN_CONFIG;
     runCfgRef.current = next;
     setRunCfgState(next);
-  };
-  const [cfgOpen, setCfgOpen] = useState(false);
+  }, []);
+  // Resolve the profile on mount, and follow the breakpoint while idle — a
+  // viewer who rotates a tablet before pressing Start gets the right task, and
+  // the bar's readout never lies about what Start would train.
+  useEffect(() => {
+    const narrow = window.matchMedia(STACKED_MQ);
+    syncRunCfg();
+    narrow.addEventListener("change", syncRunCfg);
+    return () => narrow.removeEventListener("change", syncRunCfg);
+  }, [syncRunCfg]);
   // demonstrations the CURRENTLY rolled-out policy has seen: the sample count
   // frozen into the per-cycle snapshot during training, or the final count
   // once converged (see drawArm's snapshot boundary + onUpdate).
@@ -901,10 +935,12 @@ export default function Hero() {
       setDecoded(null);
       setTokenBars([]);
       setRolloutSamples(0);
-      setCfgOpen(false);
-      // install the ⚙ run config on this thread's samplers before anything
-      // draws a command (trainer.start also ships it to the worker)
+      // install the viewport's task profile on this thread's samplers before
+      // anything draws a command (trainer.start also ships it to the worker),
+      // and freeze it: a resize across the breakpoint must not change the task
+      // out from under a run in progress
       const cfg = runCfgRef.current;
+      cfgLockedRef.current = true;
       setRunConfig(cfg);
       // per-block clone of the default scene — the rollout's blocks are
       // draggable once converged, so the module-level DEFAULT_LAYOUT must
@@ -918,6 +954,10 @@ export default function Hero() {
   const onReset = () => {
     trainerRef.current?.reset();
     autoPausedRef.current = false;
+    // back to idle: the profile follows the viewport again (it may have been
+    // resized across the breakpoint during the run we just threw away)
+    cfgLockedRef.current = false;
+    syncRunCfg();
     setStatusBoth("idle");
     engineRef.current!.reset();
     rolloutCycleRef.current = -1;
@@ -994,23 +1034,48 @@ export default function Hero() {
     };
   }, [pauseTraining, resumeTraining]);
 
-  /** "Try it" mode: run the user's own sentence through the trained policy.
-      The color head decodes which block to pick up; the motion itself is
-      entirely the policy's. */
-  const runCommand = async () => {
+  /** "Try it" mode: run a sentence — the viewer's own, or a preset chip's —
+      through the trained policy. The color head decodes which block to pick up;
+      the motion itself is entirely the policy's. */
+  const runCommand = async (command?: string) => {
     const trainer = trainerRef.current;
     if (!trainer?.ready || statusRef.current !== "converged") return;
-    const text = tryText.trim();
+    const text = (command ?? tryText).trim();
     if (!text) return;
-    const tokens = tokenize(text);
-    const d = await trainer.decodeCommand(tokens); // worker round-trip (~ms)
-    if (!d || statusRef.current !== "converged") return;
     const words = text
       .toLowerCase()
       .replace(/[^a-z ]/g, "")
       .split(" ")
       .filter(Boolean)
       .slice(0, MAX_SEQ_LEN);
+
+    // The color head is 8-wide whatever the run config, but only the active
+    // palette ever appears in a label — so a command naming one of the colors
+    // this run never saw doesn't fail loudly, it quietly answers with the
+    // nearest color it DOES know and picks up the wrong block. Say so instead.
+    const cfg = runCfgRef.current;
+    const untrained = COLORS.slice(cfg.numColors).find((c) =>
+      c.synonyms.some((s) => words.includes(s))
+    );
+    if (untrained) {
+      const known = activePalette(cfg)
+        .map((c) => c.name)
+        .join(", ");
+      setTryNote(`this run never learned ${untrained.name} — only ${known}`);
+      setDecoded(null); // nothing ran: don't leave the previous answer standing
+      return;
+    }
+
+    const tokens = tokenize(text);
+    const d = await trainer.decodeCommand(tokens); // worker round-trip (~ms)
+    if (!d || statusRef.current !== "converged") return;
+    // a color the policy knows, but that this scene doesn't contain: the reach
+    // would silently fall back to some other block
+    if (!rolloutLayoutRef.current.some((b) => b.color === d.color)) {
+      setTryNote(`no ${COLORS[d.color].name} block in this scene — ⟳ to reshuffle`);
+      setDecoded(null);
+      return;
+    }
     const sentence: Sentence = {
       color: d.color,
       text,
@@ -1028,6 +1093,16 @@ export default function Hero() {
     setTryNote(null);
     armState.current = { a1: REST[0], a2: REST[1] };
     engineRef.current!.begin(d.color, tokens);
+  };
+
+  /** Preset chips (mobile): the free-text box is the demo's payoff, but on a
+      phone it is also the highest-friction step AND the palette is half the
+      size — so offer one tap per color the run actually trained on. Derived
+      from the profile, never hand-written, so they cannot drift from it. */
+  const runPreset = (color: string) => {
+    const command = `pick up the ${color} block`;
+    setTryText(command);
+    void runCommand(command);
   };
 
   const randomizeBlocks = () => {
@@ -1121,18 +1196,6 @@ export default function Hero() {
     dragRef.current = null;
   };
 
-  // ---- ⚙ run-config menu (editable while idle; locked once training runs;
-  // Reset returns to idle and re-opens the choice) ----
-  const setNumColors = (n: RunConfig["numColors"]) =>
-    setRunCfg({
-      ...runCfg,
-      numColors: n,
-      // colors are unique per scene, so the palette caps the block count
-      maxBlocks: Math.min(runCfg.maxBlocks, n) as RunConfig["maxBlocks"],
-    });
-  const setMaxBlocks = (n: RunConfig["maxBlocks"]) =>
-    setRunCfg({ ...runCfg, maxBlocks: n });
-
   const active = userSentence ?? demoSentence;
 
   // Keep the language-encoder chips on a single line for any sentence length:
@@ -1208,6 +1271,20 @@ export default function Hero() {
             />
             <div className="vla-status-col">
               <span className="vla-status-text">{statusText}</span>
+              {/* what Start would train. The ⚙ menu used to be the only place
+                  the viewer could learn that the job is "find the named block
+                  among up to four, out of eight colors" — which is the whole
+                  reason the loss curve takes the better part of a minute. */}
+              {!live && (
+                <>
+                  <span className="vla-status-sub">
+                    {runCfg.numColors} colors · ≤{runCfg.maxBlocks} blocks
+                  </span>
+                  <span className="vla-status-sub">
+                    est. ~{estimateTrainingSeconds(runCfg)}s on a laptop GPU
+                  </span>
+                </>
+              )}
               {live && hud.samples > 0 && (
                 <>
                   <span className="vla-status-sub">
@@ -1233,74 +1310,14 @@ export default function Hero() {
           </div>
           <div className="vla-loss-val">{hud.lossText}</div>
           {status === "idle" || status === "loading" ? (
-            <>
-              {/* ⚙ run config — what to train (palette / density / task set),
-                  pickable only before training starts */}
-              <div className="vla-cfg">
-                <button
-                  className={`vla-btn vla-btn-ghost vla-cfg-btn${cfgOpen ? " is-open" : ""}`}
-                  onClick={() => setCfgOpen((o) => !o)}
-                  type="button"
-                  disabled={status === "loading"}
-                  aria-expanded={cfgOpen}
-                  title="Configure what to train"
-                >
-                  ⚙
-                </button>
-                {cfgOpen && status === "idle" && (
-                  <div className="vla-cfg-pop">
-                    <div className="vla-cfg-row">
-                      <span className="vla-cfg-k">colors</span>
-                      <div className="vla-cfg-opts">
-                        {([2, 4, 8] as const).map((n) => (
-                          <button
-                            key={n}
-                            type="button"
-                            className={`vla-cfg-opt${runCfg.numColors === n ? " is-sel" : ""}`}
-                            onClick={() => setNumColors(n)}
-                          >
-                            {n}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="vla-cfg-row">
-                      <span className="vla-cfg-k">blocks</span>
-                      <div className="vla-cfg-opts">
-                        {([2, 3, 4] as const).map((n) => (
-                          <button
-                            key={n}
-                            type="button"
-                            className={`vla-cfg-opt${runCfg.maxBlocks === n ? " is-sel" : ""}`}
-                            disabled={n > runCfg.numColors}
-                            title={
-                              n > runCfg.numColors
-                                ? "every block is a unique color — capped by the palette"
-                                : undefined
-                            }
-                            onClick={() => setMaxBlocks(n)}
-                          >
-                            ≤{n}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="vla-cfg-eta">
-                      est. training ~{estimateTrainingSeconds(runCfg)}s
-                      <span className="vla-cfg-eta-note"> · on a laptop GPU</span>
-                    </div>
-                  </div>
-                )}
-              </div>
-              <button
-                className="vla-btn"
-                onClick={onPrimary}
-                type="button"
-                disabled={status === "loading"}
-              >
-                Start Training
-              </button>
-            </>
+            <button
+              className="vla-btn"
+              onClick={onPrimary}
+              type="button"
+              disabled={status === "loading"}
+            >
+              Start Training
+            </button>
           ) : status === "converged" ? (
             <button className="vla-btn vla-btn-ghost" onClick={onReset} type="button">
               Reset
@@ -1434,12 +1451,19 @@ export default function Hero() {
               className="vla-try-input"
               placeholder="e.g. grab the blue cube"
               value={tryText}
-              onChange={(e) => setTryText(e.target.value)}
+              onChange={(e) => {
+                setTryText(e.target.value);
+                setTryNote(null); // the note described the previous command
+              }}
               onKeyDown={(e) => {
                 if (e.key === "Enter") void runCommand();
               }}
             />
-            <button className="vla-try-btn" onClick={runCommand} type="button">
+            <button
+              className="vla-try-btn"
+              onClick={() => void runCommand()}
+              type="button"
+            >
               Run
             </button>
             <button
@@ -1450,6 +1474,24 @@ export default function Hero() {
             >
               ⟳
             </button>
+            {/* one chip per trained color — display:none above the breakpoint,
+                where all eight colors are trained and typing is cheap */}
+            <div className="vla-try-presets">
+              {activePalette(runCfg).map((c) => (
+                <button
+                  key={c.name}
+                  className="vla-try-chip"
+                  onClick={() => runPreset(c.name)}
+                  type="button"
+                >
+                  <span
+                    className="vla-try-chip-dot"
+                    style={{ background: c.hex }}
+                  />
+                  {c.name}
+                </button>
+              ))}
+            </div>
             {tryNote && <div className="vla-try-note">{tryNote}</div>}
           </div>
         )}
