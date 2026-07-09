@@ -334,8 +334,7 @@ export class VLATrainer {
     return this.request({ t: "predictLive", a1, a2, tokens, layout, carry });
   }
 
-  /** Decode what a token sequence asks for — task, color, ref color — via
-      the auxiliary language heads. */
+  /** Decode the acted-on color from a token sequence via the color head. */
   decodeCommand(tokens: number[]): Promise<DecodedCommand | null> {
     if (this.core) return Promise.resolve(this.core.decodeCommand(tokens));
     if (!this.ready) return Promise.resolve(null);

@@ -80,18 +80,6 @@ export function ikToX(x: number, size = BLOCK, rest = 0): [number, number] {
   return solveIK(t.x - BASE.x, t.y - BASE.y);
 }
 
-/** IK joint angles that hold a carried block of side `carrySize` resting ON
-    a reference block (top at refTop, centre at refX) — the stack task's
-    placement target: the CARRIED block's centre ends up half its side above
-    the reference block's top, so releasing there seats it flush. */
-export function ikToPlace(
-  refX: number,
-  refTop: number,
-  carrySize: number
-): [number, number] {
-  return solveIK(refX - BASE.x, refTop + carrySize / 2 - BASE.y);
-}
-
 /** Forward kinematics: elbow + end-effector positions in workspace units. */
 export function fk(a1: number, a2: number) {
   const j1x = BASE.x + Math.cos(a1) * L1;

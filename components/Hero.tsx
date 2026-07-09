@@ -24,11 +24,9 @@ import {
 } from "@/lib/vla/examples";
 import {
   DEFAULT_RUN_CONFIG,
-  TASKS,
   estimateTrainingSeconds,
   setRunConfig,
   type RunConfig,
-  type TaskKind,
 } from "@/lib/vla/run-config";
 import { DEMO_PERIOD_MS, demoPose, makeDemoPlan, type DemoPlan } from "@/lib/vla/demo";
 import { IMG_SIZE } from "@/lib/vla/model";
@@ -41,15 +39,14 @@ import { CONFIG } from "@/lib/vla/config";
 // TensorFlow.js behavioral-cloning loop — hosted in a Web Worker off the main
 // thread (lib/vla/trainer.worker.ts, via the lib/vla/trainer.ts proxy) so
 // gradient steps never fight this component's 60fps rAF loop — against an
-// analytical-IK expert, over the ⚙ run config's task set (lift / stack,
-// 2-4 blocks from a 2/4/8-color palette; lib/vla/run-config.ts): each
-// scene's slot-grammar command names one block to act on (stack names two).
-// The displayed demonstration swaps every cycle while thousands of examples
-// train invisibly; the Rollout runs policy-driven episodes — a block snaps
-// to the effector within graspEps, and the carry phase (lift it home /
-// place it on the reference block) follows the policy's predictions. Once
-// the action loss converges, training stops and the Rollout box becomes
-// interactive: type your own command, run it, reshuffle the blocks.
+// analytical-IK expert on pick-up commands (2-4 blocks from a 2/4/8-color
+// palette; lib/vla/run-config.ts): each scene's slot-grammar command names
+// one block to pick up. The displayed demonstration swaps every cycle while
+// thousands of examples train invisibly; the Rollout runs policy-driven
+// episodes — a block snaps to the effector within graspEps, and the carry
+// phase (lift it home) follows the policy's predictions. Once the action
+// loss converges, training stops and the Rollout box becomes interactive:
+// type your own command, run it, reshuffle the blocks.
 
 const ACCENT = "#e12d1a"; // = --red; canvases can't read CSS vars cheaply
 
@@ -72,8 +69,7 @@ const RETURN_FRAMES = CONFIG.rollout.returnFrames;
 //   reach → settle over a block: it SNAPS to the effector (graspEps — the
 //           gripper is not an action output) and the carry phase begins
 //   carry → policy-driven with the block in hand; once the arm settles at
-//           the predicted target, the TASK decides the ending — stack
-//           releases the block where it hovers, lift holds it aloft
+//           the predicted target, the block is held aloft
 //   hold  → holding the carried block wherever the policy parked it
 //   return→ scripted empty-handed return to rest
 interface Episode {
@@ -83,21 +79,18 @@ interface Episode {
   nearColor: number; // COLORS index of the block being hovered, or -1
   settle: number; // consecutive frames within SETTLE_EPS of the carry target
   color: number; // COLORS index of the commanded block
-  /** which carry ending this episode gets (stack releases, lift holds). */
-  task: TaskKind;
   tokens: number[];
   from: { a1: number; a2: number };
   carry: number | null;
 }
 
-const newEpisode = (color: number, tokens: number[], task: TaskKind): Episode => ({
+const newEpisode = (color: number, tokens: number[]): Episode => ({
   phase: "reach",
   f: 0,
   near: 0,
   nearColor: -1,
   settle: 0,
   color,
-  task,
   tokens,
   from: { a1: REST[0], a2: REST[1] },
   carry: null,
@@ -217,12 +210,9 @@ export default function Hero() {
   const chipRowRef = useRef<HTMLDivElement | null>(null);
   const [tokenBars, setTokenBars] = useState<number[]>([]);
   const [decoded, setDecoded] = useState<{
-    task: string;
     name: string;
     hex: string;
     prob: number;
-    /** stack only: the decoded reference block ("…on the X"). */
-    ref: { name: string; hex: string } | null;
   } | null>(null);
   const [tryNote, setTryNote] = useState<string | null>(null);
   // Vision Encoder panel: flip to the exact inverted tensor the CNN receives.
@@ -379,7 +369,7 @@ export default function Hero() {
           lastCycleRef.current = cycle;
           if (!first) {
             demoLayoutRef.current = randomLayout();
-            // a run-config task on the scene's own blocks (stack names two)
+            // a pick-up command naming one of the scene's own blocks
             const s = sampleCommand(demoLayoutRef.current);
             demoSentenceRef.current = s;
             setDemoSentence(s);
@@ -400,18 +390,6 @@ export default function Hero() {
         a1 = pose.a1;
         a2 = pose.a2;
         carry = pose.carry;
-        // stack: once released, the block stays SEATED on the reference block
-        // for the rest of the cycle (idempotent per-frame set; the next cycle
-        // replaces the whole layout). The rollout's copy is cloned at its
-        // cycle sync, so this never moves the rollout scene's blocks.
-        if (pose.placed && plan.refColor !== null) {
-          const a = demoLayoutRef.current.find((b) => b.color === plan.color);
-          const r = demoLayoutRef.current.find((b) => b.color === plan.refColor);
-          if (a && r) {
-            a.x = r.x;
-            a.y = (r.y ?? 0) + r.size;
-          }
-        }
       } else {
         // idle OR converged: the demonstrations stop once the policy is
         // trained — the arm returns to the resting sway (the CSS also fades
@@ -461,31 +439,6 @@ export default function Hero() {
       ctx.beginPath();
       ctx.arc(px, py, 4.5, 0, 7);
       ctx.stroke();
-    };
-
-    // Release the carried block wherever the effector hovers: it lands
-    // SEATED on another block when it horizontally overlaps one (the tallest
-    // such block wins — stacks can grow), else it drops to the floor. Mutates
-    // the rollout layout in place (training re-clones it every cycle sync;
-    // converged keeps the result so follow-up commands see the stacked scene).
-    const landCarry = (ep: Episode) => {
-      const layout = rolloutLayoutRef.current;
-      const held = layout.find((b) => b.color === ep.carry);
-      if (!held) return;
-      const e = fk(armState.current.a1, armState.current.a2);
-      let under: BlockPos | null = null;
-      for (const b of layout) {
-        if (b.color === ep.carry) continue;
-        if (Math.abs(e.ex - b.x) > (b.size + held.size) / 2) continue;
-        if (!under || (b.y ?? 0) + b.size > (under.y ?? 0) + under.size) under = b;
-      }
-      if (under) {
-        held.x = under.x; // seat it flush on the block it was dropped over
-        held.y = (under.y ?? 0) + under.size;
-      } else {
-        held.x = clamp(e.ex, 0.03, 0.97);
-        held.y = 0;
-      }
     };
 
     // advance one episode by a frame; ends by nulling the episode (arm left
@@ -553,7 +506,7 @@ export default function Hero() {
           const e = fk(arm.a1, arm.a2);
           let touched = -1;
           for (const b of rolloutLayoutRef.current) {
-            // grasp height follows block size AND rest height (stacked blocks)
+            // grasp height follows block size AND rest height
             const g = graspTarget(b.x, b.size, b.y ?? 0);
             if (Math.hypot(e.ex - g.x, e.ey - g.y) < GRASP_EPS) {
               touched = b.color;
@@ -589,22 +542,12 @@ export default function Hero() {
             Math.abs(t[1] - arm.a2) < SETTLE_EPS;
           ep.settle = settled ? ep.settle + 1 : 0;
           if (ep.settle >= NEAR_FRAMES) {
-            if (ep.task === "stack") {
-              // release: the block lands where it's dropped (on the block
-              // beneath it, or the floor), then the arm withdraws
-              landCarry(ep);
-              ep.carry = null;
-              ep.phase = "return";
-              ep.from = { ...arm };
-              ep.f = 0;
-            } else {
-              // lift: hold the block wherever the policy parked
-              ep.phase = "hold";
-              ep.f = 0;
-            }
+            // hold the block aloft wherever the policy parked it
+            ep.phase = "hold";
+            ep.f = 0;
           } else if (ep.f > REACH_TIMEOUT) {
-            // carry never settled — drop the block where it hangs and give up
-            landCarry(ep);
+            // carry never settled — drop the block and give up (it resets to
+            // its floor spot once the episode ends)
             ep.carry = null;
             ep.phase = "return";
             ep.from = { ...arm };
@@ -663,10 +606,9 @@ export default function Hero() {
           // attempt reflects one policy generation (not a live-drifting target)
           if (rolloutCycleRef.current !== lastCycleRef.current) {
             rolloutCycleRef.current = lastCycleRef.current;
-            // per-block CLONE of the demo scene, not a shared reference: both
-            // sides now MUTATE block positions mid-cycle (the demo seats a
-            // stacked block, the rollout's landCarry drops one), so sharing
-            // objects would leak one box's physics into the other
+            // per-block CLONE of the demo scene, not a shared reference: the
+            // viewer can drag the rollout's blocks once converged, so sharing
+            // objects would leak one box's positions into the other
             rolloutLayoutRef.current = demoLayoutRef.current.map((b) => ({ ...b }));
             arm.a1 = REST[0];
             arm.a2 = REST[1];
@@ -680,8 +622,7 @@ export default function Hero() {
             setRolloutSamples(trainer.samples);
             episodeRef.current = newEpisode(
               demoSentenceRef.current.color,
-              demoSentenceRef.current.tokens,
-              demoSentenceRef.current.task
+              demoSentenceRef.current.tokens
             );
           }
           const ep = episodeRef.current;
@@ -869,13 +810,12 @@ export default function Hero() {
       ctx.fill();
     };
 
-    // real language-encoder readouts: decoded command (task + color + ref
-    // color) + each token's live ATTENTION weight (see attentionWeights in
-    // trainer.core.ts — the exact masked-softmax weights the attention-
-    // pooling layer uses, recomputed from the linear scorer's weights, not an
-    // approximation). Both are async round-trips to the trainer worker;
-    // LANG_MS throttling means at most one pair is ever in flight, so replies
-    // apply in order.
+    // real language-encoder readouts: decoded command (color) + each token's
+    // live ATTENTION weight (see attentionWeights in trainer.core.ts — the
+    // exact masked-softmax weights the attention-pooling layer uses,
+    // recomputed from the linear scorer's weights, not an approximation).
+    // Both are async round-trips to the trainer worker; LANG_MS throttling
+    // means at most one pair is ever in flight, so replies apply in order.
     const langViz = (now: number) => {
       const trainer = trainerRef.current;
       if (!trainer?.ready || now - lastLangRef.current < LANG_MS) return;
@@ -886,14 +826,9 @@ export default function Hero() {
       const decodeP = trainer.decodeCommand(tokens).then((d) => {
         if (!d) return;
         setDecoded({
-          task: d.task,
           name: COLORS[d.color].name,
           hex: COLORS[d.color].hex,
           prob: d.colorProb,
-          ref:
-            d.refColor !== null
-              ? { name: COLORS[d.refColor].name, hex: COLORS[d.refColor].hex }
-              : null,
         });
       });
       const attnP = trainer.attentionWeights(tokens).then((bars) => {
@@ -987,19 +922,11 @@ export default function Hero() {
       // draws a command (trainer.start also ships it to the worker)
       const cfg = runCfgRef.current;
       setRunConfig(cfg);
-      // per-block clone of the default scene — stack demos/rollouts MUTATE
-      // block positions, and the module-level DEFAULT_LAYOUT must stay pristine
+      // per-block clone of the default scene — the rollout's blocks are
+      // draggable once converged, so the module-level DEFAULT_LAYOUT must
+      // stay pristine
       demoLayoutRef.current = DEFAULT_LAYOUT.map((b) => ({ ...b }));
       rolloutLayoutRef.current = DEFAULT_LAYOUT.map((b) => ({ ...b }));
-      // the pre-click default demonstration is a LIFT — if the config trains
-      // without lift, the very first cycle must already demo an enabled task
-      if (!cfg.tasks.includes("lift")) {
-        const s = sampleCommand(demoLayoutRef.current);
-        demoSentenceRef.current = s;
-        setDemoSentence(s);
-        activeTokensRef.current = s.tokens;
-        demoPlanRef.current = null; // re-plan for the swapped command
-      }
       void trainer.start(onUpdate, cfg);
     }
   };
@@ -1014,7 +941,7 @@ export default function Hero() {
     gazeRef.current = null;
     visGazeRef.current = null;
     armState.current = { a1: REST[0], a2: REST[1] };
-    // clones — stack demos/rollouts mutate blocks; DEFAULT_LAYOUT stays pristine
+    // clones — the rollout's blocks are draggable; DEFAULT_LAYOUT stays pristine
     demoLayoutRef.current = DEFAULT_LAYOUT.map((b) => ({ ...b }));
     demoSentenceRef.current = DEFAULT_SENTENCE;
     demoPlanRef.current = null;
@@ -1036,9 +963,8 @@ export default function Hero() {
   };
 
   /** "Try it" mode: run the user's own sentence through the trained policy.
-      The language heads decode task + color + ref color; the checks below
-      only gate EXECUTABILITY (was the task trained? are the named blocks in
-      the scene?) — the motion itself is entirely the policy's. */
+      The color head decodes which block to pick up; the motion itself is
+      entirely the policy's. */
   const runCommand = async () => {
     const trainer = trainerRef.current;
     if (!trainer?.ready || statusRef.current !== "converged") return;
@@ -1054,9 +980,7 @@ export default function Hero() {
       .filter(Boolean)
       .slice(0, MAX_SEQ_LEN);
     const sentence: Sentence = {
-      task: d.task,
       color: d.color,
-      refColor: d.refColor,
       text,
       words,
       tokens,
@@ -1065,31 +989,16 @@ export default function Hero() {
     setUserSentence(sentence);
     activeTokensRef.current = tokens;
     setDecoded({
-      task: d.task,
       name: COLORS[d.color].name,
       hex: COLORS[d.color].hex,
       prob: d.colorProb,
-      ref:
-        d.refColor !== null
-          ? { name: COLORS[d.refColor].name, hex: COLORS[d.refColor].hex }
-          : null,
     });
-    // a task outside the trained set has no demonstrations behind it — the
-    // policy would just improvise; point at the ⚙ menu instead
-    if (!runCfgRef.current.tasks.includes(d.task)) {
-      setTryNote(`the policy wasn't trained on "${d.task}" — ⚙ + Reset to retrain`);
-      return;
-    }
-    if (d.task === "stack" && (d.refColor === null || d.refColor === d.color)) {
-      setTryNote("name a second color to stack onto, e.g. “put red on blue”");
-      return;
-    }
     setTryNote(null);
     armState.current = { a1: REST[0], a2: REST[1] };
     trailRef.current = [];
     targetRef.current = null;
     gazeRef.current = null;
-    episodeRef.current = newEpisode(d.color, tokens, d.task);
+    episodeRef.current = newEpisode(d.color, tokens);
   };
 
   const randomizeBlocks = () => {
@@ -1130,7 +1039,7 @@ export default function Hero() {
     for (const b of rolloutLayoutRef.current) {
       const cx = rect.width * 0.5 + (b.x - 0.5) * S;
       const half = (b.size * S) / 2;
-      const bottom = floorY - (b.y ?? 0) * S; // stacked blocks sit higher
+      const bottom = floorY - (b.y ?? 0) * S; // rest height (normally floor)
       if (
         px >= cx - half - pad &&
         px <= cx + half + pad &&
@@ -1162,7 +1071,7 @@ export default function Hero() {
     gazeRef.current = null;
     armState.current = { a1: REST[0], a2: REST[1] };
     setTryNote(null);
-    // a dragged block returns to the floor (its stack breaks physically)
+    // a dragged block rests on the floor
     b.y = 0;
     c.style.cursor = "grabbing";
   };
@@ -1200,17 +1109,6 @@ export default function Hero() {
     });
   const setMaxBlocks = (n: RunConfig["maxBlocks"]) =>
     setRunCfg({ ...runCfg, maxBlocks: n });
-  const toggleTask = (t: RunConfig["tasks"][number]) => {
-    const has = runCfg.tasks.includes(t);
-    if (has && runCfg.tasks.length === 1) return; // at least one task
-    setRunCfg({
-      ...runCfg,
-      // filter over TASKS so the selection keeps the canonical order
-      tasks: TASKS.filter((x) =>
-        x === t ? !has : runCfg.tasks.includes(x)
-      ),
-    });
-  };
 
   const active = userSentence ?? demoSentence;
 
@@ -1328,22 +1226,11 @@ export default function Hero() {
           decoded target:{" "}
           {decoded ? (
             <>
-              {decoded.task}{" "}
               <span
                 className="vla-swatch"
                 style={{ background: decoded.hex }}
               />
               {decoded.name} {(decoded.prob * 100).toFixed(0)}%
-              {decoded.ref && (
-                <>
-                  {" on "}
-                  <span
-                    className="vla-swatch"
-                    style={{ background: decoded.ref.hex }}
-                  />
-                  {decoded.ref.name}
-                </>
-              )}
             </>
           ) : (
             "—"
@@ -1494,21 +1381,6 @@ export default function Hero() {
                           onClick={() => setMaxBlocks(n)}
                         >
                           ≤{n}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="vla-cfg-row">
-                    <span className="vla-cfg-k">tasks</span>
-                    <div className="vla-cfg-opts">
-                      {TASKS.map((t) => (
-                        <button
-                          key={t}
-                          type="button"
-                          className={`vla-cfg-opt${runCfg.tasks.includes(t) ? " is-sel" : ""}`}
-                          onClick={() => toggleTask(t)}
-                        >
-                          {t}
                         </button>
                       ))}
                     </div>

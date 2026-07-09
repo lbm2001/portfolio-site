@@ -11,10 +11,6 @@
         ["get"],
         ["reach", "for"]
       ]
-    },
-    "stack": {
-      "verbs": [["put"], ["place"], ["stack"], ["set"]],
-      "preps": [["on"], ["onto"], ["on", "top", "of"]]
     }
   },
   "articles": ["the", "a"],

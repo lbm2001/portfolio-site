@@ -5,7 +5,7 @@
 // from anywhere; it exists so a playwright script can run controlled
 // training experiments against the real pipeline:
 //
-//   /vla-lab?tasks=lift,stack&colors=4&blocks=3&probe=25&max=600
+//   /vla-lab?colors=4&blocks=3&probe=25&max=600
 //
 // It runs VLATrainerCore INLINE on the main thread (the core is
 // environment-agnostic; the worker indirection buys nothing headless),
@@ -20,7 +20,7 @@
 
 import { useEffect, useState } from "react";
 import { CONFIG } from "@/lib/vla/config";
-import { setRunConfig, type RunConfig, type TaskKind } from "@/lib/vla/run-config";
+import { setRunConfig, type RunConfig } from "@/lib/vla/run-config";
 
 // NOTE: trainer.core (and model.ts underneath) snapshot CONFIG values into
 // module constants when they first evaluate — so this page must NOT import
@@ -38,8 +38,6 @@ import { setRunConfig, type RunConfig, type TaskKind } from "@/lib/vla/run-confi
 interface RolloutEval {
   episodes: number;
   graspRate: number;
-  /** stack episodes only: carried block released seated on the reference. */
-  seatRate: number | null;
   /** mean frames from episode start to grasp (successful grasps only). */
   meanGraspFrames: number | null;
   /** mean |Δ target| (rad) between consecutive reach-phase predictions —
@@ -80,8 +78,6 @@ async function closedLoopEval(
   // the worst-case predict count bounded (episodes × MAX_FRAMES/PRED_EVERY)
 
   let grasps = 0;
-  let seats = 0;
-  let stackN = 0;
   let graspFramesSum = 0;
   let jitterSum = 0;
   let jitterN = 0;
@@ -94,8 +90,6 @@ async function closedLoopEval(
     const layout = randomLayout();
     const cmd = sampleCommand(layout);
     const target = blockOfColor(layout, cmd.color);
-    const ref = cmd.task === "stack" ? blockOfColor(layout, cmd.refColor!) : null;
-    if (cmd.task === "stack") stackN++;
 
     let a1 = REST[0];
     let a2 = REST[1];
@@ -109,7 +103,7 @@ async function closedLoopEval(
     for (let f = 0; f < MAX_FRAMES; f++) {
       if (f % PRED_EVERY === 0) {
         const p = core.predictTarget(a1, a2, cmd.tokens, layout, carry);
-        if (!p) return { episodes: 0, graspRate: 0, seatRate: null, meanGraspFrames: null, reachJitter: null };
+        if (!p) return { episodes: 0, graspRate: 0, meanGraspFrames: null, reachJitter: null };
         if (prevPred && carry === null && f > PRED_EVERY)
           // reach-phase prediction wobble, skipping the first transient
           (jitterSum += Math.hypot(p.target[0] - prevPred[0], p.target[1] - prevPred[1])), jitterN++;
@@ -134,18 +128,8 @@ async function closedLoopEval(
         Math.abs(pred[0] - a1) < R.settleEps &&
         Math.abs(pred[1] - a2) < R.settleEps
       ) {
-        if (++settle >= 4) {
-          if (cmd.task === "stack" && ref) {
-            // released where it hovers — seated iff it overlaps the ref top
-            const seatY = (ref.y ?? 0) + ref.size + target.size / 2;
-            if (
-              Math.abs(ex - ref.x) < (ref.size + target.size) / 2 &&
-              Math.abs(ey - seatY) < 0.08
-            )
-              seats++;
-          }
-          break;
-        }
+        // carry settled — the arm holds the block aloft; episode done
+        if (++settle >= 4) break;
       } else settle = 0;
       void grasped;
     }
@@ -153,7 +137,6 @@ async function closedLoopEval(
   return {
     episodes,
     graspRate: grasps / episodes,
-    seatRate: stackN ? seats / stackN : null,
     meanGraspFrames: grasps ? graspFramesSum / grasps : null,
     reachJitter: jitterN ? jitterSum / jitterN : null,
   };
@@ -164,11 +147,9 @@ export default function VLALab() {
 
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
-    const tasks = (q.get("tasks") ?? "lift").split(",") as TaskKind[];
     const rc: RunConfig = {
       numColors: (Number(q.get("colors")) || 8) as RunConfig["numColors"],
       maxBlocks: (Number(q.get("blocks")) || 4) as RunConfig["maxBlocks"],
-      tasks,
     };
     setRunConfig(rc);
 
@@ -231,7 +212,6 @@ export default function VLALab() {
                 window.__vlaLab.rollout = {
                   episodes: -1,
                   graspRate: -1,
-                  seatRate: null,
                   meanGraspFrames: null,
                   reachJitter: null,
                 };

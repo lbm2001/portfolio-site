@@ -1,17 +1,15 @@
 // Language + scene-layout space for the VLA tasks.
 //
 // Eight named colors (chosen for maximum hue contrast at small silhouette
-// sizes), each with synonyms; sentences are generated from a slot grammar
-// with per-task verb sets (filler? verb article color-word noun please? —
-// stack adds "prep article ref-color noun" for the reference block) so
-// hundreds of surface forms collapse onto (task, color[, refColor]) intents.
+// sizes), each with synonyms; pick-up commands are generated from a slot
+// grammar (filler? verb article color-word noun please?) so hundreds of
+// surface forms collapse onto a single color intent.
 // The word inventory lives in grammar.json (single source of truth shared
-// with scripts/gen-embeddings-data.mjs). Which tasks/colors/densities are
-// actually SAMPLED is the user's ⚙ run config (lib/vla/run-config.ts):
-// scenes place 2..min(maxBlocks, numColors) blocks (≤2 per side band),
-// colors drawn from the first numColors palette entries without replacement
-// — every block is a unique color and the job is to localize the named
-// one(s) among up to four.
+// with scripts/gen-embeddings-data.mjs). Which colors/densities are actually
+// SAMPLED is the user's ⚙ run config (lib/vla/run-config.ts): scenes place
+// 2..min(maxBlocks, numColors) blocks (≤2 per side band), colors drawn from
+// the first numColors palette entries without replacement — every block is a
+// unique color and the job is to localize the named one among up to four.
 //
 // Token ids index the pretrained GloVe table (vocab.gen.ts / public/vla/):
 // 0 is <pad>, 1 is <unk>, then the ~20k-word GloVe vocab. Only the grammar
@@ -25,7 +23,7 @@
 import grammar from "./grammar.json";
 import { CONFIG } from "./config";
 import { BLOCK, BLOCK_MAX, BLOCK_MIN } from "./geometry";
-import { runConfig, type TaskKind } from "./run-config";
+import { runConfig } from "./run-config";
 import { CORE_VOCAB } from "./vocab.gen";
 
 export { VOCAB_SIZE } from "./vocab.gen";
@@ -42,11 +40,7 @@ export interface ColorDef {
 
 export const COLORS: ColorDef[] = grammar.colors;
 
-const TASK_VERBS: Record<TaskKind, string[][]> = {
-  lift: grammar.tasks.lift.verbs,
-  stack: grammar.tasks.stack.verbs,
-};
-const STACK_PREPS = grammar.tasks.stack.preps;
+const LIFT_VERBS: string[][] = grammar.tasks.lift.verbs;
 const ARTICLES = grammar.articles;
 const NOUNS = grammar.nouns;
 const FILLERS = grammar.fillers;
@@ -57,17 +51,13 @@ export const COLOR_TOKEN_IDS = new Set<number>(
 );
 
 /** Token ids that CARRY LABEL INFORMATION — the color synonyms plus every
-    task verb/preposition word. Exempt from training word-dropout: dropping
-    the verb to <unk> while the task label still says "stack" would be
-    label noise, exactly like dropping the color word (the original reason
-    this exemption exists). Articles/nouns/fillers remain droppable, which is
+    verb word. Exempt from training word-dropout, exactly like the color word:
+    the color word carries the whole intent, and the verb words are the tokens
+    a terse command leans on. Articles/nouns/fillers remain droppable, which is
     all the robustness the dropout was ever buying. */
 export const LABEL_TOKEN_IDS = new Set<number>([
   ...COLOR_TOKEN_IDS,
-  ...Object.values(TASK_VERBS)
-    .flat(2)
-    .map((w) => CORE_VOCAB[w]),
-  ...STACK_PREPS.flat().map((w) => CORE_VOCAB[w]),
+  ...LIFT_VERBS.flat().map((w) => CORE_VOCAB[w]),
 ]);
 
 // full GloVe word list, registered by loadEmbeddings() once fetched
@@ -150,10 +140,7 @@ export function tokenize(sentence: string): number[] {
 }
 
 export interface Sentence {
-  task: TaskKind;
   color: number; // index into COLORS — the block the arm acts ON
-  /** stack only: the block the commanded one goes ON TOP OF (else null). */
-  refColor: number | null;
   text: string;
   words: string[];
   tokens: number[];
@@ -161,63 +148,38 @@ export interface Sentence {
 
 const pick = <T,>(a: readonly T[]): T => a[Math.floor(Math.random() * a.length)];
 
-/** A random surface form for (task, color[, refColor]): filler? verb? article?
-    color noun? [prep article? refColor noun?] please?. Verb/article/noun are
-    randomly DROPPED (see the dropXxxProb comments in config.ts) so the
-    position-aware language slots also train on compressed forms ("black on
-    red", "grab red") — without this they overfit the full grammar's fixed
-    color-word positions and terse user commands decode wrongly. Preps and
-    color words never drop: they carry the task/color labels. */
-export function sampleSentence(
-  task: TaskKind,
-  color: number,
-  refColor: number | null = null
-): Sentence {
+/** A random surface form for a color: filler? verb? article? color noun?
+    please?. Verb/article/noun are randomly DROPPED (see the dropXxxProb
+    comments in config.ts) so the language scorer also trains on compressed
+    forms ("grab red") instead of overfitting the full grammar's fixed
+    color-word position. The color word never drops: it carries the intent. */
+export function sampleSentence(color: number): Sentence {
   const keep = (dropProb: number) => Math.random() >= dropProb;
   const parts: string[] = [];
   if (Math.random() < CONFIG.task.fillerProb) parts.push(pick(FILLERS));
-  if (keep(CONFIG.task.dropVerbProb)) parts.push(...pick(TASK_VERBS[task]));
+  if (keep(CONFIG.task.dropVerbProb)) parts.push(...pick(LIFT_VERBS));
   if (keep(CONFIG.task.dropArticleProb)) parts.push(pick(ARTICLES));
   parts.push(pick(COLORS[color].synonyms));
   if (keep(CONFIG.task.dropNounProb)) parts.push(pick(NOUNS));
-  if (task === "stack" && refColor !== null) {
-    parts.push(...pick(STACK_PREPS));
-    if (keep(CONFIG.task.dropArticleProb)) parts.push(pick(ARTICLES));
-    parts.push(pick(COLORS[refColor].synonyms));
-    if (keep(CONFIG.task.dropNounProb)) parts.push(pick(NOUNS));
-  }
   if (Math.random() < CONFIG.task.pleaseProb) parts.push("please");
   const text = parts.join(" ");
   return {
-    task,
     color,
-    refColor: task === "stack" ? refColor : null,
     text,
     words: parts,
     tokens: tokenize(text),
   };
 }
 
-/** A random command EXECUTABLE in the given layout, for a task drawn from
-    the active run config: the acted-on color is present, and stack names a
-    second, distinct present color to stack onto (layouts always hold ≥2
-    blocks, so a pair always exists). `forceTask` pins the task instead of
-    drawing it — the trainer's per-bucket probe batches use it. */
-export function sampleCommand(layout: Layout, forceTask?: TaskKind): Sentence {
-  const tasks = runConfig().tasks;
-  const task = forceTask ?? tasks[Math.floor(Math.random() * tasks.length)];
-  if (task === "stack") {
-    const [color, ref] = presentColorPair(layout);
-    return sampleSentence(task, color, ref);
-  }
-  return sampleSentence(task, presentColor(layout));
+/** A random command EXECUTABLE in the given layout: the acted-on color is one
+    that is actually present in the scene. */
+export function sampleCommand(layout: Layout): Sentence {
+  return sampleSentence(presentColor(layout));
 }
 
 /** Deterministic default (safe for SSR/hydration — no randomness). */
 export const DEFAULT_SENTENCE: Sentence = {
-  task: "lift",
   color: 0,
-  refColor: null,
   text: "pick up the red block",
   words: ["pick", "up", "the", "red", "block"],
   tokens: tokenize("pick up the red block"),
@@ -229,10 +191,10 @@ export interface BlockPos {
   x: number; // block center, workspace units
   color: number; // index into COLORS
   size: number; // block side length, workspace units (grasp height = size/2)
-  /** Rest height of the block's BOTTOM (0 / absent = on the floor; >0 = on
-      top of another block, set when a stack episode releases it there).
-      Training scenes always start flat — stacked rests only arise from
-      rollout/demo releases. */
+  /** Rest height of the block's BOTTOM in workspace units (0 / absent = on
+      the floor). Pick-up scenes are always flat, so this is currently always
+      0; kept as a general rest-height field the rendering + label geometry
+      already thread through. */
   y?: number;
 }
 export type Layout = BlockPos[];
@@ -355,13 +317,4 @@ export function blockOfColor(layout: Layout, color: number): BlockPos {
 /** A random color that IS present in the given layout. */
 export function presentColor(layout: Layout): number {
   return layout[Math.floor(Math.random() * layout.length)].color;
-}
-
-/** Two DISTINCT present colors — stack's (acted-on, stacked-onto) pair.
-    Layouts always hold ≥2 blocks, so a pair always exists. */
-export function presentColorPair(layout: Layout): [number, number] {
-  const i = Math.floor(Math.random() * layout.length);
-  let j = Math.floor(Math.random() * (layout.length - 1));
-  if (j >= i) j++;
-  return [layout[i].color, layout[j].color];
 }

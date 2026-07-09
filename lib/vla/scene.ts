@@ -96,7 +96,7 @@ export function paintScene(
 
   // blocks first — the WHOLE arm draws over them so the reach into a block
   // and the grip on a carried one stay visible. Each block draws at its own
-  // randomized side length, bottom at its rest height (y>0 = stacked).
+  // randomized side length, bottom at its rest height (y, normally 0).
   for (const b of layout) {
     if (b.color === carry) continue; // carried block leaves its floor spot
     const box = b.size * m.S;
