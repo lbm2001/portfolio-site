@@ -159,7 +159,11 @@ a {
    wires. Toggling training only changes opacity/labels — nothing reflows. */
 .hero {
   position: relative;
-  height: calc(100vh - 61px);
+  height: calc(100vh - var(--nav-h));
+  /* svh = viewport with the mobile browser chrome *showing*, i.e. the landing
+     state. Sizing to it means nothing below the hero can peek in before the
+     first scroll; dvh would instead reflow the stage as the URL bar retracts. */
+  height: calc(100svh - var(--nav-h));
   min-height: 700px;
   overflow: hidden;
   background: var(--bg);
@@ -1068,9 +1072,12 @@ a {
   .vla-bar {
     display: none;
   }
+  /* height:auto so .demo-open can grow the stack past the fold; min-height
+     still holds the closed hero to a full screen. */
   .hero {
     height: auto;
-    min-height: 560px;
+    min-height: calc(100vh - var(--nav-h));
+    min-height: calc(100svh - var(--nav-h));
   }
   /* the intro dims for the pipeline only when there IS a pipeline on screen:
      closing the demo mid-run would otherwise leave the name greyed out */
