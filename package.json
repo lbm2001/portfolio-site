@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "predev": "node scripts/copy-vla-assets.mjs",
+    "predev": "node scripts/copy-vla-assets.mjs && node --experimental-strip-types scripts/gen-projects-data.mjs && node --experimental-strip-types scripts/gen-blog-data.mjs",
     "prebuild": "node scripts/copy-vla-assets.mjs && ./scripts/build-resume.sh",
     "build": "next build",
     "dev": "next dev",
