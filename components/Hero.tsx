@@ -44,10 +44,10 @@ import {
 // name (Demonstration left w/ floating prompt above, Vision Encoder top,
 // Language Encoder bottom, Rollout right). "Start Training" runs a GENUINE
 // TensorFlow.js behavioral-cloning loop — hosted in a Web Worker off the main
-// thread (lib/vla/trainer.worker.ts, via the lib/vla/trainer.ts proxy) so
+// thread (mini-vla's trainer.worker.ts, via the mini-vla/trainer proxy) so
 // gradient steps never fight this component's 60fps rAF loop — against an
 // analytical-IK expert on pick-up commands (2-4 blocks from a 2/4/8-color
-// palette; lib/vla/run-config.ts): each scene's slot-grammar command names
+// palette; mini-vla/config): each scene's slot-grammar command names
 // one block to pick up. The displayed demonstration swaps every cycle while
 // thousands of examples train invisibly; the Rollout runs policy-driven
 // episodes — the arm approaches with an open gripper and the LEARNED gripper
@@ -75,7 +75,7 @@ const SCENE_PALETTE: ScenePalette = {
 
 // The rollout state machine — phases (reach → carry → hold → return), the
 // learned-grasp gate, carry attachment, and stepping toward the last async-
-// predicted target — lives in lib/vla/rollout.ts (RolloutEngine). Hero only
+// predicted target — lives in mini-vla/rollout (RolloutEngine). Hero only
 // drives it and paints the RolloutFrames it returns. LANG_MS is the shared
 // throttle for the language + vision-gaze readouts (CONFIG.rollout).
 const LANG_MS = CONFIG.rollout.langMs;
