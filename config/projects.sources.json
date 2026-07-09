@@ -1,13 +1,13 @@
 {
-  "dir": "portfolio",
+  "contentRepo": "lbm2001/portfolio-project-content",
   "file": "README.md",
   "projects": [
-    { "slug": "algo-lens", "repo": "lbm2001/algo-lens"},
-    { "slug": "mini-vla", "repo": "lbm2001/mini-vla"},
-    { "slug": "ev-charging-optimal-vs-heuristics", "repo": "lbm2001/au-mdt" },
-    { "slug": "mujopy", "repo": "lbm2001/mujopy" },
-    { "slug": "large-scale-robot-generation", "repo": "lbm2001/lascroge" },
-    { "slug": "easy-eda-visualizations", "repo": "lbm2001/easy_eda_visualizations"},
-    { "slug": "airbnb-price-estimation", "repo": "lbm2001/udacity_data_science_airbnb_project"}
+    { "repo": "lbm2001/algo-lens" },
+    { "repo": "lbm2001/mini-vla" },
+    { "repo": "lbm2001/au-mdt", "slug": "ev-charging-optimal-vs-heuristics" },
+    { "repo": "lbm2001/mujopy" },
+    { "repo": "lbm2001/lascroge", "slug": "large-scale-robot-generation" },
+    { "repo": "lbm2001/easy_eda_visualizations", "slug": "easy-eda-visualizations" },
+    { "repo": "lbm2001/udacity_data_science_airbnb_project", "slug": "airbnb-price-estimation" }
   ]
 }

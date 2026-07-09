@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "prebuild": "./scripts/build-resume.sh",
+    "predev": "node scripts/copy-vla-assets.mjs",
+    "prebuild": "node scripts/copy-vla-assets.mjs && ./scripts/build-resume.sh",
     "build": "next build",
     "dev": "next dev",
     "start": "next start",
@@ -18,6 +19,7 @@
     "@tensorflow/tfjs": "^4.22.0",
     "katex": "^0.17.0",
     "marked": "^18.0.5",
+    "mini-vla": "github:lbm2001/mini-vla#v0.1.0",
     "next": "^16.2.9",
     "react": "19.0.0",
     "react-dom": "19.0.0"
