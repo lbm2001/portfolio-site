@@ -1,5 +1,27 @@
 [
   {
+    "slug": "algo-lens",
+    "title": "algo-lens",
+    "venue": "Open Source",
+    "period": "Ongoing",
+    "blurb": "",
+    "tags": [
+      "Algorithms",
+      "Visualizations"
+    ],
+    "links": [
+      {
+        "label": "Code",
+        "href": "https://github.com/lbm2001/algo-lens"
+      },
+      {
+        "label": "Website",
+        "href": "https://lukasmueller.dev/projects/algo-lens"
+      }
+    ],
+    "body": "Writing coming soon."
+  },
+  {
     "slug": "mini-vla",
     "title": "mini-vla",
     "venue": "Open Source",

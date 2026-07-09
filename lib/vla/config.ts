@@ -46,15 +46,16 @@ export const CONFIG = {
         collapses across 7 seeds vs 1/7 at 0.2); 0.2 peaked slightly higher on
         lucky seeds but is riskier. */
     colorLossWeight: 0.6,
-    /** Weight of the auxiliary attention-map loss: cross-entropy between the
-        spatial attention map and the commanded block's grid cell. WHY IT
-        EXISTS: the action loss alone cannot train the attention — with a
-        near-uniform 16×16 map the softmax Jacobian dilutes its gradient by
-        ~1/256, and the map never sharpens (measured: loss flat at the ~0.78
-        language-only plateau for 300+ batches). CE through the softmax has
-        an undiluted (map − onehot) gradient, and the supervision is free —
-        the expert already knows which block it labeled. */
-    mapLossWeight: 2.5,
+    /** Weight of the auxiliary attention-map loss (see model.ts): cross-
+        entropy between the spatial attention map and the commanded block's
+        grid cell. WHY IT EXISTS: the action loss alone cannot train the
+        attention — with a near-uniform 16×16 map the softmax Jacobian dilutes
+        its gradient by ~1/256, and the map never sharpens (measured: loss
+        flat at the ~0.78 language-only plateau for 300+ batches). CE through
+        the softmax has an undiluted (map − label) gradient, and the
+        supervision is free — the expert already knows which block it
+        labeled. */
+    mapLossWeight: 1.5,
     /** Scale of the frozen soft-argmax coordinate kernel: the fusion sees the
         gaze as (imageCoord − 0.5) × this gain. WHY: in raw [0,1] units the
         within-band position signal spans only ~0.16 while the other ~74
@@ -74,6 +75,13 @@ export const CONFIG = {
         ~0.025 and smoothing the descent. 0.6 keeps correct-side samples in the
         quadratic zone while catching wrong-side picks early. */
     actionHuberDelta: 0.6,
+    /** Weight of the auxiliary gripper-command loss (binary cross-entropy on
+        the sigmoid "close now" head, see model.ts). Small like the color head:
+        the gripper is an easy, near-deterministic function of "is the effector
+        over the block", so it needs only a light nudge — but non-zero, or the
+        head has no gradient and collapses to a constant. Raise toward ~0.6 (and
+        raise trainer.graspFrac) if the head learns "always closed". */
+    gripperLossWeight: 0.3,
     /** Vision CNN stack, in order. Add/remove entries to change depth; edit
         filters/kernel/stride/pool to retune a stage. The LAST stage's output
         map is what the language-conditioned spatial attention scores (see
@@ -117,20 +125,63 @@ export const CONFIG = {
     nearTargetFrac: 0.5,
     /** Gaussian spread (rad) of that near-target pose jitter. */
     nearTargetStd: 0.5,
+    /** Fraction of samples synthesized MID-CARRY: the commanded block is
+        rendered at the effector of the sampled pose, the carry_flag input is
+        1, and the label is the carry-phase target (REST — bring the grasped
+        block home). This is what makes the carry phase policy-driven. The
+        phase cue is the PROPRIOCEPTIVE FLAG plus the carried block's pixels —
+        pre-flag, pixels were the ONLY cue, and when vision missed it the
+        action head averaged the grasp/carry modes (see the carry-flag note
+        in model.ts). UNTUNED. */
+    carryFrac: 0.5,
+    /** Fraction of the EMPTY-HANDED samples posed as "grasp-now" positives: the
+        commanded block's IK pose, tightly jittered so the effector sits fully
+        over the block (gripper.radius) and the gripper label is 1 ("close"). WHY
+        A DEDICATED CLASS: fully-over-the-block is a small target, so relying on
+        the ordinary near-target jitter to land there leaves the gripper head's
+        positives too sparse and it collapses to always-open. This guarantees a
+        steady stream of clean close-now examples. The action label stays the
+        grasp pose (stay put); the gripper label still comes from the shared
+        effectorOverBlock predicate, so a jitter that strays off the block is
+        correctly labeled 0 — the class only BIASES the pose distribution. */
+    graspFrac: 0.15,
+    /** Gaussian spread (rad) of the grasp-class pose jitter — tight so the
+        effector reliably stays fully over the (possibly smallest) block. */
+    graspJitterStd: 0.05,
     /** Chance a non-color token becomes <unk> in training, so the encoder
         learns to shrug off unknown words in free user text. */
     wordDropout: 0.1,
+    /** LANGUAGE WARM-UP: text-only gradient steps run during the Loading phase,
+        BEFORE the main vision→action loop starts (see languageWarmup in
+        trainer.core). They train ONLY the pure-text color head plus its conv
+        scorer, on synthesized sentences with the vision branch untouched, so
+        the color decoding is already correct when the coupled policy starts
+        and the attention query gets a clean language slot from batch 0
+        instead of co-adapting against a still-moving language branch.
+
+        This is the CAP: warm-up early-stops once the head's loss plateaus
+        (the color head converges in tens of steps), so the typical Loading
+        cost is well under this. Set 0 to disable. */
+    warmupBatches: 200,
+    /** Batch size for warm-up steps ONLY (the main loop keeps batchSize=32,
+        which is load-bearing for its reliability). Bigger on purpose: warm-up
+        is a tiny text-only graph with NO images, so it's bound by fixed
+        per-step WebGL dispatch overhead, not compute — a larger batch does
+        many more samples per dispatch at almost no extra cost, cutting the
+        wall-clock for equal learning. Cheap in memory (int32 tokens + small
+        one-hot labels, no pixel tensors). */
+    warmupBatchSize: 256,
     // Convergence: mean action loss over the last `window` batches stays under
     // `loss` for `streak` consecutive batches (after `minBatches` warmup) →
     // training ends, "try it" mode unlocks. `maxBatches` is the fixed fallback.
     converge: {
-      /** Handoff threshold on the trailing-window HUBER action loss. Calibrated
-          in the 2026-07 sweep (M4, ~100ms/batch → ~10 batches/s): healthy runs
-          cross 0.02 at 150-280 batches ≈ 15-28s of training and score ~0.7-0.85
-          closed-loop reach success at handoff (0 wrong-side). Tightening to
-          0.015 (+streak 8) cost ~5s and measurably improved nothing — the
-          policy's residual ~0.03 reach error is a vision-resolution floor, not
-          undertraining. Raise toward 0.04 to hand off earlier/looser. */
+      /** Handoff threshold on the trailing-window HUBER action loss.
+          Calibration (2026-07 sweep, M4, ~100ms/batch → ~10 batches/s):
+          healthy runs cross 0.02 at 150-280 batches ≈ 15-28s of training and
+          score ~0.7-0.85 closed-loop reach success at handoff (0 wrong-side);
+          the residual ~0.03 reach error is a vision-resolution floor, not
+          undertraining. 2026-07 carry-flag re-gauge (headless SwiftShader ≈
+          0.5x real GPU): pick-up 8c/4b converges ~0.012 at ~410 batches. */
       loss: 0.015,
       /** Trailing window (batches) the convergence mean is taken over. Small =
           low detection lag as old high losses roll off; the streak guards
@@ -142,14 +193,14 @@ export const CONFIG = {
           crossing observed in the sweep was ~155 batches, so 100 is pure
           lucky-dip insurance and never binds on healthy runs. */
       minBatches: 100,
-      /** Fixed-budget fallback: converge regardless of loss at this batch —
-          ~45s at ~10 batches/s. Slow-but-healthy seeds (~1 in 3) land here or
-          shortly before it with a usable policy. NOTE (sweep finding): ~1 in 8
-          inits collapses to an always-one-side policy (loss flat ~0.78) and
-          NEVER recovers — no swept parameter fixes it, so a longer budget only
-          delays the fallback. Detectable early (smoothLoss > 0.4 at batch
-          ~120); an auto-restart in trainer.core is the real fix if this rate
-          bothers us. */
+      /** Fixed-budget fallback: converge regardless of loss at this batch
+          (~45s at ~10 batches/s). Slow-but-healthy seeds (~1 in 3) land here
+          or shortly before it with a usable policy. NOTE (sweep finding,
+          pre-carry-flag): ~1 in 8 inits collapses to an always-one-side
+          policy (loss flat ~0.78) and NEVER recovers — no swept parameter
+          fixes it, so a longer budget only delays the fallback. Detectable
+          early (smoothLoss > 0.4 at batch ~120); an auto-restart in
+          trainer.core is the real fix if this rate bothers us. */
       maxBatches: 450,
     },
   },
@@ -178,27 +229,45 @@ export const CONFIG = {
     /** Per-scene blocks randomize their side length in [min, max]. Bigger =
         grasped higher (grasp target is the block CENTRE, y=size/2) and shifts
         the near-singular dead zone, which is why the placement bands below are
-        sized for the largest block. */
-    min: 0.08,
+        sized for the largest block. FLOOR raised to 0.12 for the LEARNED
+        gripper: the grasp fires only when the effector disk (gripper.radius
+        0.025) is FULLY inside the block footprint (effectorOverBlock), so the
+        in-block tolerance is (size/2 − radius) per axis; at the old 0.08 floor
+        that window (±0.015) was tighter than the policy's ~0.03-0.05 reach
+        floor and closed-loop grasps missed the small blocks (measured
+        graspRate ~0.13). 0.12 gives ±0.035+ and restores healthy grasping
+        while keeping a 0.12-0.16 size spread for the size-reading task. */
+    min: 0.12,
     max: 0.16,
+  },
+
+  // ── Learned gripper (lib/vla/geometry.ts, model.ts, Hero.tsx) ──────────
+  gripper: {
+    /** Radius (workspace units) of the effector "disk" the grasp predicate
+        (effectorOverBlock, geometry.ts) must fit fully inside a block's
+        footprint before a close counts. Kept well under the smallest block's
+        half-width (min 0.08 → 0.04) so even the smallest block can contain it;
+        small enough that the arm must be genuinely centered, not just adjacent. */
+    radius: 0.025,
+    /** Sigmoid threshold above which the gripper head's output counts as
+        "closed". Used identically by the rollout grasp gate (Hero.tsx) and the
+        headless eval (vla-lab). */
+    threshold: 0.5,
   },
 
   // ── Task / language space (lib/vla/examples.ts) ────────────────────────
   task: {
-    /** Token slots per command (padded/truncated to this). */
-    maxSeqLen: 12,
+    /** Token slots per command (padded/truncated to this). 14 leaves ample
+        headroom over the longest pick-up form (filler + verb + article +
+        color + noun + please) for free user text. */
+    maxSeqLen: 14,
     /** The two cleanly-reachable floor BANDS [lo, hi] blocks are placed in per
         side (the centre is a near-singular dead zone; see examples.ts). Inner
         edges (0.31/0.69) are set for the LARGEST block's elbow limit. */
     placeLeft: [0.11, 0.31] as [number, number],
     placeRight: [0.69, 0.89] as [number, number],
-    /** Chance a side gets a SECOND block (else one). So a scene holds 2-4
-        blocks total, each a distinct color — the extra distractors make the
-        language-grounding (which of 8 color words → which of up to 4 blocks)
-        harder. Two blocks share one band, so they can only both be placed when
-        neither is too big; see randomLayout's reject-and-fallback in
-        examples.ts. Set to 0 to restore the strict one-per-side task. */
-    twoPerSideProb: 0.6,
+    // (Scene density — how many blocks, from how many colors, which tasks —
+    // is the USER's ⚙ run config now: lib/vla/run-config.ts, not a knob here.)
     /** Extra clearance (workspace units) required between two same-side blocks'
         silhouettes, on top of their (boosted) half-widths — keeps them from
         occluding each other AND lands them in different attention cells (one
@@ -208,6 +277,17 @@ export const CONFIG = {
         word, and a trailing "please". */
     fillerProb: 0.25,
     pleaseProb: 0.2,
+    /** FORM augmentation: chance each scaffolding element is DROPPED from a
+        sampled sentence (verb per sentence; article/noun per occurrence),
+        yielding compressed forms like "grab red" or bare "red" alongside the
+        full grammar. WHY: the language scorer keys on LOCAL CONTEXT (conv
+        window, model.ts), and these drops make training COVER the context
+        variants free user text uses ("red" and "the red block" both common)
+        instead of only the rigid full-grammar shape. Colors never drop
+        (label token, same rule as word-dropout). */
+    dropVerbProb: 0.15,
+    dropArticleProb: 0.25,
+    dropNounProb: 0.25,
   },
 
   // ── Demonstration trajectory (lib/vla/demo.ts) ─────────────────────────
@@ -219,6 +299,8 @@ export const CONFIG = {
     periodMs: 5000,
     // Absolute-time trajectory phases (ms), independent of periodMs so the
     // scripted reach keeps its crisp speed regardless of the resting tail.
+    // The pick-up trajectory: via → reach → settle → liftMs up → holdMs
+    // aloft (ends ~4.26s).
     phases: {
       viaMs: 672, // rest → mid-trajectory waypoint
       reachMs: 672, // waypoint → block centre
@@ -239,14 +321,18 @@ export const CONFIG = {
     /** How often (ms) the policy re-predicts its target (closed loop). */
     predictMs: 80,
     /** Distance (workspace units) from the block centre that counts as reached. */
-    graspEps: 0.03,
+    graspEps: 0.07,
     /** Consecutive close frames required to register a grasp. */
     nearFrames: 4,
     /** Frames before a reach gives up as failed. Must exceed the synced demo
         cycle (demo.periodMs in frames) so a rollout isn't cut off early. */
     reachTimeout: 500,
-    /** Frames for the straight-up lift after a grasp. */
-    liftFrames: 55,
+    /** Joint-space closeness (rad, per joint) to the predicted carry-phase
+        target that counts as "settled" — the release/lift-complete test now
+        that the carry phase is policy-driven (there is no block to be near;
+        the arm settles wherever the policy parked it). With stepGain 0.08
+        the approach is asymptotic, so this can't be too tight. */
+    settleEps: 0.05,
     /** Frames holding the block at the top (~0.5s), arm straight. */
     topHold: 30,
     /** Frames a failed attempt lerps back to rest over. */
@@ -255,9 +341,25 @@ export const CONFIG = {
     trailLen: 64,
     /** Throttle (ms) for refreshing the language-panel readout. */
     langMs: 300,
-    /** Silhouette render size before the live rollout's own imgSize downsample
-        (Hero's copy of the trainer render; keep ≈4x imgSize). */
-    silRender: 128,
+    /** Render size of the DISPLAYED model's-eye panel before its imgSize
+        downsample. Display-only: the policy's actual input renders inside
+        trainer.core at trainer.renderSize — this canvas just shows the
+        visitor what that input looks like, so keeping it at the same ≈4x
+        antialiasing (256, was 128) keeps the panel faithful to what the
+        model really sees. */
+    silRender: 256,
+  },
+
+  // ── Training-time estimate shown in the ⚙ run-config menu ──────────────
+  // estimateTrainingSeconds (lib/vla/run-config.ts) is baseSeconds ×
+  // colorFactor × blockFactor. GAUGED 2026-07 against the carry-flag pick-up
+  // architecture (headless SwiftShader runs ≈ 0.5x real GPU, scaled to ~10
+  // batches/s): pick-up 8c/4b ≈ 410 batches ≈ 41s. colors/blocks are small
+  // modifiers around the base.
+  eta: {
+    baseSeconds: 42,
+    colorFactor: { 2: 0.9, 4: 1.0, 8: 1.1 } as Record<number, number>,
+    blockFactor: { 2: 0.9, 3: 1.0, 4: 1.1 } as Record<number, number>,
   },
 
   // ── Model's-eye rendering (lib/vla/scene.ts) ───────────────────────────

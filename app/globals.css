@@ -221,87 +221,83 @@ a {
 /* ---- VLA pipeline (hero) ----
    Idle: all four boxes fully visible, gently drifting around their anchors,
    arms swaying — disconnected components. Starting training assembles the
-   pipeline: drifting stops and the orthogonal wires (measured at runtime from
-   the real DOM positions, Hero.tsx layoutWires) simply BLEND in — a soft
-   opacity fade, delayed ~0.5s after the click so nothing snaps on the instant
-   the button is pressed. Once faded in, a single small "current" pulse travels
-   each rail left→right for as long as training is actively running (frozen
-   while paused). */
-.vla-wires {
+   pipeline: drifting stops and — with NO drawn connectors — a payload token
+   detaches from each source card and glides across the gap into the next
+   (trajectories measured at runtime from the real DOM positions, Hero.tsx
+   layoutWires). The connection is carried by motion alone; the flow layer
+   simply BLENDS in, delayed ~0.5s after the click so nothing snaps on. One
+   payload travels each hop for as long as training is actively running (frozen
+   mid-gap while paused). */
+.vla-flow {
   position: absolute;
   inset: 0;
-  width: 100%;
-  height: 100%;
   pointer-events: none;
   z-index: 1;
   opacity: 0;
   transition: opacity 0.6s ease 0.5s;
 }
-.is-live .vla-wires {
+.is-live .vla-flow {
   opacity: 1;
 }
-.vla-wire-base {
-  fill: none;
-  stroke: rgba(0, 0, 0, 0.28);
-  stroke-width: 1.5;
-  stroke-linejoin: round;
-}
-/* the rails render as plain solid strokes; they no longer "draw on" (the whole
-   .vla-wires layer just fades in). Kept as their own group so the converged
-   state can fade the upstream legs independently. */
-.vla-seg-a,
-.vla-seg-b,
-.vla-seg-c {
-  stroke-dashoffset: 0;
-  transition: opacity 0.4s ease;
-}
-/* Converged: only the Action Head → Rollout leg (segment/pulse c) stays wired;
-   the upstream legs into and between the now-dormant encoder boxes fade out. */
-.is-converged .vla-seg-a,
-.is-converged .vla-seg-b,
-.is-converged .vla-pulse-a,
-.is-converged .vla-pulse-b {
+.is-loading .vla-flow {
   opacity: 0;
 }
-/* one small traveling signal per wire (a single dash whose dash+gap spans the
-   whole pathLength, so exactly one is ever on a rail at once) */
-.vla-wire-pulse {
-  fill: none;
-  stroke: var(--red);
-  stroke-width: 2.1;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-dasharray: 9 91;
-  opacity: 1;
-  transition: opacity 0.25s ease;
-}
-.is-loading .vla-wire-pulse {
+/* the gliding payload: a small soft-glowing token that rides its offset-path
+   from source edge to destination edge. offset-path itself is set per-token in
+   layoutWires; here we just size/paint it and drive offset-distance. */
+.vla-payload {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 9px;
+  height: 9px;
+  margin: -4.5px 0 0 -4.5px; /* center the token on the path point */
+  border-radius: 50%;
+  background: var(--red);
+  box-shadow: 0 0 6px 1px rgba(225, 45, 26, 0.55);
+  offset-rotate: 0deg;
+  offset-distance: 0%;
   opacity: 0;
 }
-/* staggered so the signal reads as flowing along the pipeline: source →
+/* staggered so the flow reads as travelling down the pipeline: source →
    encoder (a), encoder → action head (b), action head → rollout (c) */
-.vla-pulse-a {
-  animation: vla-current 2.8s linear infinite;
+.vla-flow-a {
+  animation: vla-glide 2.8s linear infinite;
 }
-.vla-pulse-b {
-  animation: vla-current 2.8s linear infinite;
+.vla-flow-b {
+  animation: vla-glide 2.8s linear infinite;
   animation-delay: 0.9s;
 }
-.vla-pulse-c {
-  animation: vla-current 2.8s linear infinite;
+.vla-flow-c {
+  animation: vla-glide 2.8s linear infinite;
   animation-delay: 1.8s;
 }
-.is-paused .vla-pulse-a,
-.is-paused .vla-pulse-b,
-.is-paused .vla-pulse-c {
+.is-paused .vla-payload {
   animation-play-state: paused;
 }
-@keyframes vla-current {
-  from {
-    stroke-dashoffset: 100;
+/* Converged: only the Action Head → Rollout hop (flow c) keeps carrying a
+   payload; the upstream hops into/between the now-dormant encoders go quiet. */
+.is-converged .vla-flow-a,
+.is-converged .vla-flow-b {
+  animation: none;
+  opacity: 0;
+}
+/* travel the gap once, fading in as it detaches and out as it arrives so there
+   is no hard pop at either card (a soft handoff, not an explosion) */
+@keyframes vla-glide {
+  0% {
+    offset-distance: 0%;
+    opacity: 0;
   }
-  to {
-    stroke-dashoffset: 0;
+  12% {
+    opacity: 1;
+  }
+  88% {
+    opacity: 1;
+  }
+  100% {
+    offset-distance: 100%;
+    opacity: 0;
   }
 }
 
@@ -862,13 +858,85 @@ a {
   border-color: rgba(0, 0, 0, 0.22);
 }
 
+/* ⚙ run-config menu (idle only): what to train — palette size, scene
+   density, task set — plus the (placeholder) training-time estimate. Anchored
+   to the gear inside the control bar; opens UPWARD so it never covers it. */
+.vla-cfg {
+  position: relative;
+}
+.vla-cfg-btn {
+  padding: 10px 12px;
+  font-size: 14px;
+  line-height: 1;
+}
+.vla-cfg-btn.is-open {
+  border-color: var(--ink);
+}
+.vla-cfg-pop {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  right: -8px;
+  z-index: 9;
+  width: 232px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 12px 14px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.09);
+}
+.vla-cfg-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.vla-cfg-k {
+  font: 500 9.5px/1 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  width: 46px;
+  flex: none;
+}
+.vla-cfg-opts {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+}
+.vla-cfg-opt {
+  cursor: pointer;
+  flex: 1;
+  padding: 6px 0;
+  font: 600 10.5px/1 var(--font-mono);
+  color: var(--body);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  white-space: nowrap;
+}
+.vla-cfg-opt.is-sel {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #fff;
+}
+.vla-cfg-opt:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.vla-cfg-eta {
+  font: 500 10px/1.4 var(--font-mono);
+  color: var(--body);
+  border-top: 1px solid var(--border);
+  padding-top: 9px;
+}
+.vla-cfg-eta-note {
+  color: var(--muted);
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .vla-pulse-a,
-  .vla-pulse-b,
-  .vla-pulse-c,
-  .vla-seg-a,
-  .vla-seg-b,
-  .vla-seg-c,
+  .vla-payload,
   .is-live .vla-vision .vla-label,
   .is-live .vla-lang .vla-label,
   .is-live .vla-action .vla-label,
@@ -890,7 +958,7 @@ a {
    centered intro. */
 @media (max-width: 1099px) {
   .vla-node,
-  .vla-wires,
+  .vla-flow,
   .vla-bar {
     display: none;
   }

@@ -66,16 +66,17 @@ export function solveIK(
   return [theta1, theta2];
 }
 
-/** Grasp target for a block of side `size` centered at floor position x: the
-    block CENTER (y = size/2) — the effector moves into the block before the
-    grasp/lift. A bigger block is grasped higher, so its size feeds the IK. */
-export function graspTarget(x: number, size = BLOCK) {
-  return { x, y: size / 2 };
+/** Grasp target for a block of side `size` at floor position x: the block
+    CENTER (y = rest + size/2) — the effector moves into the block before the
+    grasp/lift. A bigger block is grasped higher, so its size feeds the IK;
+    `rest` is the block's bottom height (>0 when it sits on another block). */
+export function graspTarget(x: number, size = BLOCK, rest = 0) {
+  return { x, y: rest + size / 2 };
 }
 
 /** IK joint angles that put the end effector at a block's grasp point. */
-export function ikToX(x: number, size = BLOCK): [number, number] {
-  const t = graspTarget(x, size);
+export function ikToX(x: number, size = BLOCK, rest = 0): [number, number] {
+  const t = graspTarget(x, size, rest);
   return solveIK(t.x - BASE.x, t.y - BASE.y);
 }
 
@@ -86,6 +87,36 @@ export function fk(a1: number, a2: number) {
   const ex = j1x + Math.cos(a1 + a2) * L2;
   const ey = j1y + Math.sin(a1 + a2) * L2;
   return { j1x, j1y, ex, ey };
+}
+
+/**
+ * THE grasp predicate: is the effector disk fully inside a block's footprint?
+ * Center = fk(a1,a2).ex/ey, radius = gripRadius; the block footprint is
+ * x ∈ [b.x − s/2, b.x + s/2], y ∈ [b.y, b.y + s] (s = b.size, b.y = the block's
+ * bottom/rest height, 0 on the floor). "Fully contained" (not just center-in)
+ * so the closed gripper genuinely straddles the block.
+ *
+ * This is the SINGLE shared "correct-to-close" test used identically by the
+ * training label (trainer.core synthBatch) and the rollout/eval grasp gate
+ * (Hero.tsx, vla-lab) — keeping the network's supervision and the physical
+ * grasp condition provably the same fact. Keep gripRadius ≤ ~min block/2
+ * (≈0.04) or the disk can never fit inside the smallest block.
+ */
+export function effectorOverBlock(
+  a1: number,
+  a2: number,
+  block: { x: number; size: number; y?: number },
+  gripRadius: number
+): boolean {
+  const { ex, ey } = fk(a1, a2);
+  const s = block.size;
+  const rest = block.y ?? 0;
+  return (
+    ex - gripRadius >= block.x - s / 2 &&
+    ex + gripRadius <= block.x + s / 2 &&
+    ey - gripRadius >= rest &&
+    ey + gripRadius <= rest + s
+  );
 }
 
 export function clamp(v: number, lo: number, hi: number) {

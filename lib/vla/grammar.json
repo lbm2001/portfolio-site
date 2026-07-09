@@ -1,14 +1,18 @@
 {
-  "verbs": [
-    ["pick", "up"],
-    ["grab"],
-    ["grasp"],
-    ["take"],
-    ["lift"],
-    ["fetch"],
-    ["get"],
-    ["reach", "for"]
-  ],
+  "tasks": {
+    "lift": {
+      "verbs": [
+        ["pick", "up"],
+        ["grab"],
+        ["grasp"],
+        ["take"],
+        ["lift"],
+        ["fetch"],
+        ["get"],
+        ["reach", "for"]
+      ]
+    }
+  },
   "articles": ["the", "a"],
   "nouns": ["block", "box", "cube", "object"],
   "fillers": ["please", "robot", "now"],

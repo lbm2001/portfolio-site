@@ -7,8 +7,7 @@ import {
   THETA1_RANGE,
   THETA2_RANGE,
   clamp,
-  fk,
-  graspTarget,
+  effectorOverBlock,
 } from "@/lib/vla/geometry";
 import { effectorPx, paintScene, paintSilhouette, sceneMap } from "@/lib/vla/scene";
 import {
@@ -16,14 +15,18 @@ import {
   DEFAULT_LAYOUT,
   DEFAULT_SENTENCE,
   MAX_SEQ_LEN,
-  hasColor,
-  presentColor,
   randomLayout,
-  sampleSentence,
+  sampleCommand,
   tokenize,
   type BlockPos,
   type Sentence,
 } from "@/lib/vla/examples";
+import {
+  DEFAULT_RUN_CONFIG,
+  estimateTrainingSeconds,
+  setRunConfig,
+  type RunConfig,
+} from "@/lib/vla/run-config";
 import { DEMO_PERIOD_MS, demoPose, makeDemoPlan, type DemoPlan } from "@/lib/vla/demo";
 import { IMG_SIZE } from "@/lib/vla/model";
 import { VLATrainer, type TrainerStatus } from "@/lib/vla/trainer";
@@ -35,12 +38,15 @@ import { CONFIG } from "@/lib/vla/config";
 // TensorFlow.js behavioral-cloning loop — hosted in a Web Worker off the main
 // thread (lib/vla/trainer.worker.ts, via the lib/vla/trainer.ts proxy) so
 // gradient steps never fight this component's 60fps rAF loop — against an
-// analytical-IK expert: every scene places two blocks, one per side, colors
-// drawn from a 4-color palette, and the command (slot-grammar sentence)
-// names one of them. The displayed demonstration swaps every cycle while
+// analytical-IK expert on pick-up commands (2-4 blocks from a 2/4/8-color
+// palette; lib/vla/run-config.ts): each scene's slot-grammar command names
+// one block to pick up. The displayed demonstration swaps every cycle while
 // thousands of examples train invisibly; the Rollout runs policy-driven
-// episodes. Once the real MSE converges, training stops and the Rollout box
-// becomes interactive: type your own command, run it, reshuffle the blocks.
+// episodes — the arm approaches with an open gripper and the LEARNED gripper
+// action closes it over the block (attaching it), then the carry phase (lift
+// it home) follows the policy's predictions. Once the action
+// loss converges, training stops and the Rollout box becomes interactive:
+// type your own command, run it, reshuffle the blocks.
 
 const ACCENT = "#e12d1a"; // = --red; canvases can't read CSS vars cheaply
 
@@ -52,22 +58,41 @@ const STEP_GAIN = CONFIG.rollout.stepGain;
 const PREDICT_MS = CONFIG.rollout.predictMs;
 const TRAIL_LEN = CONFIG.rollout.trailLen;
 const LANG_MS = CONFIG.rollout.langMs;
-const GRASP_EPS = CONFIG.rollout.graspEps; // workspace units from block center
+const GRIP_RADIUS = CONFIG.gripper.radius; // effector disk radius for the grasp predicate
+const GRIP_THRESHOLD = CONFIG.gripper.threshold; // sigmoid ≥ this = "close"
 const NEAR_FRAMES = CONFIG.rollout.nearFrames;
 const REACH_TIMEOUT = CONFIG.rollout.reachTimeout;
-const LIFT_FRAMES = CONFIG.rollout.liftFrames;
+const SETTLE_EPS = CONFIG.rollout.settleEps; // rad/joint: carry-phase settle test
 const TOP_HOLD = CONFIG.rollout.topHold;
 const RETURN_FRAMES = CONFIG.rollout.returnFrames;
 
+// The episode machine:
+//   reach → approach with the gripper OPEN; the grasp fires on the LEARNED
+//           gripper action: the effector fully over a block (effectorOverBlock)
+//           AND the policy's predicted gripper crossing open→closed there, held
+//           NEAR_FRAMES. A policy that keeps the gripper closed the whole way
+//           never arms (no rising edge) → it can't enter a block with a closed
+//           gripper, which is what forces the open approach. Then carry begins.
+//   carry → policy-driven with the block in hand; once the arm settles at
+//           the predicted target, the block is held aloft
+//   hold  → holding the carried block wherever the policy parked it
+//   return→ scripted empty-handed return to rest
 interface Episode {
-  phase: "reach" | "lift" | "return";
+  phase: "reach" | "carry" | "hold" | "return";
   f: number; // frames in the current phase
   near: number;
   nearColor: number; // COLORS index of the block being hovered, or -1
+  settle: number; // consecutive frames within SETTLE_EPS of the carry target
   color: number; // COLORS index of the commanded block
   tokens: number[];
   from: { a1: number; a2: number };
   carry: number | null;
+  /** Latest predicted gripper sigmoid (0=open → 1=closed); starts open. */
+  predGrip: number;
+  /** True once the gripper has been seen OPEN during this attempt — the
+      rising-edge guard: without a prior open frame the grasp can't arm, so an
+      always-closed policy never grabs. */
+  sawOpen: boolean;
 }
 
 const newEpisode = (color: number, tokens: number[]): Episode => ({
@@ -75,10 +100,13 @@ const newEpisode = (color: number, tokens: number[]): Episode => ({
   f: 0,
   near: 0,
   nearColor: -1,
+  settle: 0,
   color,
   tokens,
   from: { a1: REST[0], a2: REST[1] },
   carry: null,
+  predGrip: 0,
+  sawOpen: false,
 });
 
 const ease = (x: number) =>
@@ -103,7 +131,7 @@ const SIL_RENDER = CONFIG.rollout.silRender; // silhouette render size before th
 
 export default function Hero() {
   const stageRef = useRef<HTMLElement>(null);
-  const svgRef = useRef<SVGSVGElement>(null);
+  const flowRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLDivElement>(null);
   const promptRef = useRef<HTMLDivElement>(null);
   const visionCardRef = useRef<HTMLDivElement>(null);
@@ -157,7 +185,12 @@ export default function Hero() {
   const demoSentenceRef = useRef<Sentence>(DEFAULT_SENTENCE);
   const demoPlanRef = useRef<DemoPlan | null>(null);
   const lastCycleRef = useRef(-1);
-  const demoPoseRef = useRef({ a1: REST[0], a2: REST[1], carry: null as number | null });
+  const demoPoseRef = useRef({
+    a1: REST[0],
+    a2: REST[1],
+    carry: null as number | null,
+    grip: 0 as 0 | 1,
+  });
 
   // rollout state
   const rolloutLayoutRef = useRef(DEFAULT_LAYOUT);
@@ -175,6 +208,16 @@ export default function Hero() {
 
   const [status, setStatus] = useState<TrainerStatus>("idle");
   const [hud, setHud] = useState({ lossText: "—", samples: 0, batches: 0 });
+  // the ⚙ run config (palette / density / task set) picked before training.
+  // Mirrored into a ref because the rAF-loop closures (demo-cycle command
+  // sampling) mount once and would otherwise capture the initial state.
+  const [runCfg, setRunCfgState] = useState<RunConfig>(DEFAULT_RUN_CONFIG);
+  const runCfgRef = useRef<RunConfig>(DEFAULT_RUN_CONFIG);
+  const setRunCfg = (next: RunConfig) => {
+    runCfgRef.current = next;
+    setRunCfgState(next);
+  };
+  const [cfgOpen, setCfgOpen] = useState(false);
   // demonstrations the CURRENTLY rolled-out policy has seen: the sample count
   // frozen into the per-cycle snapshot during training, or the final count
   // once converged (see drawArm's snapshot boundary + onUpdate).
@@ -184,7 +227,11 @@ export default function Hero() {
   const [tryText, setTryText] = useState("");
   const chipRowRef = useRef<HTMLDivElement | null>(null);
   const [tokenBars, setTokenBars] = useState<number[]>([]);
-  const [decoded, setDecoded] = useState<{ name: string; hex: string; prob: number } | null>(null);
+  const [decoded, setDecoded] = useState<{
+    name: string;
+    hex: string;
+    prob: number;
+  } | null>(null);
   const [tryNote, setTryNote] = useState<string | null>(null);
   // Vision Encoder panel: flip to the exact inverted tensor the CNN receives.
   // Hover handles it on desktop (CSS); this drives the tap toggle on touch.
@@ -201,10 +248,10 @@ export default function Hero() {
 
     const layoutWires = () => {
       const stage = stageRef.current;
-      const svg = svgRef.current;
+      const flow = flowRef.current;
       if (
         !stage ||
-        !svg ||
+        !flow ||
         !inputRef.current ||
         !promptRef.current ||
         !visionCardRef.current ||
@@ -215,15 +262,17 @@ export default function Hero() {
         return;
       const R = stage.getBoundingClientRect();
       if (R.width === 0 || R.height === 0) return;
+      // Card box in PX relative to the stage (offset-path lives in the flow
+      // overlay's own px coordinate space, no viewBox stretching).
       const m = (el: Element) => {
         const c = el.getBoundingClientRect();
         return {
-          cx: ((c.left - R.left + c.width / 2) / R.width) * 1000,
-          cy: ((c.top - R.top + c.height / 2) / R.height) * 1000,
-          left: ((c.left - R.left) / R.width) * 1000,
-          right: ((c.right - R.left) / R.width) * 1000,
-          top: ((c.top - R.top) / R.height) * 1000,
-          bottom: ((c.bottom - R.top) / R.height) * 1000,
+          cx: c.left - R.left + c.width / 2,
+          cy: c.top - R.top + c.height / 2,
+          left: c.left - R.left,
+          right: c.right - R.left,
+          top: c.top - R.top,
+          bottom: c.bottom - R.top,
         };
       };
       const I = m(inputRef.current);
@@ -233,40 +282,54 @@ export default function Hero() {
       const A = m(actionCardRef.current);
       const O = m(outputCardRef.current);
       const r = (n: number) => n.toFixed(1);
-      // Pipeline, five edge-to-edge segments (base + traveling pulse share the
-      // SAME geometry so the current rides exactly on the drawn wire). Two
-      // rails, NEITHER of which crosses the centered name:
-      //   TOP rail    (y = V.cy): Demonstration → Vision.left, then
-      //               Vision.right → across → DOWN into the Action Head TOP.
-      //   BOTTOM rail (y = L.cy): Prompt → Language.left, then
-      //               Language.right → across → UP into the Action Head BOTTOM.
-      // Each encoder sits INLINE on its rail (wire enters its left edge, exits
-      // its right edge); both rails then drop VERTICALLY into the Action Head
-      // from above/below. The Action Head drives the Rollout (p5). Every
-      // endpoint lands on a real card EDGE — no floating mid-air stops.
-      const p1 = `M${r(I.cx)},${r(I.top)} V${r(V.cy)} H${r(V.left)}`;
-      const p2 = `M${r(P.cx)},${r(P.bottom)} V${r(L.cy)} H${r(L.left)}`;
-      const p3 = `M${r(V.right)},${r(V.cy)} H${r(A.cx)} V${r(A.top)}`;
-      const p4 = `M${r(L.right)},${r(L.cy)} H${r(A.cx)} V${r(A.bottom)}`;
-      const p5 = `M${r(A.right)},${r(A.cy)} H${r(O.left)}`;
-      const set = (wire: string, d: string) =>
-        svg.querySelectorAll(`[data-wire="${wire}"]`).forEach((p) => p.setAttribute("d", d));
-      set("p1", p1);
-      set("p2", p2);
-      set("p3", p3);
-      set("p4", p4);
-      set("p5", p5);
+      // No drawn connectors any more — a payload token glides across each gap,
+      // so the "connection" is carried by motion. Each hop is a single smooth
+      // cubic Bézier between two facing card edges (horizontal-biased controls
+      // → the token leaves and arrives along the horizontal, arcing gently in
+      // between; nearly straight for the short Action→Rollout hop). Five hops:
+      //   p1 Demonstration → Vision      p3 Vision   → Action Head (top)
+      //   p2 Prompt        → Language    p4 Language → Action Head (bottom)
+      //                                  p5 Action Head → Rollout
+      const arc = (
+        sx: number,
+        sy: number,
+        ex: number,
+        ey: number
+      ) => {
+        const dx = ex - sx;
+        return `path("M ${r(sx)} ${r(sy)} C ${r(sx + dx * 0.42)} ${r(sy)}, ${r(
+          sx + dx * 0.58
+        )} ${r(ey)}, ${r(ex)} ${r(ey)}")`;
+      };
+      const paths: Record<string, string> = {
+        p1: arc(I.right, I.cy, V.cx, V.bottom),
+        p2: arc(P.right, P.cy, L.cx, L.top),
+        p3: arc(V.right, V.cy, A.cx, A.top),
+        p4: arc(L.right, L.cy, A.cx, A.bottom),
+        p5: arc(A.right, A.cy, O.left, O.cy),
+      };
+      flow.querySelectorAll<HTMLElement>("[data-flow]").forEach((el) => {
+        const d = paths[el.dataset.flow ?? ""];
+        if (d) el.style.offsetPath = d;
+      });
     };
 
     // the Action Head's live output — the policy's current predicted target
-    // joint angles (null → em dashes when nothing is being predicted)
-    const setActionVals = (t: [number, number] | null) => {
+    // joint angles plus the gripper state (open/closed). null angles → em
+    // dashes; grip undefined → em dash, 0 → open, 1 → closed.
+    const setActionVals = (
+      t: [number, number] | null,
+      grip?: 0 | 1 | undefined
+    ) => {
       const el = actionValsRef.current;
-      if (!el || el.children.length < 2) return;
+      if (!el || el.children.length < 3) return;
       const v0 = el.children[0].lastElementChild;
       const v1 = el.children[1].lastElementChild;
+      const v2 = el.children[2].lastElementChild;
       if (v0) v0.textContent = t ? fmtAngle(t[0]) : "—";
       if (v1) v1.textContent = t ? fmtAngle(t[1]) : "—";
+      if (v2)
+        v2.textContent = grip === 1 ? "closed" : grip === 0 ? "open" : "—";
     };
 
     // small idle sway around the rest pose — "there is something here"
@@ -293,6 +356,7 @@ export default function Hero() {
           layout: demoLayoutRef.current,
           accent: ACCENT,
           carry: p.carry,
+          grip: p.grip,
         });
         return;
       }
@@ -300,6 +364,7 @@ export default function Hero() {
       let a1: number;
       let a2: number;
       let carry: number | null = null;
+      let grip: 0 | 1 | undefined;
 
       if (st === "training" || st === "loading") {
         // clock measured from the click (trainStartRef), minus accumulated
@@ -312,16 +377,22 @@ export default function Hero() {
           if (!demoPlanRef.current)
             demoPlanRef.current = makeDemoPlan(
               demoLayoutRef.current,
-              demoSentenceRef.current.color
+              demoSentenceRef.current
             );
           const pose = demoPose(demoPlanRef.current, 0);
-          demoPoseRef.current = { a1: pose.a1, a2: pose.a2, carry: pose.carry };
+          demoPoseRef.current = {
+            a1: pose.a1,
+            a2: pose.a2,
+            carry: pose.carry,
+            grip: pose.grip,
+          };
           paintScene(ctx, W, H, {
             a1: pose.a1,
             a2: pose.a2,
             layout: demoLayoutRef.current,
             accent: ACCENT,
             carry: pose.carry,
+            grip: pose.grip,
           });
           return;
         }
@@ -331,8 +402,8 @@ export default function Hero() {
           lastCycleRef.current = cycle;
           if (!first) {
             demoLayoutRef.current = randomLayout();
-            // the demonstrated command names one of the scene's two blocks
-            const s = sampleSentence(presentColor(demoLayoutRef.current));
+            // a pick-up command naming one of the scene's own blocks
+            const s = sampleCommand(demoLayoutRef.current);
             demoSentenceRef.current = s;
             setDemoSentence(s);
             // the language panel follows the demo until a user command locks it
@@ -340,31 +411,36 @@ export default function Hero() {
           }
           demoPlanRef.current = makeDemoPlan(
             demoLayoutRef.current,
-            demoSentenceRef.current.color
+            demoSentenceRef.current
           );
         }
 
         const t = reduced.matches
           ? 0.2
           : (effectiveNow % DEMO_PERIOD_MS) / DEMO_PERIOD_MS;
-        const pose = demoPose(demoPlanRef.current, t);
+        const plan = demoPlanRef.current;
+        const pose = demoPose(plan, t);
         a1 = pose.a1;
         a2 = pose.a2;
         carry = pose.carry;
+        grip = pose.grip;
       } else {
         // idle OR converged: the demonstrations stop once the policy is
         // trained — the arm returns to the resting sway (the CSS also fades
-        // the box back to its dormant, pre-training transparency)
+        // the box back to its dormant, pre-training transparency). A resting
+        // gripper is OPEN (including before training starts).
         [a1, a2] = wiggle(now, 0, 1.7);
+        grip = 0;
       }
 
-      demoPoseRef.current = { a1, a2, carry };
+      demoPoseRef.current = { a1, a2, carry, grip: grip ?? 0 };
       paintScene(ctx, W, H, {
         a1,
         a2,
         layout: demoLayoutRef.current,
         accent: ACCENT,
         carry,
+        grip: grip ?? 0,
       });
     };
 
@@ -372,14 +448,15 @@ export default function Hero() {
     // attention map that rode along with the last prediction. xy is in the
     // SILHOUETTE's [0,1] image coords — invert that renderer's sceneMap back
     // to workspace units, then forward-map into this canvas. Drawn only while
-    // a reach is live (that's when the prediction is current).
+    // a policy-driven phase is live (that's when the prediction is current).
     const drawGaze = (
       ctx: CanvasRenderingContext2D,
       W: number,
       H: number
     ) => {
       const g = gazeRef.current;
-      if (!g || episodeRef.current?.phase !== "reach") return;
+      const phase = episodeRef.current?.phase;
+      if (!g || (phase !== "reach" && phase !== "carry")) return;
       const sc = CONFIG.render.sceneScale;
       const wx = 0.5 + (g[0] - 0.5) / sc;
       const wy = (CONFIG.render.floorY - g[1]) / sc;
@@ -401,13 +478,14 @@ export default function Hero() {
       ctx.stroke();
     };
 
-    // advance one episode by a frame (reach → lift → return); ends by
-    // nulling the episode (arm left at REST) — training re-syncs a fresh
-    // attempt on the next demo cycle, converged waits for the next command
+    // advance one episode by a frame; ends by nulling the episode (arm left
+    // at REST) — training re-syncs a fresh attempt on the next demo cycle,
+    // converged waits for the next command. See the Episode doc comment for
+    // the machine.
     const runEpisode = (ep: Episode, now: number, W: number, H: number) => {
       const arm = armState.current;
       const trainer = trainerRef.current!;
-      if (ep.phase === "reach") {
+      if (ep.phase === "reach" || ep.phase === "carry") {
         // the model predicts an ABSOLUTE target (refreshed every PREDICT_MS);
         // the step direction is recomputed every FRAME from that target
         // against the arm's actual current pose, so the step naturally
@@ -416,22 +494,32 @@ export default function Hero() {
           // frozen per-cycle snapshot (training) / final weights (converged) —
           // the arm still re-predicts every PREDICT_MS as it moves (closed
           // loop), just against fixed weights for the whole attempt. The
-          // prediction is ASYNC now (render + forward pass in the trainer
+          // prediction is ASYNC (render + forward pass in the trainer
           // worker); the arm keeps stepping toward its previous target until
           // the reply lands, and a reply for an episode that has since ended
-          // (or left the reach phase) is dropped instead of re-arming a
-          // cleared targetRef.
+          // (or switched phase — its render carried the wrong carry state) is
+          // dropped instead of re-arming a cleared targetRef.
           lastPredRef.current = now;
           predInFlightRef.current = true;
+          const phaseAtRequest = ep.phase;
           void trainer
-            .predictFrozenTarget(arm.a1, arm.a2, ep.tokens, rolloutLayoutRef.current)
+            .predictFrozenTarget(
+              arm.a1,
+              arm.a2,
+              ep.tokens,
+              rolloutLayoutRef.current,
+              ep.phase === "carry" ? ep.carry : null
+            )
             .then((r) => {
               predInFlightRef.current = false;
-              if (r && episodeRef.current === ep && ep.phase === "reach") {
+              if (r && episodeRef.current === ep && ep.phase === phaseAtRequest) {
                 targetRef.current = r.target;
                 // the same forward pass carries the policy's gaze — drawn as
-                // a marker on the rollout scene while the reach is live
+                // a marker on the rollout scene while the phase is live
                 gazeRef.current = r.xy;
+                // and the gripper command — the reach gate closes on its
+                // rising edge over a block
+                ep.predGrip = r.grip;
               }
             });
         }
@@ -450,36 +538,75 @@ export default function Hero() {
           trailRef.current.push(effectorPx(W, H, arm.a1, arm.a2));
           if (trailRef.current.length > TRAIL_LEN) trailRef.current.shift();
         }
-        // the gripper closes on whatever block the effector settles over —
-        // not just the commanded one — so a wrong-side reach visibly lifts
-        // the wrong block instead of hovering next to it until the timeout
-        const e = fk(arm.a1, arm.a2);
-        let touched = -1;
-        for (const b of rolloutLayoutRef.current) {
-          const g = graspTarget(b.x, b.size); // grasp height follows block size
-          if (Math.hypot(e.ex - g.x, e.ey - g.y) < GRASP_EPS) {
-            touched = b.color;
-            break;
+
+        if (ep.phase === "reach") {
+          // LEARNED grasp gate. Contact = the effector fully over SOME block —
+          // not just the commanded one — so a wrong-side reach visibly acts on
+          // the wrong block instead of hovering until the timeout. The grasp
+          // only fires on the RISING EDGE of the predicted gripper close while
+          // over the block (and only after the gripper was seen OPEN during the
+          // approach), held NEAR_FRAMES — the same effectorOverBlock predicate
+          // the training label uses.
+          const closing = ep.predGrip >= GRIP_THRESHOLD;
+          let over = -1;
+          for (const b of rolloutLayoutRef.current) {
+            if (effectorOverBlock(arm.a1, arm.a2, b, GRIP_RADIUS)) {
+              over = b.color;
+              break;
+            }
+          }
+          ep.near =
+            over >= 0 && closing && ep.sawOpen && over === ep.nearColor
+              ? ep.near + 1
+              : over >= 0 && closing && ep.sawOpen
+                ? 1
+                : 0;
+          ep.nearColor = over;
+          // record an open frame AFTER the gate read, so the first close frame
+          // still counts as a rising edge against a prior open one
+          if (!closing) ep.sawOpen = true;
+          if (ep.near >= NEAR_FRAMES) {
+            // GRASP: the block the gripper closed over attaches to the effector
+            // and the carry phase begins
+            ep.phase = "carry";
+            ep.carry = over;
+            ep.settle = 0;
+            ep.f = 0;
+            // force a fresh prediction — the model must now SEE the block
+            // in the gripper (in-flight reach replies are phase-dropped)
+            targetRef.current = null;
+            lastPredRef.current = 0;
+          } else if (ep.f > REACH_TIMEOUT) {
+            ep.phase = "return";
+            ep.from = { ...arm };
+            ep.carry = null;
+            ep.f = 0;
+          }
+        } else {
+          // carry: policy-driven with the block in hand. "Settled" = the arm
+          // has effectively arrived at the predicted target (there may be no
+          // block to be near — the target is wherever the policy wants to go).
+          const settled =
+            t !== null &&
+            Math.abs(t[0] - arm.a1) < SETTLE_EPS &&
+            Math.abs(t[1] - arm.a2) < SETTLE_EPS;
+          ep.settle = settled ? ep.settle + 1 : 0;
+          if (ep.settle >= NEAR_FRAMES) {
+            // hold the block aloft wherever the policy parked it
+            ep.phase = "hold";
+            ep.f = 0;
+          } else if (ep.f > REACH_TIMEOUT) {
+            // carry never settled — drop the block and give up (it resets to
+            // its floor spot once the episode ends)
+            ep.carry = null;
+            ep.phase = "return";
+            ep.from = { ...arm };
+            ep.f = 0;
           }
         }
-        ep.near = touched >= 0 && touched === ep.nearColor ? ep.near + 1 : touched >= 0 ? 1 : 0;
-        ep.nearColor = touched;
-        if (touched >= 0 && ep.near >= NEAR_FRAMES) {
-          ep.phase = "lift"; // grasp whatever it settled on, lift straight up
-          ep.from = { ...arm };
-          ep.carry = touched;
-          ep.f = 0;
-        } else if (ep.f > REACH_TIMEOUT) {
-          ep.phase = "return";
-          ep.from = { ...arm };
-          ep.carry = null;
-          ep.f = 0;
-        }
-      } else if (ep.phase === "lift") {
-        const u = ease(Math.min(1, ep.f / LIFT_FRAMES));
-        arm.a1 = lerp(ep.from.a1, REST[0], u);
-        arm.a2 = lerp(ep.from.a2, REST[1], u);
-        if (ep.f > LIFT_FRAMES + TOP_HOLD) endEpisode();
+      } else if (ep.phase === "hold") {
+        // motionless beat holding the block aloft, then the lift is done
+        if (ep.f > TOP_HOLD) endEpisode();
       } else {
         const u = ep.f / RETURN_FRAMES;
         arm.a1 = lerp(ep.from.a1, REST[0], ease(u));
@@ -487,6 +614,18 @@ export default function Hero() {
         if (u >= 1) endEpisode();
       }
       if (episodeRef.current) ep.f++;
+    };
+
+    // The drawn gripper state for a rollout arm: closed once a block is in
+    // hand (carry/hold); during the reach it mirrors the policy's predicted
+    // gripper command so the viewer sees it close as it settles over the block;
+    // failed return, idle, or no episode shows it OPEN (a resting gripper is
+    // open — including before training starts).
+    const gripOf = (ep: Episode | null): 0 | 1 => {
+      if (!ep) return 0;
+      if (ep.carry !== null) return 1;
+      if (ep.phase === "reach") return ep.predGrip >= GRIP_THRESHOLD ? 1 : 0;
+      return 0;
     };
 
     // rollout: during training the episode runs in LOCKSTEP with the
@@ -510,9 +649,10 @@ export default function Hero() {
           layout: rolloutLayoutRef.current,
           accent: ACCENT,
           carry: ep?.carry ?? null,
+          grip: gripOf(ep),
         });
         drawGaze(ctx, W, H);
-        setActionVals(targetRef.current);
+        setActionVals(targetRef.current, gripOf(ep));
         return;
       }
 
@@ -529,7 +669,10 @@ export default function Hero() {
           // attempt reflects one policy generation (not a live-drifting target)
           if (rolloutCycleRef.current !== lastCycleRef.current) {
             rolloutCycleRef.current = lastCycleRef.current;
-            rolloutLayoutRef.current = demoLayoutRef.current;
+            // per-block CLONE of the demo scene, not a shared reference: the
+            // viewer can drag the rollout's blocks once converged, so sharing
+            // objects would leak one box's positions into the other
+            rolloutLayoutRef.current = demoLayoutRef.current.map((b) => ({ ...b }));
             arm.a1 = REST[0];
             arm.a2 = REST[1];
             trailRef.current = [];
@@ -560,12 +703,16 @@ export default function Hero() {
         a2: arm.a2,
         layout: rolloutLayoutRef.current,
         accent: ACCENT,
-        trail: ep?.phase === "reach" ? trailRef.current : null,
+        trail:
+          ep?.phase === "reach" || ep?.phase === "carry"
+            ? trailRef.current
+            : null,
         lossNorm: trainer?.lossNorm() ?? 1,
         carry: ep?.carry ?? null,
+        grip: gripOf(ep),
       });
       drawGaze(ctx, W, H);
-      setActionVals(st === "idle" ? null : targetRef.current);
+      setActionVals(st === "idle" ? null : targetRef.current, gripOf(ep));
     };
 
     const endEpisode = () => {
@@ -639,9 +786,10 @@ export default function Hero() {
       ctx.strokeRect(0.5, 0.5, W - 1, W - 1);
 
       // refresh the gaze on a throttle (same cadence as the language panel),
-      // against the demonstration's current pose + command, on the LIVE
-      // model — this is training-progress chrome, like decodeColor. One
-      // request in flight, ever (see the in-flight guards note above).
+      // against the demonstration's current pose + command + carry state, on
+      // the LIVE model — this is training-progress chrome, like the decoded-
+      // command readout. One request in flight, ever (see the in-flight
+      // guards note above).
       const trainer = trainerRef.current;
       if (
         trainer?.ready &&
@@ -657,7 +805,8 @@ export default function Hero() {
             p.a1,
             p.a2,
             demoSentenceRef.current.tokens,
-            demoLayoutRef.current
+            demoLayoutRef.current,
+            p.carry
           )
           .then((r) => {
             visGazeInFlightRef.current = false;
@@ -725,12 +874,12 @@ export default function Hero() {
       ctx.fill();
     };
 
-    // real language-encoder readouts: decoded color + each token's live
-    // ATTENTION weight (see attentionWeights in trainer.core.ts — the exact
-    // masked-softmax weights the attention-pooling layer uses, recomputed
-    // from the linear scorer's weights, not an approximation). Both are async
-    // round-trips to the trainer worker; LANG_MS throttling means at most one
-    // pair is ever in flight, so replies apply in order.
+    // real language-encoder readouts: decoded command (color) + each token's
+    // live ATTENTION weight (see attentionWeights in trainer.core.ts — the
+    // exact masked-softmax weights the attention-pooling layer uses,
+    // recomputed from the linear scorer's weights, not an approximation).
+    // Both are async round-trips to the trainer worker; LANG_MS throttling
+    // means at most one pair is ever in flight, so replies apply in order.
     const langViz = (now: number) => {
       const trainer = trainerRef.current;
       if (!trainer?.ready || now - lastLangRef.current < LANG_MS) return;
@@ -738,9 +887,13 @@ export default function Hero() {
       lastLangRef.current = now;
       langInFlightRef.current = true;
       const tokens = activeTokensRef.current;
-      const decodeP = trainer.decodeColor(tokens).then((d) => {
+      const decodeP = trainer.decodeCommand(tokens).then((d) => {
         if (!d) return;
-        setDecoded({ name: COLORS[d.color].name, hex: COLORS[d.color].hex, prob: d.prob });
+        setDecoded({
+          name: COLORS[d.color].name,
+          hex: COLORS[d.color].hex,
+          prob: d.colorProb,
+        });
       });
       const attnP = trainer.attentionWeights(tokens).then((bars) => {
         if (bars) setTokenBars(bars);
@@ -785,11 +938,6 @@ export default function Hero() {
         // the interactive policy is the final model — show the full training
         // budget it saw, not the last per-cycle snapshot count
         setRolloutSamples(trainer.samples);
-        // detach the rollout scene from the demo's: during training
-        // rolloutLayoutRef holds the SAME objects as demoLayoutRef (assigned,
-        // not copied), so dragging a rollout block would also move it in the
-        // Demonstration box. Clone so "try it" edits are rollout-only.
-        rolloutLayoutRef.current = rolloutLayoutRef.current.map((b) => ({ ...b }));
       }
     }
     const now = performance.now();
@@ -833,7 +981,17 @@ export default function Hero() {
       setDecoded(null);
       setTokenBars([]);
       setRolloutSamples(0);
-      void trainer.start(onUpdate);
+      setCfgOpen(false);
+      // install the ⚙ run config on this thread's samplers before anything
+      // draws a command (trainer.start also ships it to the worker)
+      const cfg = runCfgRef.current;
+      setRunConfig(cfg);
+      // per-block clone of the default scene — the rollout's blocks are
+      // draggable once converged, so the module-level DEFAULT_LAYOUT must
+      // stay pristine
+      demoLayoutRef.current = DEFAULT_LAYOUT.map((b) => ({ ...b }));
+      rolloutLayoutRef.current = DEFAULT_LAYOUT.map((b) => ({ ...b }));
+      void trainer.start(onUpdate, cfg);
     }
   };
 
@@ -847,11 +1005,12 @@ export default function Hero() {
     gazeRef.current = null;
     visGazeRef.current = null;
     armState.current = { a1: REST[0], a2: REST[1] };
-    demoLayoutRef.current = DEFAULT_LAYOUT;
+    // clones — the rollout's blocks are draggable; DEFAULT_LAYOUT stays pristine
+    demoLayoutRef.current = DEFAULT_LAYOUT.map((b) => ({ ...b }));
     demoSentenceRef.current = DEFAULT_SENTENCE;
     demoPlanRef.current = null;
     lastCycleRef.current = -1;
-    rolloutLayoutRef.current = DEFAULT_LAYOUT;
+    rolloutLayoutRef.current = DEFAULT_LAYOUT.map((b) => ({ ...b }));
     activeTokensRef.current = DEFAULT_SENTENCE.tokens;
     userSentenceRef.current = null;
     pausedAccumRef.current = 0;
@@ -867,14 +1026,16 @@ export default function Hero() {
     setHud({ lossText: "—", samples: 0, batches: 0 });
   };
 
-  /** "Try it" mode: run the user's own sentence through the trained policy. */
+  /** "Try it" mode: run the user's own sentence through the trained policy.
+      The color head decodes which block to pick up; the motion itself is
+      entirely the policy's. */
   const runCommand = async () => {
     const trainer = trainerRef.current;
     if (!trainer?.ready || statusRef.current !== "converged") return;
     const text = tryText.trim();
     if (!text) return;
     const tokens = tokenize(text);
-    const d = await trainer.decodeColor(tokens); // worker round-trip (~ms)
+    const d = await trainer.decodeCommand(tokens); // worker round-trip (~ms)
     if (!d || statusRef.current !== "converged") return;
     const words = text
       .toLowerCase()
@@ -882,17 +1043,20 @@ export default function Hero() {
       .split(" ")
       .filter(Boolean)
       .slice(0, MAX_SEQ_LEN);
-    const sentence: Sentence = { color: d.color, text, words, tokens };
+    const sentence: Sentence = {
+      color: d.color,
+      text,
+      words,
+      tokens,
+    };
     userSentenceRef.current = sentence;
     setUserSentence(sentence);
     activeTokensRef.current = tokens;
-    setDecoded({ name: COLORS[d.color].name, hex: COLORS[d.color].hex, prob: d.prob });
-    // only two of the eight colors are in the scene — a command naming an
-    // absent one can't be executed; point at the shuffle button instead
-    if (!hasColor(rolloutLayoutRef.current, d.color)) {
-      setTryNote(`no ${COLORS[d.color].name} block in this scene — ⟳ to reshuffle`);
-      return;
-    }
+    setDecoded({
+      name: COLORS[d.color].name,
+      hex: COLORS[d.color].hex,
+      prob: d.colorProb,
+    });
     setTryNote(null);
     armState.current = { a1: REST[0], a2: REST[1] };
     trailRef.current = [];
@@ -939,11 +1103,12 @@ export default function Hero() {
     for (const b of rolloutLayoutRef.current) {
       const cx = rect.width * 0.5 + (b.x - 0.5) * S;
       const half = (b.size * S) / 2;
+      const bottom = floorY - (b.y ?? 0) * S; // rest height (normally floor)
       if (
         px >= cx - half - pad &&
         px <= cx + half + pad &&
-        py >= floorY - b.size * S - pad &&
-        py <= floorY + pad
+        py >= bottom - b.size * S - pad &&
+        py <= bottom + pad
       )
         return b;
     }
@@ -970,6 +1135,8 @@ export default function Hero() {
     gazeRef.current = null;
     armState.current = { a1: REST[0], a2: REST[1] };
     setTryNote(null);
+    // a dragged block rests on the floor
+    b.y = 0;
     c.style.cursor = "grabbing";
   };
 
@@ -994,6 +1161,18 @@ export default function Hero() {
     }
     dragRef.current = null;
   };
+
+  // ---- ⚙ run-config menu (editable while idle; locked once training runs;
+  // Reset returns to idle and re-opens the choice) ----
+  const setNumColors = (n: RunConfig["numColors"]) =>
+    setRunCfg({
+      ...runCfg,
+      numColors: n,
+      // colors are unique per scene, so the palette caps the block count
+      maxBlocks: Math.min(runCfg.maxBlocks, n) as RunConfig["maxBlocks"],
+    });
+  const setMaxBlocks = (n: RunConfig["maxBlocks"]) =>
+    setRunCfg({ ...runCfg, maxBlocks: n });
 
   const active = userSentence ?? demoSentence;
 
@@ -1039,82 +1218,18 @@ export default function Hero() {
 
   return (
     <header className={`hero ${stateClass}`} ref={stageRef}>
-      {/* orthogonal data-pipeline rails; hidden until training starts, then
-          the pipeline "draws on" (Demonstration→Encoders, then
-          Encoders→Rollout) once, and a single small "current" travels each
-          wire left→right for as long as training is actively running */}
-      <svg
-        className="vla-wires"
-        ref={svgRef}
-        viewBox="0 0 1000 1000"
-        preserveAspectRatio="none"
-        aria-hidden="true"
-      >
-        <g className="vla-wire-base">
-          <path
-            data-wire="p1"
-            vectorEffect="non-scaling-stroke"
-            pathLength={100}
-            className="vla-seg-a"
-          />
-          <path
-            data-wire="p2"
-            vectorEffect="non-scaling-stroke"
-            pathLength={100}
-            className="vla-seg-a"
-          />
-          <path
-            data-wire="p3"
-            vectorEffect="non-scaling-stroke"
-            pathLength={100}
-            className="vla-seg-b"
-          />
-          <path
-            data-wire="p4"
-            vectorEffect="non-scaling-stroke"
-            pathLength={100}
-            className="vla-seg-b"
-          />
-          <path
-            data-wire="p5"
-            vectorEffect="non-scaling-stroke"
-            pathLength={100}
-            className="vla-seg-c"
-          />
-        </g>
-        <g className="vla-wire-pulse">
-          <path
-            data-wire="p1"
-            vectorEffect="non-scaling-stroke"
-            pathLength={100}
-            className="vla-pulse-a"
-          />
-          <path
-            data-wire="p2"
-            vectorEffect="non-scaling-stroke"
-            pathLength={100}
-            className="vla-pulse-a"
-          />
-          <path
-            data-wire="p3"
-            vectorEffect="non-scaling-stroke"
-            pathLength={100}
-            className="vla-pulse-b"
-          />
-          <path
-            data-wire="p4"
-            vectorEffect="non-scaling-stroke"
-            pathLength={100}
-            className="vla-pulse-b"
-          />
-          <path
-            data-wire="p5"
-            vectorEffect="non-scaling-stroke"
-            pathLength={100}
-            className="vla-pulse-c"
-          />
-        </g>
-      </svg>
+      {/* No drawn connectors — the pipeline is stitched together purely by
+          motion: a payload token detaches from each source card and glides
+          across the gap into the next (offset-path trajectories set in
+          layoutWires). Staggered a→b→c so the flow reads source → encoder →
+          action head → rollout. Hidden until training starts. */}
+      <div className="vla-flow" ref={flowRef} aria-hidden="true">
+        <span className="vla-payload vla-flow-a" data-flow="p1" />
+        <span className="vla-payload vla-flow-a" data-flow="p2" />
+        <span className="vla-payload vla-flow-b" data-flow="p3" />
+        <span className="vla-payload vla-flow-b" data-flow="p4" />
+        <span className="vla-payload vla-flow-c" data-flow="p5" />
+      </div>
 
       {/* Demonstration — far-left anchor; prompt floats above it */}
       <div className="vla-node vla-input" ref={inputRef}>
@@ -1200,6 +1315,10 @@ export default function Hero() {
             <span className="vla-av-k">elbow</span>
             <span className="vla-av-v">—</span>
           </span>
+          <span>
+            <span className="vla-av-k">gripper</span>
+            <span className="vla-av-v">open</span>
+          </span>
         </div>
       </div>
 
@@ -1282,14 +1401,74 @@ export default function Hero() {
         </div>
         <div className="vla-loss-val">{hud.lossText}</div>
         {status === "idle" || status === "loading" ? (
-          <button
-            className="vla-btn"
-            onClick={onPrimary}
-            type="button"
-            disabled={status === "loading"}
-          >
-            Start Training
-          </button>
+          <>
+            {/* ⚙ run config — what to train (palette / density / task set),
+                pickable only before training starts */}
+            <div className="vla-cfg">
+              <button
+                className={`vla-btn vla-btn-ghost vla-cfg-btn${cfgOpen ? " is-open" : ""}`}
+                onClick={() => setCfgOpen((o) => !o)}
+                type="button"
+                disabled={status === "loading"}
+                aria-expanded={cfgOpen}
+                title="Configure what to train"
+              >
+                ⚙
+              </button>
+              {cfgOpen && status === "idle" && (
+                <div className="vla-cfg-pop">
+                  <div className="vla-cfg-row">
+                    <span className="vla-cfg-k">colors</span>
+                    <div className="vla-cfg-opts">
+                      {([2, 4, 8] as const).map((n) => (
+                        <button
+                          key={n}
+                          type="button"
+                          className={`vla-cfg-opt${runCfg.numColors === n ? " is-sel" : ""}`}
+                          onClick={() => setNumColors(n)}
+                        >
+                          {n}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="vla-cfg-row">
+                    <span className="vla-cfg-k">blocks</span>
+                    <div className="vla-cfg-opts">
+                      {([2, 3, 4] as const).map((n) => (
+                        <button
+                          key={n}
+                          type="button"
+                          className={`vla-cfg-opt${runCfg.maxBlocks === n ? " is-sel" : ""}`}
+                          disabled={n > runCfg.numColors}
+                          title={
+                            n > runCfg.numColors
+                              ? "every block is a unique color — capped by the palette"
+                              : undefined
+                          }
+                          onClick={() => setMaxBlocks(n)}
+                        >
+                          ≤{n}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="vla-cfg-eta">
+                    est. training ~{estimateTrainingSeconds(runCfg)}s
+                    <span className="vla-cfg-eta-note"> · on a laptop GPU</span>
+                  </div>
+                </div>
+              )}
+            </div>
+            <button
+              className="vla-btn"
+              onClick={onPrimary}
+              type="button"
+              disabled={status === "loading"}
+            >
+              Start Training
+            </button>
+          </>
         ) : status === "converged" ? (
           <button className="vla-btn vla-btn-ghost" onClick={onReset} type="button">
             Reset

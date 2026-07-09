@@ -3,13 +3,13 @@
 // ~1MB tfjs bundle is fetched lazily on "Start Training".
 //
 // Vision→action is a language-conditioned SPATIAL ATTENTION readout, not a
-// flatten→dense fusion. The conv stack produces a G×G feature map; the
-// language vector is projected to a query which dot-product-scores every map
-// cell ("does this cell look like what the command asked for?"); a spatial
-// softmax turns the scores into an attention map; and the readout is the
-// map's SOFT-ARGMAX — the expected (x, y) image coordinate under the map —
-// plus the attention-weighted feature vector (block size / local shape). A
-// small dense head then regresses the target joint angles from those.
+// flatten→dense fusion. The conv stack produces a G×G feature map; a single
+// language query dot-product-scores every map cell ("does this cell look
+// like the commanded block?"); a spatial softmax turns the score row into an
+// attention map; and the readout is the map's SOFT-ARGMAX — the expected
+// (x, y) image coordinate under the map — plus its attention-weighted feature
+// vector (block size / local shape). A small dense head then regresses the
+// target joint angles from that readout.
 //
 // Why this shape: the previous architecture (FiLM-modulated CNN → flatten →
 // dense) buried the vision→language binding inside a flatten that destroys
@@ -23,30 +23,42 @@
 // expectation, not a cell index, so position accuracy is no longer quantized
 // by the feature-map resolution (the old ~0.03 reach-error floor).
 //
-// Language: an ATTENTION-POOLED bag-of-embeddings. Embed each token, score
-// each one with a small learned linear scorer, then combine them with a
-// masked softmax (padding forced to zero attention) into a single weighted-
-// sum sentence vector. This replaces a plain mean-pool, which diluted the
-// one word that matters (the color/verb) under filler + padding — in a
-// 12-slot mean the color token is only ~1/12 of the result, and short
-// commands are watered down further by the empty pad slots. Attention lets
-// the encoder learn to keep the content words and ignore the scaffolding
-// (still robust to WHERE the color word appears — free user text at
-// inference; word order carries no signal, so no recurrence is needed). The
-// embedding table is PRETRAINED (a ~20k-word GloVe 50d slice, see
-// lib/vla/embeddings.ts) and FROZEN: only the scorer/heads/fusion fine-tune
+// Language: ONE attention-pooled slot with a LOCAL-CONTEXT (conv) scorer.
+// A conv1d scorer (kernel 7 over the token axis, linear) scores every token
+// from itself PLUS its ±3-token neighborhood, and attention-pools the
+// sequence into a single vector the color head decodes and the attention
+// query reads. An attention pool (not a mean-pool) because a mean dilutes
+// the one word that matters under filler + padding; a conv (not a bare
+// per-token dense) so the scorer generalizes across compressed forms
+// ("grab red", bare "red") the dropVerb/Article/NounProb grammar
+// augmentation in config.ts trains it on, rather than overfitting the full
+// grammar's fixed color-word position.
+// The embedding table is PRETRAINED (a ~20k-word GloVe 50d slice, see
+// lib/vla/embeddings.ts) and FROZEN: only the scorer/head/fusion fine-tune
 // on top of it. Frozen is the point — Adam would only update rows for words
 // seen in training, so a trainable table would drift "golden" away from the
 // untouched "gold" and destroy exactly the near-synonym generalization the
 // pretrained geometry provides. The linear color head learns a map from
 // GloVe space using only the grammar's synonyms, and unseen neighbors
-// ("gold", "violet") ride along. An auxiliary color-classification head on
-// the pooled language vector shapes it to be color-decodable and powers the
-// live "decoded target" readout.
-// The token-attention scorer is LINEAR, so trainer.ts's attentionWeights()
-// can recompute the exact same per-token weights CPU-side (from the scorer's
-// two small weight tensors + the frozen embedding table) for the live
+// ("gold", "violet") ride along, powering the live "decoded target" readout.
+// The token-attention scorer is LINEAR (conv1d, no activation), so
+// trainer.core's attentionWeights() can recompute the exact same per-token
+// weights CPU-side (the small conv kernel + the frozen embedding table —
+// PAD rows are zero, matching the conv's "same" zero padding) for the live
 // per-token bars — no extra sub-model or forward pass required.
+//
+// PROPRIOCEPTIVE CARRY FLAG: a third input (1 scalar) tells the network
+// whether the gripper is currently holding a block. WHY: the same (scene,
+// sentence) has two far-apart action targets — the grasp point when empty-
+// handed, the carry-home (REST) target when holding — and pre-flag the ONLY
+// disambiguator was the carried block's pixels at the effector; when vision
+// missed that cue the action head averaged the modes (a 0.12-0.43 loss
+// oscillation). The flag feeds the attention QUERY too: "block at the
+// effector" changes what the commanded block looks like. Honesty note: this
+// is gripper proprioception (a sensed STATE), which a real robot has — and it
+// is distinct from the gripper COMMAND head (see gripperOutput below): the
+// policy commands the gripper to close AND senses whether it is holding,
+// exactly as a real robot does. No expert-side information crosses at inference.
 //
 // Everything below is STANDARD tfjs layers (reshape/dot/softmax activation/
 // dense) plus the one custom AttentionPooling layer the language branch
@@ -68,6 +80,7 @@ export const IMG_SIZE = CONFIG.model.imgSize;
 export const LEARNING_RATE = CONFIG.model.learningRate;
 export const COLOR_LOSS_WEIGHT = CONFIG.model.colorLossWeight;
 export const MAP_LOSS_WEIGHT = CONFIG.model.mapLossWeight;
+export const GRIPPER_LOSS_WEIGHT = CONFIG.model.gripperLossWeight;
 export const ACTION_HUBER_DELTA = CONFIG.model.actionHuberDelta;
 
 /** Spatial size after one conv stage (+ optional pool). */
@@ -89,17 +102,26 @@ export const ATTN_GRID = CONFIG.model.conv.reduce(
 );
 
 export interface VLAModels {
-  /** Main policy (the one that trains): [vision, tokens] →
-      [action angles (2), color softmax, attention map [G*G]]. The map is a
-      trained OUTPUT, not just a readout — see mapLossWeight in config.ts for
-      why the action loss alone can't train the attention. */
+  /** Main policy (the one that trains): [vision, tokens, carry] →
+      [action angles (2), color softmax, attention map [G*G], gripper (1)]. The
+      map is a trained OUTPUT, not just a readout — see mapLossWeight in
+      config.ts for why the action loss alone can't train the attention. color
+      reads the pooled language slot — a pure text decoder. gripper is the
+      learned "close now" command (last output; see below). */
   model: tfType.LayersModel;
   /** Inference/readout twin sharing every layer (no weights of its own):
-      [vision, tokens] → [action angles (2), spatial attention map [G*G]].
-      One predict on this yields the action AND the "where is the model
-      looking" viz in a single pass (the UI's gaze point is the map's
-      expectation, computed CPU-side in trainer.core). */
+      same inputs → [action angles (2), attention map [G*G], gripper (1)]. One
+      predict on this yields the action, the "where is the model looking" viz
+      AND the gripper command in a single pass (trainer.core computes the map
+      expectation CPU-side). */
   viz: tfType.LayersModel;
+  /** Language-only training twin: [tokens] → [color]. Shares the embedding +
+      conv scorer + color head with `model` (no weights of its own), but its
+      graph EXCLUDES the vision branch, so trainOnBatch on it updates ONLY the
+      language weights — the basis for the Loading-phase warm-up (see
+      languageWarmup in trainer.core). It carries its OWN optimizer (compiled
+      below), independent of the main model's. */
+  lang: tfType.LayersModel;
 }
 
 /**
@@ -145,12 +167,14 @@ function makeAttentionPooling(tf: TF) {
  */
 export function buildVLAModel(tf: TF, embedMatrix: Float32Array): VLAModels {
   // Language branch first — the vision branch's attention query consumes
-  // langPooled, so the sentence vector has to exist before the CNN is wired.
+  // the pooled language slots, so they have to exist before the CNN is wired.
   const langInput = tf.input({
     shape: [MAX_SEQ_LEN],
     name: "language_tokens",
     dtype: "int32",
   });
+  // proprioceptive "gripper is holding a block" flag (see header)
+  const carryInput = tf.input({ shape: [1], name: "carry_flag" });
   const embedded = tf.layers
     .embedding({
       inputDim: VOCAB_SIZE,
@@ -159,15 +183,18 @@ export function buildVLAModel(tf: TF, embedMatrix: Float32Array): VLAModels {
       name: "text_embedding",
     })
     .apply(langInput) as tfType.SymbolicTensor; // [T, EMBED_DIM]
-  // per-token importance score; LINEAR (no activation) so attentionWeights()
-  // can recompute the same scores CPU-side from this layer's two weights
-  const scores = tf.layers
-    .dense({ units: 1, name: "attn_score" })
+  // per-token scores from the token PLUS its ±3 neighborhood (see header —
+  // kernel 7 covers the widest grammar gap with headroom for free text).
+  // LINEAR (no activation) so attentionWeights() can recompute the same
+  // scores CPU-side from the conv kernel. "attn_score"/"lang_vector" keep
+  // their names so the existing per-token-bars readout stays wired.
+  const scoresTarget = tf.layers
+    .conv1d({ filters: 1, kernelSize: 7, padding: "same", name: "attn_score" })
     .apply(embedded) as tfType.SymbolicTensor; // [T, 1]
   const AttentionPooling = makeAttentionPooling(tf);
-  const langPooled = new AttentionPooling({ name: "lang_vector" }).apply([
+  const langTarget = new AttentionPooling({ name: "lang_vector" }).apply([
     embedded,
-    scores,
+    scoresTarget,
     langInput,
   ]) as tfType.SymbolicTensor; // EMBED_DIM
 
@@ -203,42 +230,57 @@ export function buildVLAModel(tf: TF, embedMatrix: Float32Array): VLAModels {
   const cells = tf.layers
     .reshape({ targetShape: [G * G, C], name: "vision_cells" })
     .apply(v) as tfType.SymbolicTensor; // [B, G*G, C]
-  // the command as a query over feature space. LINEAR: the dot-product score
-  // is then bilinear in (features, language) — the simplest learnable "does
-  // this cell match the command" test. Kernel is rescaled by 1/√C post-build
-  // so the softmax starts soft (see below).
-  const query = tf.layers
-    .dense({ units: C, name: "attn_query" })
-    .apply(langPooled) as tfType.SymbolicTensor; // [B, C]
-  // per-cell match score: contract the feature axis of both inputs
-  const cellScores = tf.layers
-    .dot({ axes: [2, 1], name: "attn_cell_scores" })
-    .apply([cells, query]) as tfType.SymbolicTensor; // [B, G*G]
-  // spatial softmax — "where the model looks", also posted to the UI
-  const attnMap = tf.layers
-    .activation({ activation: "softmax", name: "attn_map" })
-    .apply(cellScores) as tfType.SymbolicTensor; // [B, G*G]
+  // ONE language-conditioned query over feature space — the attention map.
+  // LINEAR query: the dot-product score is bilinear in (features, language) —
+  // the simplest learnable "does this cell match the commanded block" test;
+  // the kernel is rescaled by 1/√C post-build so the softmax starts soft (see
+  // below). The map's job is phase-INDEPENDENT: it tracks the commanded block
+  // wherever it renders (floor spot, or the effector while carried). The
+  // carry flag rides into the query: "block at the effector" changes what the
+  // commanded block looks like.
+  const pickQuery = tf.layers
+    .dense({ units: C, name: "pick_query" })
+    .apply(
+      tf.layers
+        .concatenate({ name: "pick_query_in" })
+        .apply([langTarget, carryInput]) as tfType.SymbolicTensor
+    ) as tfType.SymbolicTensor; // [B, C]
+  // per-cell match scores → spatial softmax ("where the model looks", also
+  // posted to the UI)
+  const pickMap = tf.layers
+    .activation({ activation: "softmax", name: "pick_map" })
+    .apply(
+      tf.layers
+        .dot({ axes: [2, 1], name: "pick_cell_scores" })
+        .apply([cells, pickQuery]) as tfType.SymbolicTensor
+    ) as tfType.SymbolicTensor; // [B, G*G]
   // soft-argmax: expected (x, y) coordinate under the map. A Dense with a
   // FROZEN kernel holding each cell's center (seeded post-build) IS that
   // expectation — no custom layer needed, and gradients still flow through
   // the attention map to the convs/query. The kernel stores CENTERED, GAINED
-  // coords ((c − 0.5) × attnCoordGain), not raw [0,1] — see config.ts.
-  const attnXY = tf.layers
-    .dense({ units: 2, useBias: false, trainable: false, name: "attn_grid" })
-    .apply(attnMap) as tfType.SymbolicTensor; // [B, 2], gained image coords
+  // coords ((c − 0.5) × attnCoordGain) — see config.ts.
+  const pickXY = tf.layers
+    .dense({ units: 2, useBias: false, trainable: false, name: "pick_grid" })
+    .apply(pickMap) as tfType.SymbolicTensor; // [B, 2], gained image coords
   // attention-weighted feature readout: block size / local shape at the
-  // attended spot (the grasp height depends on block size, which (x̂, ŷ)
-  // alone doesn't carry)
-  const attended = tf.layers
-    .dot({ axes: [1, 1], name: "attn_read" })
-    .apply([attnMap, cells]) as tfType.SymbolicTensor; // [B, C]
+  // attended spot.
+  const pickFeat = tf.layers
+    .dot({ axes: [1, 1], name: "pick_read" })
+    .apply([pickMap, cells]) as tfType.SymbolicTensor; // [B, C]
 
-  // fusion + heads. langPooled rides along so the head keeps a direct
-  // language path; the color aux head reads ONLY langPooled, so it stays a
-  // pure text decoder and the live "decoded target" readout is unchanged.
+  // fusion + heads. The map readout feeds the action head; langTarget rides
+  // along so the head keeps a direct language path; the carry flag rides
+  // along so the action head needn't re-derive the phase from pixels (the
+  // pre-flag mode-averaging failure). The color head reads the pooled
+  // language slot — a pure text decoder powering the decoded-target readout.
   const fused = tf.layers
     .concatenate()
-    .apply([attnXY, attended, langPooled] as tfType.SymbolicTensor[]);
+    .apply([
+      pickXY,
+      pickFeat,
+      langTarget,
+      carryInput,
+    ] as tfType.SymbolicTensor[]);
   const dense1 = tf.layers
     .dense({ units: CONFIG.model.fusionUnits, activation: "relu" })
     .apply(fused);
@@ -247,16 +289,35 @@ export function buildVLAModel(tf: TF, embedMatrix: Float32Array): VLAModels {
     .apply(dense1) as tfType.SymbolicTensor;
   const colorOutput = tf.layers
     .dense({ units: COLORS.length, activation: "softmax", name: "color" })
-    .apply(langPooled) as tfType.SymbolicTensor;
+    .apply(langTarget) as tfType.SymbolicTensor;
+  // gripper COMMAND: a learned "close now" head (0=open → 1=closed). It reads
+  // the fused hidden dense1 — being "over the block" is a VISUAL fact, so it
+  // needs the vision→attention pathway, not the language slot alone. Trained by
+  // BCE against the shared effectorOverBlock predicate (trainer.core), it fires
+  // ~0 while approaching and ~1 only when the effector is fully over the block;
+  // the rollout turns its rising edge into the physical grasp (Hero.tsx). It is
+  // APPENDED LAST so every existing positional output read stays valid. Kept OUT
+  // of the lang twin (that graph has no vision node → no "over the block" fact).
+  const gripperOutput = tf.layers
+    .dense({ units: 1, activation: "sigmoid", name: "gripper" })
+    .apply(dense1) as tfType.SymbolicTensor;
 
   const model = tf.model({
-    inputs: [visionInput, langInput],
-    outputs: [actionOutput, colorOutput, attnMap],
+    inputs: [visionInput, langInput, carryInput],
+    outputs: [actionOutput, colorOutput, pickMap, gripperOutput],
   });
   // readout twin: same graph nodes, so it shares every weight with `model`
   const viz = tf.model({
-    inputs: [visionInput, langInput],
-    outputs: [actionOutput, attnMap],
+    inputs: [visionInput, langInput, carryInput],
+    outputs: [actionOutput, pickMap, gripperOutput],
+  });
+  // language-only training twin: the color head reached from `langInput`
+  // alone (no vision node in the graph), so a gradient step touches only the
+  // language weights. Shares layers with `model`, compiled below with its own
+  // optimizer for the Loading-phase warm-up.
+  const lang = tf.model({
+    inputs: [langInput],
+    outputs: [colorOutput],
   });
 
   // load the pretrained GloVe vectors into the (frozen) embedding table.
@@ -278,7 +339,7 @@ export function buildVLAModel(tf: TF, embedMatrix: Float32Array): VLAModels {
       grid[(i * G + j) * 2 + 1] = ((i + 0.5) / G - 0.5) * gain;
     }
   const gridInit = tf.tensor2d(grid, [G * G, 2]);
-  model.getLayer("attn_grid").setWeights([gridInit]);
+  model.getLayer("pick_grid").setWeights([gridInit]);
   gridInit.dispose();
 
   // temper the attention at init: scale the query kernel by 1/√C so the
@@ -287,11 +348,13 @@ export function buildVLAModel(tf: TF, embedMatrix: Float32Array): VLAModels {
   // Only the INIT is scaled; the kernel itself stays fully trainable.
   // (getWeights returns the layer's LIVE variable tensors — same rule as
   // snapshotPolicy: never dispose them; only the derived temp is ours.)
-  const q = model.getLayer("attn_query");
-  const [qKernel, qBias] = q.getWeights();
-  const qScaled = tf.tidy(() => qKernel.mul(1 / Math.sqrt(C)));
-  q.setWeights([qScaled, qBias]); // copies the values into the variables
-  qScaled.dispose();
+  {
+    const q = model.getLayer("pick_query");
+    const [qKernel, qBias] = q.getWeights();
+    const qScaled = tf.tidy(() => qKernel.mul(1 / Math.sqrt(C)));
+    q.setWeights([qScaled, qBias]); // copies the values into the variables
+    qScaled.dispose();
+  }
 
   // tfjs-layers doesn't implement compile({lossWeights}) — scale the aux
   // color loss inside a custom per-output loss function instead (and the
@@ -305,16 +368,34 @@ export function buildVLAModel(tf: TF, embedMatrix: Float32Array): VLAModels {
       tf.metrics.categoricalCrossentropy(yTrue, yPred).mul(COLOR_LOSS_WEIGHT)
     );
   // the attention supervision: which grid cell holds the commanded block
-  // (trainer.core builds the onehot label from the same layout the IK label
-  // comes from). attnMap is already a softmax, so plain categorical CE.
+  // (trainer.core builds the label from the same layout the IK label comes
+  // from — the commanded block wherever it renders). The map is already a
+  // softmax, so plain categorical CE.
   const weightedMapLoss = (yTrue: tfType.Tensor, yPred: tfType.Tensor) =>
     tf.tidy(() =>
       tf.metrics.categoricalCrossentropy(yTrue, yPred).mul(MAP_LOSS_WEIGHT)
     );
+  // gripper: plain binary cross-entropy on the sigmoid head, scaled down like
+  // the other aux heads so it nudges (not dominates) the shared trunk. The
+  // action Huber stays output 0 so trainStep's convergence read (loss index 1)
+  // is unchanged.
+  const weightedGripLoss = (yTrue: tfType.Tensor, yPred: tfType.Tensor) =>
+    tf.tidy(() =>
+      tf.metrics.binaryCrossentropy(yTrue, yPred).mul(GRIPPER_LOSS_WEIGHT)
+    );
   model.compile({
     optimizer: tf.train.adam(LEARNING_RATE),
-    loss: [actionLoss, weightedColorLoss, weightedMapLoss],
+    loss: [actionLoss, weightedColorLoss, weightedMapLoss, weightedGripLoss],
+  });
+  // language warm-up twin: plain (unweighted) cross-entropy on the color head —
+  // in isolation there's no action loss to balance against, so the config
+  // loss-weight that exists only to scale the head down relative to the
+  // action loss isn't needed here. Its own Adam so warm-up momentum doesn't
+  // touch the main optimizer's state.
+  lang.compile({
+    optimizer: tf.train.adam(LEARNING_RATE),
+    loss: "categoricalCrossentropy",
   });
 
-  return { model, viz };
+  return { model, viz, lang };
 }

@@ -48,7 +48,10 @@ const SOURCE_URL =
 // English, so they land in the top N anyway — this is a fail-loud guarantee)
 const grammarWords = new Set(
   [
-    ...grammar.verbs.flat(),
+    ...Object.values(grammar.tasks).flatMap((t) => [
+      ...t.verbs.flat(),
+      ...(t.preps ?? []).flat(),
+    ]),
     ...grammar.articles,
     ...grammar.nouns,
     ...grammar.fillers,

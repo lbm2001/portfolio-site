@@ -7,20 +7,25 @@
 // Protocol (all messages are plain structured-clone-able objects):
 //
 //   main → worker                        worker → main
-//   {t:"start", gen}                     {t:"state", gen, status, loss,
+//   {t:"start", gen, cfg}                {t:"state", gen, status, loss,
 //   {t:"pause"|"resume"|"reset", gen}      smoothLoss, initialLoss, batches}
 //   {t:"snapshot", gen}                    — after every batch + control msg
 //   {t:"predict", id, a1, a2,            {t:"predict", id, result}
-//     tokens, layout, gen}               {t:"predictLive", id, result}
+//     tokens, layout, carry, gen}        {t:"predictLive", id, result}
 //   {t:"predictLive", id, a1, a2,        {t:"decode", id, result}
-//     tokens, layout, gen}               {t:"attention", id, result}
+//     tokens, layout, carry, gen}        {t:"attention", id, result}
 //   {t:"decode", id, tokens, gen}        {t:"vocab", words}
 //   {t:"attention", id, tokens, gen}
 //
-// "predict" runs the FROZEN per-cycle snapshot (the rollout's policy);
-// "predictLive" runs the still-training model (the Vision Encoder panel's
-// live gaze heatmap). Both reply with a full PredictResult — target angles
-// plus the spatial-attention map — from one forward pass.
+// "start" ships the user's ⚙ RunConfig (task set / palette / density): the
+// worker holds its own copy of the run-config module's state, so it must be
+// installed here before the training loop samples anything. "predict" runs
+// the FROZEN per-cycle snapshot (the rollout's policy); "predictLive" runs
+// the still-training model (the Vision Encoder panel's live gaze heatmap).
+// Both carry the rollout's carried-block state (rendered at the effector in
+// the model's-eye view) and reply with a full PredictResult — target angles
+// plus the spatial-attention map — from one forward pass. "decode" replies
+// with the color head's DecodedCommand (the acted-on color).
 //
 // `gen` is the proxy's reset-generation counter: it's echoed on every state
 // post so the proxy can drop state messages that were already in flight when
@@ -35,12 +40,17 @@
 // thread's tokenizer (examples.ts) needs registerFullVocab too — worker and
 // page each have their own copy of that module's state.
 
-import { VLATrainerCore, type PredictResult } from "./trainer.core";
+import {
+  VLATrainerCore,
+  type DecodedCommand,
+  type PredictResult,
+} from "./trainer.core";
 import { loadEmbeddings, vocabWords } from "./embeddings";
 import type { Layout } from "./examples";
+import { setRunConfig, type RunConfig } from "./run-config";
 
 export type WorkerRequest =
-  | { t: "start"; gen: number }
+  | { t: "start"; gen: number; cfg: RunConfig }
   | { t: "pause"; gen: number }
   | { t: "resume"; gen: number }
   | { t: "reset"; gen: number }
@@ -52,6 +62,7 @@ export type WorkerRequest =
       a2: number;
       tokens: number[];
       layout: Layout;
+      carry: number | null;
       gen: number;
     }
   | {
@@ -61,6 +72,7 @@ export type WorkerRequest =
       a2: number;
       tokens: number[];
       layout: Layout;
+      carry: number | null;
       gen: number;
     }
   | { t: "decode"; id: number; tokens: number[]; gen: number }
@@ -78,7 +90,7 @@ export type WorkerResponse =
     }
   | { t: "predict"; id: number; result: PredictResult | null }
   | { t: "predictLive"; id: number; result: PredictResult | null }
-  | { t: "decode"; id: number; result: { color: number; prob: number } | null }
+  | { t: "decode"; id: number; result: DecodedCommand | null }
   | { t: "attention"; id: number; result: number[] | null }
   | { t: "vocab"; words: string[] };
 
@@ -105,6 +117,9 @@ onmessage = (e: MessageEvent<WorkerRequest>) => {
   gen = msg.gen;
   switch (msg.t) {
     case "start":
+      // install the run config BEFORE the loop samples anything — this
+      // worker's run-config module state is separate from the main thread's
+      setRunConfig(msg.cfg);
       // core.start resolves only when training ends; postState is its
       // per-batch onUpdate. The vocab rides along once the embeddings land.
       void core.start(postState);
@@ -139,18 +154,30 @@ onmessage = (e: MessageEvent<WorkerRequest>) => {
       post({
         t: "predict",
         id: msg.id,
-        result: core.predictFrozenTarget(msg.a1, msg.a2, msg.tokens, msg.layout),
+        result: core.predictFrozenTarget(
+          msg.a1,
+          msg.a2,
+          msg.tokens,
+          msg.layout,
+          msg.carry
+        ),
       });
       break;
     case "predictLive":
       post({
         t: "predictLive",
         id: msg.id,
-        result: core.predictTarget(msg.a1, msg.a2, msg.tokens, msg.layout),
+        result: core.predictTarget(
+          msg.a1,
+          msg.a2,
+          msg.tokens,
+          msg.layout,
+          msg.carry
+        ),
       });
       break;
     case "decode":
-      post({ t: "decode", id: msg.id, result: core.decodeColor(msg.tokens) });
+      post({ t: "decode", id: msg.id, result: core.decodeCommand(msg.tokens) });
       break;
     case "attention":
       post({

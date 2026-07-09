@@ -1,20 +1,32 @@
 // The real thing behind the hero's "Start Training" button: an asynchronous
-// behavioral-cloning loop over the 2-block task (colors drawn from a 4-color
-// palette). Each batch synthesizes 16 (scene layout, pose, command) states —
-// random block placements, sentences from the slot grammar with ~10%
-// word-dropout to <unk> — renders each state through the same 32x32
-// silhouette pipeline the live rollout uses, labels it with the analytical-
-// IK expert's ABSOLUTE target joint angles for the commanded block (plus the
-// target color for the auxiliary head), and runs one trainOnBatch step. The
-// label does NOT depend on the (randomized, for robustness) pose the arm is
-// rendered at — only on which side the named color is on — so the network
-// only has to learn "given this color and this scene, where does the arm
-// need to end up," not also implicitly infer the current pose and subtract.
-// The Rollout arm computes its own delta from the predicted target against
-// its actual known current pose (see Hero.tsx's drawArm) and steps toward
-// it; the plotted curve is the genuine action loss (Huber regression to that
-// absolute target), and the Rollout is driven purely by model.predict on
-// its own live 32x32 view.
+// behavioral-cloning loop over pick-up commands (2..4 blocks from a 2/4/8-
+// color palette — see lib/vla/run-config.ts). Each batch synthesizes (scene
+// layout, pose, command) states — random block placements, sentences from
+// the slot grammar with ~10% word-dropout to <unk> — renders each state
+// through the same silhouette pipeline the live rollout uses, labels it with
+// the analytical-IK expert's ABSOLUTE target joint angles (plus color for the
+// auxiliary head), and runs one trainOnBatch step. Grasping is now a LEARNED
+// action: a sigmoid gripper head is trained (BCE) to close exactly when the
+// effector is fully over the commanded block — the shared effectorOverBlock
+// predicate (geometry.ts) — and the rollout turns its rising edge into the
+// physical grasp (see Hero.tsx), instead of the old bare proximity snap.
+//
+// The carry phase is policy-driven, so samples are CARRY-CONDITIONED: a
+// carryFrac share render the commanded block IN THE GRIPPER of the sampled
+// pose, set the carry_flag input to 1, and the label flips to the carry-
+// phase target — REST, bringing the grasped block home. "Is a block in my
+// hand" reaches the network as gripper proprioception (the flag) AND as the
+// carried block's pixels; the rollout feeds the same flag from its own grasp
+// state (see model.ts on why the flag exists). Apart from the carried block
+// riding at the effector, labels
+// do NOT depend on the (randomized, for robustness) rendered pose — the
+// network learns "given this scene, command and carry state, where does the
+// arm need to end up," not also implicitly infer the current pose and
+// subtract. The Rollout arm computes its own delta from the predicted target
+// against its actual known current pose (see Hero.tsx's drawArm) and steps
+// toward it; the plotted curve is the genuine action loss (Huber regression
+// to that absolute target), and the Rollout is driven purely by
+// model.predict on its own live silhouette view.
 //
 // Training stops by itself once the trailing-window action loss crosses the
 // convergence threshold — that switches the hero into "try it" mode where
@@ -32,21 +44,29 @@
 // whichever thread hosts the loop stays responsive.
 
 import { CONFIG } from "./config";
-import { THETA1_RANGE, THETA2_RANGE, clamp, ikToX } from "./geometry";
+import {
+  REST,
+  THETA1_RANGE,
+  THETA2_RANGE,
+  clamp,
+  effectorOverBlock,
+  fk,
+  ikToX,
+} from "./geometry";
 import { paintSilhouette } from "./scene";
 import {
   COLORS,
-  COLOR_TOKEN_IDS,
+  LABEL_TOKEN_IDS,
   MAX_SEQ_LEN,
   PAD,
   UNK,
   blockOfColor,
-  presentColor,
   randomLayout,
-  sampleSentence,
+  sampleCommand,
   type Layout,
 } from "./examples";
 import {
+  ACTION_HUBER_DELTA,
   ATTN_GRID,
   IMG_SIZE,
   buildVLAModel,
@@ -66,6 +86,13 @@ const BATCH_GAP_MS = CONFIG.trainer.batchGapMs;
 const NEAR_TARGET_FRAC = CONFIG.trainer.nearTargetFrac;
 const NEAR_TARGET_STD = CONFIG.trainer.nearTargetStd;
 const WORD_DROPOUT = CONFIG.trainer.wordDropout;
+const CARRY_FRAC = CONFIG.trainer.carryFrac;
+const GRASP_FRAC = CONFIG.trainer.graspFrac;
+const GRASP_JITTER_STD = CONFIG.trainer.graspJitterStd;
+const GRIP_RADIUS = CONFIG.gripper.radius;
+const GRIP_THRESHOLD = CONFIG.gripper.threshold;
+const WARMUP_BATCHES = CONFIG.trainer.warmupBatches;
+const WARMUP_BATCH_SIZE = CONFIG.trainer.warmupBatchSize;
 
 // Convergence: the mean action loss over a short trailing WINDOW of batches
 // stays under CONVERGE_LOSS for CONVERGE_STREAK consecutive batches (after
@@ -90,11 +117,40 @@ export interface PredictResult {
   /** Predicted ABSOLUTE target joint angles. */
   target: [number, number];
   /** Spatial attention over the ATTN_GRID×ATTN_GRID vision cells, row-major,
-      normalized so the peak cell is 1 (ready to use as overlay alpha). */
+      normalized so the peak cell is 1 (ready to use as overlay alpha): the
+      map tracking the commanded block, empty-handed or while carrying. */
   attn: number[];
-  /** The map's soft-argmax — where the model looks, in [0,1] image coords of
-      the silhouette view (x right, y down). */
+  /** The map's soft-argmax — where the model looks, in [0,1] image
+      coords of the silhouette view (x right, y down). */
   xy: [number, number];
+  /** The gripper head's sigmoid output (0=open → 1=closed). The rollout
+      turns its rising edge over a block into the physical grasp (Hero.tsx). */
+  grip: number;
+}
+
+/** What the color head decodes from a token sequence (vision zeroed) —
+    the "decoded target" readout and try-it routing. */
+export interface DecodedCommand {
+  color: number;
+  colorProb: number;
+}
+
+/** One held-out evaluation snapshot, taken every `probeEveryN` batches when
+    probing is on (the headless sweep harness turns it on; the demo leaves it
+    off). The batch's single action-loss scalar hides WHERE a run fails —
+    these per-phase buckets are the dials the experiment plan reads. */
+export interface ProbeRow {
+  batch: number;
+  /** Mean Huber action loss per phase bucket ("reach" / "carry"), over
+      `probeN` freshly synthesized held-out samples each. */
+  buckets: Record<string, number>;
+  /** Color-head accuracy over all probe samples (argmax vs. label). */
+  colorAcc: number;
+  /** Gripper-head accuracy over all probe samples ((sigmoid≥threshold) vs.
+      the 0/1 close label) — the "did the gripper actually learn" dial: it
+      should sit high AND the head's mean output should not collapse to a
+      constant (measured separately in the sweep). */
+  gripAcc: number;
 }
 
 /** 2D context in either environment (worker OffscreenCanvas / DOM canvas). */
@@ -131,6 +187,16 @@ export class VLATrainerCore {
   initialLoss = NaN;
   lossHistory: number[] = [];
   batches = 0;
+  /** Probe cadence in batches; 0 (default) = off, so the demo path pays
+      nothing. The vla-lab harness sets it (~25) for sweep runs. */
+  probeEveryN = 0;
+  /** Harness-only override of the converge.maxBatches fallback (null = use
+      CONFIG). Lets a sweep run PAST the demo budget to gauge where a config
+      genuinely converges — the number the demo budget is then set from. */
+  maxBatchesOverride: number | null = null;
+  /** Held-out samples per (task, phase) bucket per probe. */
+  probeN = 24;
+  probes: ProbeRow[] = [];
 
   private tf: TF | null = null;
   private models: VLAModels | null = null;
@@ -171,10 +237,17 @@ export class VLATrainerCore {
     this.thumbCtx = make2d(IMG_SIZE).ctx;
   }
 
-  /** Render a state through the silhouette pipeline; returns 32x32 RGBA. */
-  private renderPose(a1: number, a2: number, layout: Layout): ImageData {
+  /** Render a state through the silhouette pipeline; returns IMG_SIZE RGBA.
+      `carry` draws that block at the effector instead of its rest spot —
+      the carry-phase state cue. */
+  private renderPose(
+    a1: number,
+    a2: number,
+    layout: Layout,
+    carry: number | null = null
+  ): ImageData {
     this.ensureCanvases();
-    paintSilhouette(this.sceneCtx!, RENDER_SIZE, a1, a2, layout);
+    paintSilhouette(this.sceneCtx!, RENDER_SIZE, a1, a2, layout, carry);
     const tctx = this.thumbCtx!;
     tctx.imageSmoothingEnabled = true;
     tctx.clearRect(0, 0, IMG_SIZE, IMG_SIZE);
@@ -198,19 +271,14 @@ export class VLATrainerCore {
   }
 
   /** Write the attention-map label for one sample into ysM: BILINEAR weights
-      over the (up to) 4 grid cells around the commanded block's visual center
-      in the silhouette view. Soft on purpose — a hard one-hot label would
-      train the map toward a one-hot, quantizing the soft-argmax readout to
-      cell centers (measured: ~0.15 median reach error); the bilinear label's
-      CE optimum is a distribution whose EXPECTATION is the block's continuous
-      position, so sub-cell precision survives. Mirrors paintSilhouette's
-      geometry: sceneMap placement plus the silBlockScale boost, so the label
-      points at the pixels the model actually sees. */
-  private writeMapLabel(ysM: Float32Array, base: number, x: number, size: number) {
+      over the (up to) 4 grid cells around a point given in the silhouette
+      view's [0,1] (u, v) image coords. Soft on purpose — a hard one-hot label
+      would train the map toward a one-hot, quantizing the soft-argmax readout
+      to cell centers (measured: ~0.15 median reach error); the bilinear
+      label's CE optimum is a distribution whose EXPECTATION is the point's
+      continuous position, so sub-cell precision survives. */
+  private writeMapLabel(ysM: Float32Array, base: number, u: number, v: number) {
     const G = ATTN_GRID;
-    const u = 0.5 + (x - 0.5) * CONFIG.render.sceneScale;
-    const yCenter = (size * CONFIG.render.silBlockScale) / 2;
-    const v = CONFIG.render.floorY - yCenter * CONFIG.render.sceneScale;
     // continuous cell coords (cell centers sit at integer +0.5 / G)
     const cx = u * G - 0.5;
     const cy = v * G - 0.5;
@@ -229,32 +297,79 @@ export class VLATrainerCore {
     }
   }
 
-  /**
-   * One gradient step on a freshly synthesized micro-batch.
-   * Returns the batch's action loss (Huber).
-   */
-  private async trainStep(): Promise<number> {
-    const tf = this.tf!;
+  /** A resting block's visual center in silhouette [0,1] (u, v) coords.
+      Mirrors paintSilhouette's geometry: sceneMap placement, the block's rest
+      height, plus the silBlockScale boost — so the label points at the pixels
+      the model actually sees. */
+  private blockUV(x: number, size: number, rest = 0): [number, number] {
+    const u = 0.5 + (x - 0.5) * CONFIG.render.sceneScale;
+    const yCenter = rest + (size * CONFIG.render.silBlockScale) / 2;
+    const v = CONFIG.render.floorY - yCenter * CONFIG.render.sceneScale;
+    return [u, v];
+  }
+
+  /** The effector position in silhouette [0,1] (u, v) coords — where a
+      CARRIED block renders, so it's the attention anchor for lift's carry
+      phase (the only pose-DEPENDENT label; the action label stays REST). */
+  private effectorUV(a1: number, a2: number): [number, number] {
+    const e = fk(a1, a2);
+    const u = 0.5 + (e.ex - 0.5) * CONFIG.render.sceneScale;
+    const v = CONFIG.render.floorY - e.ey * CONFIG.render.sceneScale;
+    return [u, v];
+  }
+
+  /** Backing arrays of a synthesized batch — the tensors trainStep and
+      runProbe build from. `force` pins every sample to one phase bucket;
+      the training path leaves it unset and samples both freely. */
+  private synthBatch(n: number, force?: { carry?: boolean }) {
     const px = IMG_SIZE * IMG_SIZE * 3;
     const cells = ATTN_GRID * ATTN_GRID;
-    const vis = new Float32Array(BATCH_SIZE * px);
-    const lang = new Int32Array(BATCH_SIZE * MAX_SEQ_LEN);
-    const ysA = new Float32Array(BATCH_SIZE * 2);
-    const ysC = new Float32Array(BATCH_SIZE * COLORS.length);
-    const ysM = new Float32Array(BATCH_SIZE * cells);
+    const vis = new Float32Array(n * px);
+    const lang = new Int32Array(n * MAX_SEQ_LEN);
+    /** Proprioceptive carry flag per sample (1 = block in the gripper). */
+    const carryF = new Float32Array(n);
+    const ysA = new Float32Array(n * 2);
+    const ysC = new Float32Array(n * COLORS.length);
+    const ysMPick = new Float32Array(n * cells);
+    /** Gripper "close now" label per sample (1 = should be closed). */
+    const ysG = new Float32Array(n);
 
-    for (let i = 0; i < BATCH_SIZE; i++) {
+    for (let i = 0; i < n; i++) {
       const layout = randomLayout();
-      // command one of the two colors actually present in this scene
-      const sentence = sampleSentence(presentColor(layout));
+      // an executable command: the acted-on color is present in the scene
+      const sentence = sampleCommand(layout);
       const target = blockOfColor(layout, sentence.color);
-      // the IK label depends on the target block's SIZE too (grasp height =
-      // size/2), so a bigger commanded block resolves to a higher reach
-      const [t1, t2] = ikToX(target.x, target.size);
+
+      // carry-conditioned label (see the file header): a CARRY_FRAC share of
+      // samples render the commanded block in the gripper and label the
+      // carry-phase target (REST — bring it home) instead of the grasp
+      const midCarry = force?.carry ?? Math.random() < CARRY_FRAC;
+      // among empty-handed samples, a GRASP_FRAC share are "grasp-now"
+      // positives: posed tightly at the block's IK grasp pose so the effector
+      // sits fully over the block, guaranteeing a dense supply of close-now
+      // examples for the gripper head (see graspFrac in config.ts).
+      const graspNow = !midCarry && Math.random() < GRASP_FRAC;
+      carryF[i] = midCarry ? 1 : 0;
+      let t1: number;
+      let t2: number;
+      if (!midCarry) {
+        // reach phase: the grasp point (the IK label depends on the block's
+        // SIZE too — grasp height = size/2 — so a bigger commanded block
+        // resolves to a higher reach)
+        [t1, t2] = ikToX(target.x, target.size, target.y ?? 0);
+      } else {
+        // carrying → bring it home
+        [t1, t2] = REST;
+      }
 
       let a1: number;
       let a2: number;
-      if (Math.random() < NEAR_TARGET_FRAC) {
+      if (graspNow) {
+        // tight jitter around the grasp pose so effectorOverBlock is reliably
+        // true — the action label stays put (t1/t2 = the grasp pose)
+        a1 = clamp(t1 + this.gauss(GRASP_JITTER_STD), THETA1_RANGE[0], THETA1_RANGE[1]);
+        a2 = clamp(t2 + this.gauss(GRASP_JITTER_STD), THETA2_RANGE[0], THETA2_RANGE[1]);
+      } else if (Math.random() < NEAR_TARGET_FRAC) {
         a1 = clamp(t1 + this.gauss(NEAR_TARGET_STD), THETA1_RANGE[0], THETA1_RANGE[1]);
         a2 = clamp(t2 + this.gauss(NEAR_TARGET_STD), THETA2_RANGE[0], THETA2_RANGE[1]);
       } else {
@@ -262,24 +377,42 @@ export class VLATrainerCore {
         a2 = THETA2_RANGE[0] + Math.random() * (THETA2_RANGE[1] - THETA2_RANGE[0]);
       }
 
+      // THE gripper label (the shared invariant): close iff already carrying,
+      // or the effector is fully over the commanded block. Identical predicate
+      // to the rollout grasp gate (Hero.tsx) — that consistency is what stops
+      // the "hold closed the whole time and snap on arrival" degenerate. Most
+      // far/near poses give 0; grasp-now (and mid-carry) poses give 1.
+      ysG[i] =
+        midCarry || effectorOverBlock(a1, a2, target, GRIP_RADIUS) ? 1 : 0;
+
       // ABSOLUTE target joint angles, not a delta from the sampled pose:
-      // the label no longer depends on the (randomized, for robustness)
-      // pose the arm is rendered at — only on which side the commanded
-      // color is on (and now its size). That removes the need for the network
-      // to also read the current pose out of the image and implicitly
-      // subtract; the rollout computes its own delta from this against its
-      // actual known current pose (see Hero.tsx).
+      // the label doesn't depend on the (randomized, for robustness) pose
+      // the arm is rendered at — only on the scene, the command and the
+      // carry state. That removes the need for the network to also read the
+      // current pose out of the image and implicitly subtract; the rollout
+      // computes its own delta from this against its actual known current
+      // pose (see Hero.tsx).
       ysA[i * 2] = t1;
       ysA[i * 2 + 1] = t2;
       ysC[i * COLORS.length + sentence.color] = 1;
-      // attention supervision: bilinear soft label on the commanded block's
-      // position (see model.ts — the action loss alone cannot sharpen the map)
-      this.writeMapLabel(ysM, i * cells, target.x, target.size);
+      // attention supervision, one bilinear soft label, phase-INDEPENDENT
+      // (see model.ts — the action loss alone cannot sharpen the map): the
+      // commanded block wherever it renders (rest spot, or the effector while
+      // carried).
+      const [pu, pv] = midCarry
+        ? this.effectorUV(a1, a2)
+        : this.blockUV(target.x, target.size, target.y ?? 0);
+      this.writeMapLabel(ysMPick, i * cells, pu, pv);
 
       // INVERTED intensities (background 0, content sparse positive) — fed
       // raw, the near-all-white image saturates the conv branch and the
       // model collapses onto language-only predictions.
-      const img = this.renderPose(a1, a2, layout).data;
+      const img = this.renderPose(
+        a1,
+        a2,
+        layout,
+        midCarry ? sentence.color : null
+      ).data;
       const base = i * px;
       for (let p = 0; p < IMG_SIZE * IMG_SIZE; p++) {
         vis[base + p * 3] = 1 - img[p * 4] / 255;
@@ -287,36 +420,198 @@ export class VLATrainerCore {
         vis[base + p * 3 + 2] = 1 - img[p * 4 + 2] / 255;
       }
 
-      // word-dropout: non-color tokens occasionally become <unk> so the
-      // encoder learns to handle unknown words in free user text
+      // word-dropout: tokens that don't carry label information (articles/
+      // nouns/fillers — NOT color words or verbs, see LABEL_TOKEN_IDS)
+      // occasionally become <unk> so the encoder learns to handle unknown
+      // words in free user text
       for (let s = 0; s < MAX_SEQ_LEN; s++) {
         let id = sentence.tokens[s];
-        if (id !== PAD && !COLOR_TOKEN_IDS.has(id) && Math.random() < WORD_DROPOUT)
+        if (id !== PAD && !LABEL_TOKEN_IDS.has(id) && Math.random() < WORD_DROPOUT)
           id = UNK;
         lang[i * MAX_SEQ_LEN + s] = id;
       }
     }
 
-    const xsVision = tf.tensor4d(vis, [BATCH_SIZE, IMG_SIZE, IMG_SIZE, 3]);
-    const xsLang = tf.tensor2d(lang, [BATCH_SIZE, MAX_SEQ_LEN], "int32");
-    const yAction = tf.tensor2d(ysA, [BATCH_SIZE, 2]);
-    const yColor = tf.tensor2d(ysC, [BATCH_SIZE, COLORS.length]);
-    const yMap = tf.tensor2d(ysM, [BATCH_SIZE, cells]);
+    return {
+      n,
+      vis,
+      lang,
+      carryF,
+      ysA,
+      ysC,
+      ysMPick,
+      ysG,
+      cells,
+    };
+  }
+
+  /**
+   * A CHEAP language-only batch: sentences + their color label, with NO
+   * vision render, NO IK and NO attention-map labels. Feeds languageWarmup —
+   * the whole point is that it skips everything expensive in synthBatch, so a
+   * warm-up step costs a small fraction of a full step. Same command
+   * distribution as training (randomLayout → sampleCommand) and the same
+   * word-dropout, so the warmed head sees the real token statistics.
+   */
+  private synthLangBatch(n: number) {
+    const lang = new Int32Array(n * MAX_SEQ_LEN);
+    const ysC = new Float32Array(n * COLORS.length);
+    for (let i = 0; i < n; i++) {
+      const layout = randomLayout();
+      const sentence = sampleCommand(layout);
+      ysC[i * COLORS.length + sentence.color] = 1;
+      for (let s = 0; s < MAX_SEQ_LEN; s++) {
+        let id = sentence.tokens[s];
+        if (id !== PAD && !LABEL_TOKEN_IDS.has(id) && Math.random() < WORD_DROPOUT)
+          id = UNK;
+        lang[i * MAX_SEQ_LEN + s] = id;
+      }
+    }
+    return { n, lang, ysC };
+  }
+
+  /**
+   * Language warm-up: WARMUP_BATCHES text-only gradient steps on the language
+   * twin (see model.ts `lang`), run during the Loading phase before the main
+   * loop. Trains ONLY the color head and its conv scorer — the vision branch
+   * is not in this graph — so the color decoding is already correct when the
+   * coupled vision→action policy starts, and the attention query gets a clean
+   * language slot from batch 0. Near-free vs a full step; interruptible by
+   * reset (runId/running are re-checked each step). Runs inside start()'s
+   * try/catch, so a WebGL failure here rides the same cpu-fallback path.
+   */
+  private async languageWarmup(myRun: number): Promise<void> {
+    const tf = this.tf!;
+    // early-stop: track the initial loss and a short trailing mean; the color
+    // head has effectively converged once the mean has fallen to a small
+    // fraction of where it started (a config-independent gate — the initial CE
+    // is ~ln(#classes), which the ratio cancels out). WARMUP_BATCHES is only
+    // the hard cap.
+    let initial = NaN;
+    const recent: number[] = [];
+    for (let k = 0; k < WARMUP_BATCHES; k++) {
+      if (!this.running || this.runId !== myRun) return;
+      const b = this.synthLangBatch(WARMUP_BATCH_SIZE);
+      const xsLang = tf.tensor2d(b.lang, [b.n, MAX_SEQ_LEN], "int32");
+      const yColor = tf.tensor2d(b.ysC, [b.n, COLORS.length]);
+      try {
+        // trainOnBatch already syncs to return the loss, so reading it here is
+        // free — no extra GPU readback.
+        const h = await this.models!.lang.trainOnBatch([xsLang], [yColor]);
+        const loss = Array.isArray(h) ? (h[0] as number) : (h as number);
+        if (Number.isNaN(initial)) initial = loss;
+        recent.push(loss);
+        if (recent.length > 10) recent.shift();
+      } finally {
+        xsLang.dispose();
+        yColor.dispose();
+      }
+      // eligible to stop after a small floor of steps, once the trailing mean
+      // has dropped to <10% of the initial loss
+      const mean = recent.reduce((a, c) => a + c, 0) / recent.length;
+      if (k >= 30 && mean < 0.1 * initial) return;
+    }
+  }
+
+  /**
+   * One gradient step on a freshly synthesized micro-batch.
+   * Returns the batch's action loss (Huber).
+   */
+  private async trainStep(): Promise<number> {
+    const tf = this.tf!;
+    const b = this.synthBatch(BATCH_SIZE);
+    const xsVision = tf.tensor4d(b.vis, [b.n, IMG_SIZE, IMG_SIZE, 3]);
+    const xsLang = tf.tensor2d(b.lang, [b.n, MAX_SEQ_LEN], "int32");
+    const xsCarry = tf.tensor2d(b.carryF, [b.n, 1]);
+    const yAction = tf.tensor2d(b.ysA, [b.n, 2]);
+    const yColor = tf.tensor2d(b.ysC, [b.n, COLORS.length]);
+    const yMapPick = tf.tensor2d(b.ysMPick, [b.n, b.cells]);
+    const yGrip = tf.tensor2d(b.ysG, [b.n, 1]);
 
     try {
       const h = await this.models!.model.trainOnBatch(
-        [xsVision, xsLang],
-        [yAction, yColor, yMap]
+        [xsVision, xsLang, xsCarry],
+        [yAction, yColor, yMapPick, yGrip]
       );
-      // multi-output: [totalLoss, actionLoss, colorLoss, mapLoss]
+      // multi-output: [total, action, color, map, grip] — index 1 stays the
+      // Huber ACTION loss the convergence logic watches
       return Array.isArray(h) ? (h[1] as number) : (h as number);
     } finally {
       xsVision.dispose();
       xsLang.dispose();
+      xsCarry.dispose();
       yAction.dispose();
       yColor.dispose();
-      yMap.dispose();
+      yMapPick.dispose();
+      yGrip.dispose();
     }
+  }
+
+  /** Huber loss of one scalar error, matching tf.losses.huberLoss. */
+  private huber(e: number): number {
+    const d = ACTION_HUBER_DELTA;
+    const a = Math.abs(e);
+    return a <= d ? 0.5 * a * a : d * (a - 0.5 * d);
+  }
+
+  /** argmax of one row of a flat row-major [n, width] array. */
+  private static argmaxRow(a: Float32Array, row: number, width: number): number {
+    let best = 0;
+    for (let k = 1; k < width; k++)
+      if (a[row * width + k] > a[row * width + best]) best = k;
+    return best;
+  }
+
+  /**
+   * Held-out per-phase evaluation — forward passes only, no gradient step.
+   * Synthesizes probeN fresh samples per phase bucket (reach / carry), reads
+   * the mean Huber action loss per bucket plus color-head accuracy, and
+   * appends one ProbeRow. Costs ~2 batch-equivalents of forward compute.
+   */
+  private async runProbe(): Promise<void> {
+    const tf = this.tf!;
+    const buckets: Record<string, number> = {};
+    let headN = 0;
+    let colorHits = 0;
+    let gripHits = 0;
+
+    for (const carry of [false, true]) {
+      const b = this.synthBatch(this.probeN, { carry });
+      const r = tf.tidy(() => {
+        const v = tf.tensor4d(b.vis, [b.n, IMG_SIZE, IMG_SIZE, 3]);
+        const l = tf.tensor2d(b.lang, [b.n, MAX_SEQ_LEN], "int32");
+        const c = tf.tensor2d(b.carryF, [b.n, 1]);
+        const [action, color, , grip] = this.models!.model.predict([
+          v,
+          l,
+          c,
+        ]) as tfType.Tensor[];
+        return {
+          action: action.dataSync() as Float32Array,
+          color: color.dataSync() as Float32Array,
+          grip: grip.dataSync() as Float32Array,
+        };
+      });
+      let sum = 0;
+      for (let k = 0; k < b.n * 2; k++)
+        sum += this.huber(r.action[k] - b.ysA[k]);
+      buckets[carry ? "carry" : "reach"] = sum / (b.n * 2);
+      for (let i = 0; i < b.n; i++) {
+        const am = VLATrainerCore.argmaxRow;
+        if (am(r.color, i, COLORS.length) === am(b.ysC, i, COLORS.length))
+          colorHits++;
+        // gripper accuracy: thresholded sigmoid vs. the 0/1 close label
+        if ((r.grip[i] >= GRIP_THRESHOLD ? 1 : 0) === b.ysG[i]) gripHits++;
+      }
+      headN += b.n;
+    }
+
+    this.probes.push({
+      batch: this.batches,
+      buckets,
+      colorAcc: colorHits / headN,
+      gripAcc: gripHits / headN,
+    });
   }
 
   /**
@@ -373,8 +668,15 @@ export class VLATrainerCore {
     this.lossHistory = [];
     this.batches = 0;
     this.convergeStreak = 0;
+    this.probes = [];
 
     try {
+      // Language warm-up (text-only, cheap): train the color head to
+      // convergence BEFORE the coupled loop, so the attention query starts
+      // against a clean language slot. Runs while the UI still reads "Loading".
+      await this.languageWarmup(myRun);
+      if (!this.running || this.runId !== myRun) return;
+
       // WebGL compiles each distinct kernel shader (conv2d, pooling, embedding
       // gather, the losses, Adam's update ops) the first time it's used — a
       // one-time cost that would otherwise stall the FIRST visible batch right
@@ -412,13 +714,19 @@ export class VLATrainerCore {
         const window = this.lossHistory.slice(-CONVERGE_WINDOW);
         this.smoothLoss = window.reduce((a, b) => a + b, 0) / window.length;
 
-        // converged? training's job is done — keep the model, stop the loop
+        // held-out per-bucket telemetry (sweep harness only; probeEveryN
+        // defaults to 0 so the demo path skips this entirely)
+        if (this.probeEveryN > 0 && this.batches % this.probeEveryN === 0)
+          await this.runProbe();
+
+        // converged? training's job is done — keep the model, stop the loop.
         if (this.batches >= MIN_BATCHES && this.smoothLoss < CONVERGE_LOSS) {
           this.convergeStreak++;
         } else {
           this.convergeStreak = 0;
         }
-        if (this.convergeStreak >= CONVERGE_STREAK || this.batches >= MAX_BATCHES) {
+        const maxBatches = this.maxBatchesOverride ?? MAX_BATCHES;
+        if (this.convergeStreak >= CONVERGE_STREAK || this.batches >= maxBatches) {
           this.snapshotPolicy(); // freeze the final weights for "try it" mode
           this.status = "converged";
           this.running = false;
@@ -479,14 +787,21 @@ export class VLATrainerCore {
     this.lossHistory = [];
     this.batches = 0;
     this.convergeStreak = 0;
+    this.probes = [];
   }
 
   private disposeModels() {
-    // the viz sub-models share layers with the main model — disposing the
+    // the viz/lang sub-models share layers with the main model — disposing the
     // main graph frees the shared weights; dispose() on the others only
-    // drops their container objects
+    // drops their container objects. The lang twin owns a SEPARATE optimizer
+    // (its Adam moment variables aren't part of any shared layer), so free
+    // those explicitly or they'd leak on each reset+restart.
+    this.models?.lang.optimizer?.dispose();
     this.models?.model.dispose();
     this.models = null;
+    // the frozen snapshot is built via buildVLAModel too, so it carries an
+    // (unused) lang optimizer of its own — free it alongside its graph.
+    this.frozenModels?.lang.optimizer?.dispose();
     this.frozenModels?.model.dispose();
     this.frozenModels = null;
   }
@@ -501,21 +816,23 @@ export class VLATrainerCore {
 
   /**
    * Policy inference on the LIVE (still-training) model: render the given
-   * state (pose + block layout) to the same model's-eye view the training
-   * samples use, run the viz twin, return the predicted ABSOLUTE target
-   * joint angles plus the spatial-attention readout (not a delta — the
-   * caller subtracts its own known current pose to get the step direction;
-   * see Hero.tsx's drawArm). Also serves the Vision Encoder panel's live
-   * "where the model looks" heatmap during training.
+   * state (pose + block layout + carried block) to the same model's-eye view
+   * the training samples use, run the viz twin, return the predicted
+   * ABSOLUTE target joint angles plus the spatial-
+   * attention readout (not a delta — the caller subtracts its own known
+   * current pose to get the step direction; see Hero.tsx's drawArm). Also
+   * serves the Vision Encoder panel's live "where the model looks" heatmap
+   * during training.
    */
   predictTarget(
     a1: number,
     a2: number,
     tokens: number[],
-    layout: Layout
+    layout: Layout,
+    carry: number | null = null
   ): PredictResult | null {
     if (!this.ready) return null;
-    return this.inferTarget(this.models!, a1, a2, tokens, layout);
+    return this.inferTarget(this.models!, a1, a2, tokens, layout, carry);
   }
 
   /**
@@ -546,7 +863,8 @@ export class VLATrainerCore {
     a1: number,
     a2: number,
     tokens: number[],
-    layout: Layout
+    layout: Layout,
+    carry: number | null = null
   ): PredictResult | null {
     if (!this.ready) return null;
     return this.inferTarget(
@@ -554,7 +872,8 @@ export class VLATrainerCore {
       a1,
       a2,
       tokens,
-      layout
+      layout,
+      carry
     );
   }
 
@@ -565,16 +884,31 @@ export class VLATrainerCore {
     a1: number,
     a2: number,
     tokens: number[],
-    layout: Layout
+    layout: Layout,
+    carry: number | null = null
   ): PredictResult {
     const tf = this.tf!;
-    const img = this.renderPose(a1, a2, layout);
+    const img = this.renderPose(a1, a2, layout, carry);
     const out = tf.tidy(() => {
       const v = this.visionTensor(img);
       const l = tf.tensor2d([tokens], [1, MAX_SEQ_LEN], "int32");
-      const [action, attn] = models.viz.predict([v, l]) as tfType.Tensor[];
-      return { action: action.dataSync(), attn: attn.dataSync() };
+      // proprioceptive flag: the rollout KNOWS whether its gripper holds a
+      // block (the snap-grasp set it) — same signal training synthesized
+      const c = tf.tensor2d([carry !== null ? 1 : 0], [1, 1]);
+      const [action, pick, grip] = models.viz.predict([
+        v,
+        l,
+        c,
+      ]) as tfType.Tensor[];
+      return {
+        action: action.dataSync(),
+        pick: pick.dataSync() as Float32Array,
+        grip: grip.dataSync() as Float32Array,
+      };
     });
+    // the attention map the UI shows — it tracks the commanded block whether
+    // empty-handed (its floor spot) or carrying (the effector).
+    const attnSel = out.pick;
     // the UI's gaze point: the map's expectation in plain [0,1] image coords,
     // computed here CPU-side (the in-graph attn_grid kernel feeds the action
     // head CENTERED+GAINED coords — see config.ts attnCoordGain — so it isn't
@@ -584,8 +918,8 @@ export class VLATrainerCore {
     let ux = 0;
     let vy = 0;
     let peak = 0;
-    for (let i = 0; i < out.attn.length; i++) {
-      const w = out.attn[i];
+    for (let i = 0; i < attnSel.length; i++) {
+      const w = attnSel[i];
       ux += w * ((i % G) + 0.5);
       vy += w * (Math.floor(i / G) + 0.5);
       if (w > peak) peak = w;
@@ -594,27 +928,37 @@ export class VLATrainerCore {
     const inv = peak > 0 ? 1 / peak : 0;
     return {
       target: [out.action[0], out.action[1]],
-      attn: Array.from(out.attn, (a) => a * inv),
+      attn: Array.from(attnSel, (a) => a * inv),
       xy: [ux / G, vy / G],
+      grip: out.grip[0],
     };
   }
 
   /**
-   * Decode which color a token sequence names, via the auxiliary head (which
-   * reads only the language branch — vision input is zeros).
+   * Decode the acted-on color from a token sequence via the auxiliary color
+   * head (which reads only the language branch — vision input is zeros).
    */
-  decodeColor(tokens: number[]): { color: number; prob: number } | null {
+  decodeCommand(tokens: number[]): DecodedCommand | null {
     if (!this.ready) return null;
     const tf = this.tf!;
-    const probs = tf.tidy(() => {
+    const out = tf.tidy(() => {
       const v = tf.zeros([1, IMG_SIZE, IMG_SIZE, 3]);
       const l = tf.tensor2d([tokens], [1, MAX_SEQ_LEN], "int32");
-      const [, color] = this.models!.model.predict([v, l]) as tfType.Tensor[];
-      return color.dataSync();
+      const c = tf.zeros([1, 1]); // decode = empty-handed reading of the text
+      const [, color] = this.models!.model.predict([
+        v,
+        l,
+        c,
+      ]) as tfType.Tensor[];
+      return { color: color.dataSync() };
     });
-    let best = 0;
-    for (let i = 1; i < probs.length; i++) if (probs[i] > probs[best]) best = i;
-    return { color: best, prob: probs[best] };
+    const argmax = (a: Float32Array | Int32Array | Uint8Array) => {
+      let best = 0;
+      for (let i = 1; i < a.length; i++) if (a[i] > a[best]) best = i;
+      return best;
+    };
+    const c = argmax(out.color);
+    return { color: c, colorProb: out.color[c] };
   }
 
   /**
@@ -632,18 +976,30 @@ export class VLATrainerCore {
     // the embedding table is FROZEN pretrained GloVe — read it from the
     // CPU-side copy loadEmbeddings() kept (syncing the 20k x 50 table off
     // the GPU every refresh would dwarf the readout it powers); only the
-    // small trainable scorer weights are pulled from the model
+    // small trainable conv-scorer kernel is pulled from the model. Bars
+    // show the TARGET slot's attention ("attn_score" — the scorer whose
+    // pooled vector the color head decodes).
     const embedTable = embeddingMatrix();
     if (!embedTable) return null;
     const w = this.models!.model.getLayer("attn_score").getWeights();
-    const kernel = w[0].arraySync() as number[][]; // [EMBED_DIM][1]
+    const kernel = w[0].arraySync() as number[][][]; // [K][EMBED_DIM][1]
     const bias = (w[1].arraySync() as number[])[0];
-    // raw scores; padding is excluded from the softmax entirely
-    const scores = tokens.map((tok) => {
+    const K = kernel.length;
+    const off = Math.floor(K / 2); // conv1d "same": window i-off .. i+off
+    // raw scores; padding is excluded from the softmax entirely. The conv
+    // window's out-of-range slots are implicit zeros in-graph, and PAD
+    // tokens embed to the all-zero row — `continue` reproduces both.
+    const scores = tokens.map((tok, i) => {
       if (tok === PAD) return -Infinity;
       let s = bias;
-      for (let d = 0; d < EMBED_DIM; d++)
-        s += embedTable[tok * EMBED_DIM + d] * kernel[d][0];
+      for (let k = 0; k < K; k++) {
+        const j = i + k - off;
+        if (j < 0 || j >= tokens.length) continue;
+        const t = tokens[j];
+        if (t === PAD) continue;
+        for (let d = 0; d < EMBED_DIM; d++)
+          s += embedTable[t * EMBED_DIM + d] * kernel[k][d][0];
+      }
       return s;
     });
     const finite = scores.filter((s) => Number.isFinite(s));
