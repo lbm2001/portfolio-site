@@ -20,8 +20,14 @@ export type ProbeResponse =
   | { t: "done"; stage: ProbeRequest["t"] }
   | { t: "error"; stage: ProbeRequest["t"]; msg: string };
 
-// lib.dom types `self` as a Window, whose postMessage takes a targetOrigin.
-const ctx = self as unknown as DedicatedWorkerGlobalScope;
+// This file is a worker, but the project compiles against lib.dom (which types
+// `self` as a Window, whose postMessage demands a targetOrigin) and cannot add
+// lib.webworker without colliding with it. Narrow to just what we call.
+interface WorkerScope {
+  postMessage(message: unknown): void;
+  onmessage: ((e: MessageEvent<ProbeRequest>) => void) | null;
+}
+const ctx = self as unknown as WorkerScope;
 const post = (m: ProbeResponse) => ctx.postMessage(m);
 const log = (line: string) => post({ t: "log", line });
 
