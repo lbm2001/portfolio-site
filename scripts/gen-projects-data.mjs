@@ -18,6 +18,11 @@
 // slug/contentDir (both default to the repo name, e.g. lbm2001/mujopy ->
 // "mujopy"; set `slug`/`contentDir` on a project entry to override).
 //
+// `repo` is OPTIONAL: for a project with no code to show, omit it and set
+// `slug`/`contentDir` explicitly instead (nothing to derive them from). The
+// GitHub metadata fetch is skipped entirely, so title/blurb/tags come only
+// from the README frontmatter and there's no auto "Code" link.
+//
 // ROBUST BY DESIGN: this NEVER fails the build. If the token is missing or a
 // repo/file can't be fetched, the previous entry from the committed
 // lib/projects-data.json is reused, so the site always builds with last-known
@@ -97,15 +102,18 @@ function periodKey(s) {
 
 async function buildOne(source, contentRepo, file) {
   const { repo } = source;
-  const repoName = repo.split("/")[1];
+  const repoName = repo?.split("/")[1];
   const slug = source.slug ?? repoName;
   const contentDir = source.contentDir ?? repoName;
+  if (!slug || !contentDir) {
+    throw new Error(`no "repo" set — "slug" and "contentDir" must both be given explicitly`);
+  }
   // Resolve a path written RELATIVE to the README (which lives at the root of
   // <contentDir> in contentRepo) to its location there, e.g. contentDir="mujopy"
   // + "assets/x.png" -> "mujopy/assets/x.png".
   const inContentDir = (rel) => `${contentDir}/${rel}`;
 
-  const meta = await ghJson(`https://api.github.com/repos/${repo}`);
+  const meta = repo ? await ghJson(`https://api.github.com/repos/${repo}`) : null;
   const mdText = (await ghFile(contentRepo, inContentDir(file))).toString("utf8");
   const fmParsed = parseProjectMd(mdText);
 
@@ -129,9 +137,10 @@ async function buildOne(source, contentRepo, file) {
     }
   }
 
-  // Links: Code (repo) is always first, then the frontmatter links. If a link's
-  // href is relative (e.g. a paper PDF next to the README), download it too.
-  const links = [{ label: "Code", href: meta.html_url }];
+  // Links: Code (repo) is first when there is a repo, then the frontmatter
+  // links. If a link's href is relative (e.g. a paper PDF next to the
+  // README), download it too.
+  const links = meta ? [{ label: "Code", href: meta.html_url }] : [];
   for (const lk of fmParsed.links || []) {
     if (!/^https?:|^\//.test(lk.href)) {
       const base = path.basename(lk.href);
@@ -149,11 +158,11 @@ async function buildOne(source, contentRepo, file) {
 
   return {
     slug,
-    title: fmParsed.title || meta.name,
+    title: fmParsed.title || meta?.name,
     venue: fmParsed.venue || "",
     ...(fmParsed.period ? { period: fmParsed.period } : {}),
-    blurb: fmParsed.blurb || meta.description || "",
-    tags: fmParsed.tags || (meta.topics || []).map(topicToTag),
+    blurb: fmParsed.blurb || meta?.description || "",
+    tags: fmParsed.tags || (meta?.topics || []).map(topicToTag),
     links,
     ...(fmParsed.aiAssisted ? { aiAssisted: true } : {}),
     body,
@@ -176,10 +185,10 @@ async function main() {
 
   const out = [];
   for (const source of config.projects) {
-    const slug = source.slug ?? source.repo.split("/")[1];
+    const slug = source.slug ?? source.repo?.split("/")[1];
     try {
       out.push(await buildOne(source, config.contentRepo, config.file));
-      console.log(`gen-projects-data: fetched ${slug} <- ${source.repo}`);
+      console.log(`gen-projects-data: fetched ${slug} <- ${source.repo ?? `${config.contentRepo}/${source.contentDir ?? slug}`}`);
     } catch (e) {
       console.warn(
         `gen-projects-data: ${slug} failed (${e.message}) — keeping existing entry`,
