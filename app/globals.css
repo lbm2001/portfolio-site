@@ -362,6 +362,12 @@ a {
   top: min(73%, calc(100% - 250px));
   transform: translateX(-50%);
   padding: 14px 16px;
+  /* re-states .vla-node's opacity transition (it would otherwise be replaced):
+     the warm-up's red wash has to ease back out when the pulse stops, not snap */
+  transition:
+    opacity 0.5s ease,
+    background-color 0.5s ease,
+    border-color 0.5s ease;
 }
 /* Action Head — small node where the vision + language wires merge into the
    policy's action output; parked a fixed gap to the LEFT of the Rollout (it
@@ -478,6 +484,9 @@ a {
 .is-idle .vla-vision .vla-label,
 .is-idle .vla-lang .vla-label,
 .is-idle .vla-action .vla-label,
+.is-loading .vla-vision .vla-label,
+.is-loading .vla-lang .vla-label,
+.is-loading .vla-action .vla-label,
 .is-converged .vla-vision .vla-label,
 .is-converged .vla-lang .vla-label {
   top: 50%;
@@ -487,10 +496,11 @@ a {
 /* On training start the label does NOT slide centre→corner (that path reads
    as shaky); instead it fades out where it sits (centre) and fades back in at
    the corner, the position switching while it is invisible. Plays once, when
-   .is-live first appears. */
-.is-live .vla-vision .vla-label,
-.is-live .vla-lang .vla-label,
-.is-live .vla-action .vla-label {
+   the coupled loop begins — the warm-up leaves every box, the pulsing Language
+   Encoder included, in its untouched pre-training shape. */
+.is-live:not(.is-loading) .vla-vision .vla-label,
+.is-live:not(.is-loading) .vla-lang .vla-label,
+.is-live:not(.is-loading) .vla-action .vla-label {
   animation: vla-label-hop 0.5s ease;
 }
 @keyframes vla-label-hop {
@@ -560,6 +570,13 @@ a {
 .is-idle .vla-prompt-echo,
 .is-idle .vla-chip-row,
 .is-idle .vla-decoded,
+/* the warm-up holds every box at its pre-training look: the vision branch is
+   not in that graph at all, and the language readouts have nothing to say yet
+   (langViz only polls the trainer once it is `ready`, i.e. training) */
+.is-loading .vla-vision-canvas,
+.is-loading .vla-prompt-echo,
+.is-loading .vla-chip-row,
+.is-loading .vla-decoded,
 .is-converged .vla-vision-canvas,
 .is-converged .vla-prompt-echo,
 .is-converged .vla-chip-row,
@@ -576,6 +593,35 @@ a {
 .is-converged .vla-vision,
 .is-converged .vla-lang {
   opacity: 0.45;
+}
+
+/* Language warm-up ("Language Warmup" in the bar): the ONLY box doing any work
+   is the Language Encoder. languageWarmup (mini-vla trainer.core) runs text-only
+   gradient steps on the language twin's colour head and its attention scorer —
+   the vision branch is not in that graph at all, and no demonstration is being
+   consumed. Every box keeps its dormant pre-training shape (label centred,
+   contents hidden); this one alone comes up to full opacity, fills with the
+   same wash of red that sits under the loss curve, and pulses. When .is-loading
+   drops, the pipeline wakes together and the payload flow starts. */
+.is-loading .vla-node {
+  opacity: 0.45;
+}
+.is-loading .vla-lang {
+  opacity: 1;
+  /* ACCENT at 0.08 alpha — the exact fill drawLossCurve lays under the curve */
+  background-color: rgba(225, 45, 26, 0.08);
+  animation: vla-lang-warm 1.5s ease-in-out infinite;
+}
+@keyframes vla-lang-warm {
+  0%,
+  100% {
+    border-color: var(--border);
+    box-shadow: 0 0 0 0 rgba(225, 45, 26, 0);
+  }
+  50% {
+    border-color: var(--red);
+    box-shadow: 0 0 0 5px rgba(225, 45, 26, 0.07);
+  }
 }
 
 .vla-canvas {
@@ -605,7 +651,8 @@ a {
 .vla-av-v {
   font-variant-numeric: tabular-nums;
 }
-.is-idle .vla-action-vals {
+.is-idle .vla-action-vals,
+.is-loading .vla-action-vals {
   opacity: 0;
 }
 /* the 32x32 model input, blown up pixelated */
@@ -672,8 +719,10 @@ a {
   transition: opacity 0.5s ease;
 }
 /* hidden (not just dimmed) before training — no command has been given yet;
-   stays in normal layout flow so layoutWires can still measure it once live */
+   stays in normal layout flow so layoutWires can still measure it once live.
+   The warm-up counts as "before": no demonstration is being consumed yet. */
 .is-idle .vla-prompt,
+.is-loading .vla-prompt,
 .is-converged .vla-prompt {
   opacity: 0;
   pointer-events: none;
@@ -968,19 +1017,25 @@ a {
 
 @media (prefers-reduced-motion: reduce) {
   .vla-payload,
-  .is-live .vla-vision .vla-label,
-  .is-live .vla-lang .vla-label,
-  .is-live .vla-action .vla-label,
+  .is-live:not(.is-loading) .vla-vision .vla-label,
+  .is-live:not(.is-loading) .vla-lang .vla-label,
+  .is-live:not(.is-loading) .vla-action .vla-label,
   .vla-dot.is-on,
   .is-idle .vla-input,
   .is-idle .vla-output,
   .is-idle .vla-action,
   .is-idle .vla-vision,
   .is-idle .vla-lang,
+  .is-loading .vla-lang,
   .is-converged .vla-input,
   .is-converged .vla-vision,
   .is-converged .vla-lang {
     animation: none;
+  }
+  /* the warm-up pulse is the only cue that the Language Encoder is the box
+     doing the work; without the animation it has to be stated statically */
+  .is-loading .vla-lang {
+    border-color: var(--red);
   }
 }
 
@@ -1203,15 +1258,15 @@ a {
   .hero.demo-open .vla-out-head {
     text-align: center;
   }
-  .hero.demo-open.is-live:not(.is-converged) .vla-vision .vla-label,
-  .hero.demo-open.is-live:not(.is-converged) .vla-lang .vla-label,
-  .hero.demo-open.is-live .vla-action .vla-label {
+  .hero.demo-open.is-live:not(.is-converged):not(.is-loading) .vla-vision .vla-label,
+  .hero.demo-open.is-live:not(.is-converged):not(.is-loading) .vla-lang .vla-label,
+  .hero.demo-open.is-live:not(.is-loading) .vla-action .vla-label {
     left: 50%;
     transform: translateX(-50%);
   }
-  .hero.demo-open.is-live .vla-vision .vla-label,
-  .hero.demo-open.is-live .vla-lang .vla-label,
-  .hero.demo-open.is-live .vla-action .vla-label {
+  .hero.demo-open.is-live:not(.is-loading) .vla-vision .vla-label,
+  .hero.demo-open.is-live:not(.is-loading) .vla-lang .vla-label,
+  .hero.demo-open.is-live:not(.is-loading) .vla-action .vla-label {
     animation: vla-label-hop-center 0.5s ease;
   }
 }
@@ -1220,9 +1275,9 @@ a {
    reduced-motion kill-list (more classes, and it comes later), so it needs its
    own opt-out here rather than an entry up there. */
 @media (max-width: 1099px) and (prefers-reduced-motion: reduce) {
-  .hero.demo-open.is-live .vla-vision .vla-label,
-  .hero.demo-open.is-live .vla-lang .vla-label,
-  .hero.demo-open.is-live .vla-action .vla-label {
+  .hero.demo-open.is-live:not(.is-loading) .vla-vision .vla-label,
+  .hero.demo-open.is-live:not(.is-loading) .vla-lang .vla-label,
+  .hero.demo-open.is-live:not(.is-loading) .vla-action .vla-label {
     animation: none;
   }
 }

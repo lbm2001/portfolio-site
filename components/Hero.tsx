@@ -448,12 +448,13 @@ export default function Hero() {
       let carry: number | null = null;
       let grip: 0 | 1 | undefined;
 
-      if (st === "training" || st === "loading") {
-        // clock measured from the click (trainStartRef), minus accumulated
-        // paused time so the cycle resumes exactly where it left off
+      if (st === "training") {
+        // clock measured from the moment the warm-up handed off to training
+        // (trainStartRef), minus accumulated paused time so the cycle resumes
+        // exactly where it left off
         const effectiveNow = now - trainStartRef.current - pausedAccumRef.current;
         if (effectiveNow < 0) {
-          // the half-second hold right after the click: sit on the initial
+          // the half-second hold right after the handoff: sit on the initial
           // demonstration (t=0 → resting pose over the default layout) so the
           // pipeline eases in instead of the arm snapping into motion
           if (!demoPlanRef.current)
@@ -508,10 +509,11 @@ export default function Hero() {
         carry = pose.carry;
         grip = pose.grip;
       } else {
-        // idle OR converged: the demonstrations stop once the policy is
-        // trained — the arm returns to the resting sway (the CSS also fades
-        // the box back to its dormant, pre-training transparency). A resting
-        // gripper is OPEN (including before training starts).
+        // idle, language warm-up OR converged: no demonstrations are being
+        // consumed — the arm rests in its sway (the CSS also holds the box at
+        // its dormant, pre-training transparency). During the warm-up only the
+        // language twin is training, so the demonstration has nothing to show
+        // yet. A resting gripper is OPEN (including before training starts).
         [a1, a2] = wiggle(now, 0, 1.7);
         grip = 0;
       }
@@ -686,10 +688,13 @@ export default function Hero() {
     const drawVision = (now: number) => {
       const c = visionRef.current;
       if (!c) return;
-      // once trained the encoder goes dormant: stop feeding it the demo
-      // silhouette (the CSS fades the canvas back to transparent). The last
-      // frame stays underneath the fade-out, which is fine — it's hidden.
-      if (statusRef.current === "converged") return;
+      // the encoder is dormant on both sides of the run: during the language
+      // warm-up the vision branch is not in the graph at all, and once trained
+      // it has no further role. Either way, stop feeding it the demo silhouette
+      // (the CSS fades the canvas back to transparent). The last frame stays
+      // underneath the fade-out, which is fine — it's hidden.
+      if (statusRef.current === "converged" || statusRef.current === "loading")
+        return;
       const { ctx, W } = fitCanvas(c, 176, 176);
 
       // offscreen silhouette pipeline (the literal model input view)
@@ -890,6 +895,13 @@ export default function Hero() {
   const onUpdate = () => {
     const trainer = trainerRef.current!;
     if (trainer.status !== statusRef.current) {
+      // the language warm-up has just handed off to the coupled loop: this is
+      // when the demonstration cycle actually begins, so stamp its clock here
+      // rather than at the click (the warm-up's duration varies with the
+      // machine, and the arm must not arrive mid-cycle). Resume-from-pause is
+      // NOT a handoff — only loading → training re-stamps.
+      if (statusRef.current === "loading" && trainer.status === "training")
+        trainStartRef.current = performance.now() + 500; // half-second ease-in
       setStatusBoth(trainer.status);
       if (trainer.status === "converged") {
         // auto-episodes end; the rollout waits for the user's command
@@ -929,8 +941,6 @@ export default function Hero() {
       userSentenceRef.current = null;
       pausedAccumRef.current = 0;
       pauseStartRef.current = null;
-      // half-second hold on the initial demonstration before the arm moves
-      trainStartRef.current = performance.now() + 500;
       setUserSentence(null);
       setDecoded(null);
       setTokenBars([]);
@@ -1223,7 +1233,7 @@ export default function Hero() {
     status === "idle"
       ? "Idle"
       : status === "loading"
-        ? "Loading"
+        ? "Language Warmup"
         : status === "paused"
           ? "Paused"
           : status === "converged"
