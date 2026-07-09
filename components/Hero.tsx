@@ -315,14 +315,21 @@ export default function Hero() {
     };
 
     // the Action Head's live output — the policy's current predicted target
-    // joint angles (null → em dashes when nothing is being predicted)
-    const setActionVals = (t: [number, number] | null) => {
+    // joint angles plus the gripper state (open/closed). null angles → em
+    // dashes; grip undefined → em dash, 0 → open, 1 → closed.
+    const setActionVals = (
+      t: [number, number] | null,
+      grip?: 0 | 1 | undefined
+    ) => {
       const el = actionValsRef.current;
-      if (!el || el.children.length < 2) return;
+      if (!el || el.children.length < 3) return;
       const v0 = el.children[0].lastElementChild;
       const v1 = el.children[1].lastElementChild;
+      const v2 = el.children[2].lastElementChild;
       if (v0) v0.textContent = t ? fmtAngle(t[0]) : "—";
       if (v1) v1.textContent = t ? fmtAngle(t[1]) : "—";
+      if (v2)
+        v2.textContent = grip === 1 ? "closed" : grip === 0 ? "open" : "—";
     };
 
     // small idle sway around the rest pose — "there is something here"
@@ -420,9 +427,10 @@ export default function Hero() {
       } else {
         // idle OR converged: the demonstrations stop once the policy is
         // trained — the arm returns to the resting sway (the CSS also fades
-        // the box back to its dormant, pre-training transparency). No grip
-        // state → the plain solid-dot effector.
+        // the box back to its dormant, pre-training transparency). A resting
+        // gripper is OPEN (including before training starts).
         [a1, a2] = wiggle(now, 0, 1.7);
+        grip = 0;
       }
 
       demoPoseRef.current = { a1, a2, carry, grip: grip ?? 0 };
@@ -432,7 +440,7 @@ export default function Hero() {
         layout: demoLayoutRef.current,
         accent: ACCENT,
         carry,
-        grip,
+        grip: grip ?? 0,
       });
     };
 
@@ -611,9 +619,10 @@ export default function Hero() {
     // The drawn gripper state for a rollout arm: closed once a block is in
     // hand (carry/hold); during the reach it mirrors the policy's predicted
     // gripper command so the viewer sees it close as it settles over the block;
-    // failed return (or no episode) shows it open / plain.
-    const gripOf = (ep: Episode | null): 0 | 1 | undefined => {
-      if (!ep) return undefined;
+    // failed return, idle, or no episode shows it OPEN (a resting gripper is
+    // open — including before training starts).
+    const gripOf = (ep: Episode | null): 0 | 1 => {
+      if (!ep) return 0;
       if (ep.carry !== null) return 1;
       if (ep.phase === "reach") return ep.predGrip >= GRIP_THRESHOLD ? 1 : 0;
       return 0;
@@ -643,7 +652,7 @@ export default function Hero() {
           grip: gripOf(ep),
         });
         drawGaze(ctx, W, H);
-        setActionVals(targetRef.current);
+        setActionVals(targetRef.current, gripOf(ep));
         return;
       }
 
@@ -703,7 +712,7 @@ export default function Hero() {
         grip: gripOf(ep),
       });
       drawGaze(ctx, W, H);
-      setActionVals(st === "idle" ? null : targetRef.current);
+      setActionVals(st === "idle" ? null : targetRef.current, gripOf(ep));
     };
 
     const endEpisode = () => {
@@ -1305,6 +1314,10 @@ export default function Hero() {
           <span>
             <span className="vla-av-k">elbow</span>
             <span className="vla-av-v">—</span>
+          </span>
+          <span>
+            <span className="vla-av-k">gripper</span>
+            <span className="vla-av-v">open</span>
           </span>
         </div>
       </div>
