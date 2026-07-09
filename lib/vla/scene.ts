@@ -143,43 +143,20 @@ export function paintScene(
   ctx.fill();
   ctx.stroke();
 
-  // end effector — a small gripper on top of everything. With no grip state
-  // (idle sway) it's the plain solid dot; otherwise it draws OPEN (two splayed
-  // jaws + hollow centre) while approaching and CLOSED (pinched jaws + filled
-  // knuckle) once it's grasping — the visible realism payoff of the learned
-  // gripper action.
-  ctx.strokeStyle = "#6f6f6f";
-  ctx.fillStyle = "#6f6f6f";
-  ctx.lineCap = "round";
-  if (grip === undefined) {
-    ctx.beginPath();
-    ctx.arc(ex, ey, 4, 0, 7);
+  // end effector — a solid circle on top of everything. CLOSED (grasping) is
+  // grey; OPEN (approaching) is white with a thin grey outline so it still
+  // reads against the scene; idle sway (no grip state) stays the plain grey dot.
+  ctx.beginPath();
+  ctx.arc(ex, ey, 4, 0, 7);
+  if (grip === 0) {
+    ctx.fillStyle = "#fff";
     ctx.fill();
-  } else if (grip === 1) {
-    // closed: jaws pinched together over a filled knuckle
-    ctx.lineWidth = 2.2;
-    ctx.beginPath();
-    ctx.moveTo(ex - 2, ey + 1);
-    ctx.lineTo(ex - 2.5, ey - 6);
-    ctx.moveTo(ex + 2, ey + 1);
-    ctx.lineTo(ex + 2.5, ey - 6);
+    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = "#6f6f6f";
     ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(ex, ey, 2.4, 0, 7);
-    ctx.fill();
   } else {
-    // open: two jaws splayed outward, hollow centre
-    ctx.lineWidth = 2.2;
-    ctx.beginPath();
-    ctx.moveTo(ex - 2.5, ey + 1);
-    ctx.lineTo(ex - 6.5, ey - 5.5);
-    ctx.moveTo(ex + 2.5, ey + 1);
-    ctx.lineTo(ex + 6.5, ey - 5.5);
-    ctx.stroke();
-    ctx.lineWidth = 1.4;
-    ctx.beginPath();
-    ctx.arc(ex, ey, 2.4, 0, 7);
-    ctx.stroke();
+    ctx.fillStyle = "#6f6f6f";
+    ctx.fill();
   }
 }
 
