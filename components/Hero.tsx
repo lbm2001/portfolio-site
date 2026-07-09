@@ -1,6 +1,14 @@
 "use client";
 
-import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import Link from "next/link";
 import { profile, resumeDownloadName } from "@/lib/content";
 import { REST, clamp } from "mini-vla/geometry";
 import {
@@ -25,13 +33,7 @@ import {
   type Sentence,
   type DemoPlan,
 } from "mini-vla/task";
-import {
-  CONFIG,
-  DEFAULT_RUN_CONFIG,
-  estimateTrainingSeconds,
-  setRunConfig,
-  type RunConfig,
-} from "mini-vla/config";
+import { CONFIG, setRunConfig, type RunConfig } from "mini-vla/config";
 import { IMG_SIZE } from "mini-vla/model";
 import { VLATrainer, type TrainerStatus } from "mini-vla/trainer";
 import {
@@ -46,9 +48,9 @@ import {
 // TensorFlow.js behavioral-cloning loop — hosted in a Web Worker off the main
 // thread (mini-vla's trainer.worker.ts, via the mini-vla/trainer proxy) so
 // gradient steps never fight this component's 60fps rAF loop — against an
-// analytical-IK expert on pick-up commands (2-4 blocks from a 2/4/8-color
-// palette; mini-vla/config): each scene's slot-grammar command names
-// one block to pick up. The displayed demonstration swaps every cycle while
+// analytical-IK expert on pick-up commands (the viewport's task profile — see
+// DESKTOP_RUN_CONFIG / MOBILE_RUN_CONFIG): each scene's slot-grammar command
+// names one block to pick up. The displayed demonstration swaps every cycle while
 // thousands of examples train invisibly; the Rollout runs policy-driven
 // episodes — the arm approaches with an open gripper and the LEARNED gripper
 // action closes it over the block (attaching it), then the carry phase (lift
@@ -82,9 +84,34 @@ const LANG_MS = CONFIG.rollout.langMs;
 
 const fmtAngle = (v: number) => `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(2)}`;
 
+// Below this width the ring can't fit around the name: the hero is a plain
+// centered intro until the viewer opens the demo, which stacks the same five
+// cards vertically. Kept in sync with the `max-width: 1099px` block in
+// globals.css — layoutWires needs to know which geometry it is drawing for.
+const STACKED_MQ = "(max-width: 1099px)";
+
+// What gets trained is no longer the viewer's choice (there is no ⚙ menu): the
+// viewport picks it. Desktop trains the full task; a phone trains a smaller one
+// — fewer colors, sparser scenes — because it pays for every gradient step in
+// battery and heat.
+//
+// mini-vla cannot make this call itself. The trainer runs in a Web Worker, and
+// a Worker has no `matchMedia`, so the host resolves the profile and ships it
+// through `trainer.start(onUpdate, cfg)` — which also installs it on this
+// thread's samplers via setRunConfig (the two threads hold separate copies).
+const DESKTOP_RUN_CONFIG: RunConfig = { numColors: 8, maxBlocks: 4 };
+const MOBILE_RUN_CONFIG: RunConfig = { numColors: 4, maxBlocks: 3 };
+
+/** The colors a run of `cfg` can actually put in a scene: mini-vla's samplers
+    draw from the FIRST numColors palette entries, so the mobile profile only
+    ever shows (and only ever learns) red / black / blue / yellow. */
+const activePalette = (cfg: RunConfig) => COLORS.slice(0, cfg.numColors);
+
 /** Resize a canvas to its CSS box at devicePixelRatio; returns a cleared ctx. */
 function fitCanvas(c: HTMLCanvasElement, fallbackW = 190, fallbackH = 186) {
-  const dpr = window.devicePixelRatio || 1;
+  // capped at 2: phones report DPR 3, which costs 2.25x the pixels per frame
+  // with nothing visible to show for it in panels this small
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const W = c.offsetWidth || fallbackW;
   const H = c.offsetHeight || fallbackH;
   if (c.width !== Math.round(W * dpr)) c.width = Math.round(W * dpr);
@@ -174,16 +201,34 @@ export default function Hero() {
 
   const [status, setStatus] = useState<TrainerStatus>("idle");
   const [hud, setHud] = useState({ lossText: "—", samples: 0, batches: 0 });
-  // the ⚙ run config (palette / density / task set) picked before training.
-  // Mirrored into a ref because the rAF-loop closures (demo-cycle command
-  // sampling) mount once and would otherwise capture the initial state.
-  const [runCfg, setRunCfgState] = useState<RunConfig>(DEFAULT_RUN_CONFIG);
-  const runCfgRef = useRef<RunConfig>(DEFAULT_RUN_CONFIG);
-  const setRunCfg = (next: RunConfig) => {
+  // The task profile this run trains on, resolved from the viewport. Desktop is
+  // the SSR default: the bar is display:none below the breakpoint until the
+  // viewer opens the demo, so the post-mount correction is never seen. Mirrored
+  // into a ref because the rAF-loop closures (demo-cycle command sampling) mount
+  // once and would otherwise capture the initial value.
+  const [runCfg, setRunCfgState] = useState<RunConfig>(DESKTOP_RUN_CONFIG);
+  const runCfgRef = useRef<RunConfig>(DESKTOP_RUN_CONFIG);
+  // Latched from Start until Reset. setRunConfig installs per-thread module
+  // state, so letting the profile follow the media query mid-run would leave
+  // this thread's randomLayout() sampling scenes the worker isn't training on.
+  const cfgLockedRef = useRef(false);
+  const syncRunCfg = useCallback(() => {
+    if (cfgLockedRef.current) return;
+    const next = window.matchMedia(STACKED_MQ).matches
+      ? MOBILE_RUN_CONFIG
+      : DESKTOP_RUN_CONFIG;
     runCfgRef.current = next;
     setRunCfgState(next);
-  };
-  const [cfgOpen, setCfgOpen] = useState(false);
+  }, []);
+  // Resolve the profile on mount, and follow the breakpoint while idle — a
+  // viewer who rotates a tablet before pressing Start gets the right task, and
+  // the bar's readout never lies about what Start would train.
+  useEffect(() => {
+    const narrow = window.matchMedia(STACKED_MQ);
+    syncRunCfg();
+    narrow.addEventListener("change", syncRunCfg);
+    return () => narrow.removeEventListener("change", syncRunCfg);
+  }, [syncRunCfg]);
   // demonstrations the CURRENTLY rolled-out policy has seen: the sample count
   // frozen into the per-cycle snapshot during training, or the final count
   // once converged (see drawArm's snapshot boundary + onUpdate).
@@ -203,14 +248,55 @@ export default function Hero() {
   // Hover handles it on desktop (CSS); this drives the tap toggle on touch.
   const [modelView, setModelView] = useState(false);
 
+  // Below STACKED_MQ the pipeline is hidden behind a "Mini VLA Demo" CTA and
+  // unrolls into a vertical stack when opened. Mirrored into a ref because the
+  // mount-once rAF loop needs it every frame (path geometry + draw skipping).
+  // Above the breakpoint this state is inert: the CTA and ✕ are display:none
+  // and every `demo-open` rule lives inside the mobile media query.
+  const [showDemo, setShowDemo] = useState(false);
+  const showDemoRef = useRef(false);
+  // Auto-pause bookkeeping (tab hidden / hero scrolled off screen). Only a
+  // pause WE initiated may be auto-resumed — a user's manual Pause is sacred.
+  const autoPausedRef = useRef(false);
+  const heroOnScreenRef = useRef(true);
+
   const setStatusBoth = (s: TrainerStatus) => {
     statusRef.current = s;
     setStatus(s);
   };
 
+  // The one pause/resume mechanism. Wall-clock bookkeeping (pauseStartRef /
+  // pausedAccumRef) keeps the demonstration cycle resuming exactly where it
+  // left off instead of jumping ahead by the real pause duration. Every caller
+  // — the bar button, closing the demo, the visibility/viewport guards — goes
+  // through these two.
+  const pauseTraining = useCallback(() => {
+    const trainer = trainerRef.current;
+    if (!trainer || trainer.status !== "training") return;
+    trainer.pause();
+    pauseStartRef.current = performance.now();
+    statusRef.current = "paused";
+    setStatus("paused");
+  }, []);
+
+  const resumeTraining = useCallback(() => {
+    const trainer = trainerRef.current;
+    if (!trainer || trainer.status !== "paused") return;
+    if (pauseStartRef.current !== null) {
+      pausedAccumRef.current += performance.now() - pauseStartRef.current;
+      pauseStartRef.current = null;
+    }
+    trainer.resume();
+    statusRef.current = "training";
+    setStatus("training");
+  }, []);
+
   // ---- the single rAF loop: wires + all four canvases, every frame ----
   useEffect(() => {
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const narrow = window.matchMedia(STACKED_MQ);
+    /** Cards are stacked vertically (mobile, demo open) rather than ringed. */
+    const stacked = () => narrow.matches && showDemoRef.current;
 
     const layoutWires = () => {
       const stage = stageRef.current;
@@ -249,31 +335,55 @@ export default function Hero() {
       const O = m(outputCardRef.current);
       const r = (n: number) => n.toFixed(1);
       // No drawn connectors any more — a payload token glides across each gap,
-      // so the "connection" is carried by motion. Each hop is a single smooth
-      // cubic Bézier between two facing card edges (horizontal-biased controls
-      // → the token leaves and arrives along the horizontal, arcing gently in
-      // between; nearly straight for the short Action→Rollout hop). Five hops:
-      //   p1 Demonstration → Vision      p3 Vision   → Action Head (top)
-      //   p2 Prompt        → Language    p4 Language → Action Head (bottom)
-      //                                  p5 Action Head → Rollout
+      // so the "connection" is carried by motion. Each hop is a single cubic
+      // Bézier that leaves the CENTRE of the source card's facing edge and
+      // lands on the CENTRE of the target's facing edge. `sDir`/`eDir` lock the
+      // tangent at each end to that edge's normal ("h" = horizontal, "v" =
+      // vertical), so a token slides straight out of one card and straight into
+      // the next, sweeping a quarter-turn in between when the two differ.
+      type Dir = "h" | "v";
       const arc = (
         sx: number,
         sy: number,
+        sDir: Dir,
         ex: number,
-        ey: number
+        ey: number,
+        eDir: Dir
       ) => {
-        const dx = ex - sx;
-        return `path("M ${r(sx)} ${r(sy)} C ${r(sx + dx * 0.42)} ${r(sy)}, ${r(
-          sx + dx * 0.58
-        )} ${r(ey)}, ${r(ex)} ${r(ey)}")`;
+        const dx = (ex - sx) * 0.5;
+        const dy = (ey - sy) * 0.5;
+        const [c1x, c1y] = sDir === "h" ? [sx + dx, sy] : [sx, sy + dy];
+        const [c2x, c2y] = eDir === "h" ? [ex - dx, ey] : [ex, ey - dy];
+        return `path("M ${r(sx)} ${r(sy)} C ${r(c1x)} ${r(c1y)}, ${r(c2x)} ${r(
+          c2y
+        )}, ${r(ex)} ${r(ey)}")`;
       };
-      const paths: Record<string, string> = {
-        p1: arc(I.right, I.cy, V.cx, V.bottom),
-        p2: arc(P.right, P.cy, L.cx, L.top),
-        p3: arc(V.right, V.cy, A.cx, A.top),
-        p4: arc(L.right, L.cy, A.cx, A.bottom),
-        p5: arc(A.right, A.cy, O.left, O.cy),
-      };
+      // Stacked hops run straight down the column the payload is feeding, so
+      // each token visibly drops out of one card and into the next. The Action
+      // Head takes its two inputs at the thirds of its top edge (vision left,
+      // language right) rather than both at dead centre.
+      const aw = A.right - A.left;
+      const paths: Record<string, string> = stacked()
+        ? {
+            p1: arc(V.cx, I.bottom, "v", V.cx, V.top, "v"),
+            // the prompt is folded inside the Demonstration card on mobile, so
+            // "prompt → language" leaves from the card's bottom edge, under it
+            p2: arc(L.cx, I.bottom, "v", L.cx, L.top, "v"),
+            p3: arc(V.cx, V.bottom, "v", A.left + aw * 0.32, A.top, "v"),
+            p4: arc(L.cx, L.bottom, "v", A.left + aw * 0.68, A.top, "v"),
+            p5: arc(A.cx, A.bottom, "v", O.cx, O.top, "v"),
+          }
+        : // Side-by-side: Vision sits above Demonstration and Language below
+          // Prompt, so the first pair exits vertically and enters horizontally;
+          // the encoders then hand off horizontally into the Action Head's top
+          // and bottom edges. Action → Rollout is a near-straight sidestep.
+          {
+            p1: arc(I.cx, I.top, "v", V.left, V.cy, "h"),
+            p2: arc(P.cx, P.bottom, "v", L.left, L.cy, "h"),
+            p3: arc(V.right, V.cy, "h", A.cx, A.top, "v"),
+            p4: arc(L.right, L.cy, "h", A.cx, A.bottom, "v"),
+            p5: arc(A.right, A.cy, "h", O.left, O.cy, "h"),
+          };
       flow.querySelectorAll<HTMLElement>("[data-flow]").forEach((el) => {
         const d = paths[el.dataset.flow ?? ""];
         if (d) el.style.offsetPath = d;
@@ -333,12 +443,13 @@ export default function Hero() {
       let carry: number | null = null;
       let grip: 0 | 1 | undefined;
 
-      if (st === "training" || st === "loading") {
-        // clock measured from the click (trainStartRef), minus accumulated
-        // paused time so the cycle resumes exactly where it left off
+      if (st === "training") {
+        // clock measured from the moment the warm-up handed off to training
+        // (trainStartRef), minus accumulated paused time so the cycle resumes
+        // exactly where it left off
         const effectiveNow = now - trainStartRef.current - pausedAccumRef.current;
         if (effectiveNow < 0) {
-          // the half-second hold right after the click: sit on the initial
+          // the half-second hold right after the handoff: sit on the initial
           // demonstration (t=0 → resting pose over the default layout) so the
           // pipeline eases in instead of the arm snapping into motion
           if (!demoPlanRef.current)
@@ -393,10 +504,11 @@ export default function Hero() {
         carry = pose.carry;
         grip = pose.grip;
       } else {
-        // idle OR converged: the demonstrations stop once the policy is
-        // trained — the arm returns to the resting sway (the CSS also fades
-        // the box back to its dormant, pre-training transparency). A resting
-        // gripper is OPEN (including before training starts).
+        // idle, language warm-up OR converged: no demonstrations are being
+        // consumed — the arm rests in its sway (the CSS also holds the box at
+        // its dormant, pre-training transparency). During the warm-up only the
+        // language twin is training, so the demonstration has nothing to show
+        // yet. A resting gripper is OPEN (including before training starts).
         [a1, a2] = wiggle(now, 0, 1.7);
         grip = 0;
       }
@@ -571,10 +683,13 @@ export default function Hero() {
     const drawVision = (now: number) => {
       const c = visionRef.current;
       if (!c) return;
-      // once trained the encoder goes dormant: stop feeding it the demo
-      // silhouette (the CSS fades the canvas back to transparent). The last
-      // frame stays underneath the fade-out, which is fine — it's hidden.
-      if (statusRef.current === "converged") return;
+      // the encoder is dormant on both sides of the run: during the language
+      // warm-up the vision branch is not in the graph at all, and once trained
+      // it has no further role. Either way, stop feeding it the demo silhouette
+      // (the CSS fades the canvas back to transparent). The last frame stays
+      // underneath the fade-out, which is fine — it's hidden.
+      if (statusRef.current === "converged" || statusRef.current === "loading")
+        return;
       const { ctx, W } = fitCanvas(c, 176, 176);
 
       // offscreen silhouette pipeline (the literal model input view)
@@ -748,6 +863,12 @@ export default function Hero() {
 
     let raf = 0;
     const loop = (now: number) => {
+      // mobile, demo closed: every card is display:none, so painting them would
+      // just burn a phone battery rasterising invisible fallback-sized canvases
+      if (narrow.matches && !showDemoRef.current) {
+        raf = requestAnimationFrame(loop);
+        return;
+      }
       layoutWires();
       drawDemo(now);
       drawArm(now);
@@ -769,6 +890,13 @@ export default function Hero() {
   const onUpdate = () => {
     const trainer = trainerRef.current!;
     if (trainer.status !== statusRef.current) {
+      // the language warm-up has just handed off to the coupled loop: this is
+      // when the demonstration cycle actually begins, so stamp its clock here
+      // rather than at the click (the warm-up's duration varies with the
+      // machine, and the arm must not arrive mid-cycle). Resume-from-pause is
+      // NOT a handoff — only loading → training re-stamps.
+      if (statusRef.current === "loading" && trainer.status === "training")
+        trainStartRef.current = performance.now() + 500; // half-second ease-in
       setStatusBoth(trainer.status);
       if (trainer.status === "converged") {
         // auto-episodes end; the rollout waits for the user's command
@@ -793,17 +921,13 @@ export default function Hero() {
 
   const onPrimary = () => {
     const trainer = (trainerRef.current ??= new VLATrainer());
+    // any press of the bar is a deliberate choice: it ends any auto-pause, so
+    // becoming visible again never overrides what the viewer just asked for
+    autoPausedRef.current = false;
     if (trainer.status === "training") {
-      trainer.pause();
-      pauseStartRef.current = performance.now();
-      setStatusBoth("paused");
+      pauseTraining();
     } else if (trainer.status === "paused") {
-      if (pauseStartRef.current !== null) {
-        pausedAccumRef.current += performance.now() - pauseStartRef.current;
-        pauseStartRef.current = null;
-      }
-      trainer.resume();
-      setStatusBoth("training");
+      resumeTraining();
     } else if (trainer.status === "idle") {
       engineRef.current!.reset();
       rolloutCycleRef.current = -1;
@@ -812,16 +936,16 @@ export default function Hero() {
       userSentenceRef.current = null;
       pausedAccumRef.current = 0;
       pauseStartRef.current = null;
-      // half-second hold on the initial demonstration before the arm moves
-      trainStartRef.current = performance.now() + 500;
       setUserSentence(null);
       setDecoded(null);
       setTokenBars([]);
       setRolloutSamples(0);
-      setCfgOpen(false);
-      // install the ⚙ run config on this thread's samplers before anything
-      // draws a command (trainer.start also ships it to the worker)
+      // install the viewport's task profile on this thread's samplers before
+      // anything draws a command (trainer.start also ships it to the worker),
+      // and freeze it: a resize across the breakpoint must not change the task
+      // out from under a run in progress
       const cfg = runCfgRef.current;
+      cfgLockedRef.current = true;
       setRunConfig(cfg);
       // per-block clone of the default scene — the rollout's blocks are
       // draggable once converged, so the module-level DEFAULT_LAYOUT must
@@ -834,6 +958,11 @@ export default function Hero() {
 
   const onReset = () => {
     trainerRef.current?.reset();
+    autoPausedRef.current = false;
+    // back to idle: the profile follows the viewport again (it may have been
+    // resized across the breakpoint during the run we just threw away)
+    cfgLockedRef.current = false;
+    syncRunCfg();
     setStatusBoth("idle");
     engineRef.current!.reset();
     rolloutCycleRef.current = -1;
@@ -860,23 +989,98 @@ export default function Hero() {
     setHud({ lossText: "—", samples: 0, batches: 0 });
   };
 
-  /** "Try it" mode: run the user's own sentence through the trained policy.
-      The color head decodes which block to pick up; the motion itself is
-      entirely the policy's. */
-  const runCommand = async () => {
+  // ---- mobile: open / close the stacked demo ----
+  // "Closed" is not a trainer state — closing only hides the UI and, if a run
+  // was in progress, pauses it through the normal path so status/loss/bar stay
+  // consistent when it is reopened. Reopening deliberately does NOT resume:
+  // the viewer restarts it from the bar, exactly as after any manual pause.
+  const openDemo = () => {
+    showDemoRef.current = true;
+    setShowDemo(true);
+  };
+  const closeDemo = () => {
+    showDemoRef.current = false;
+    setShowDemo(false);
+    autoPausedRef.current = false;
+    pauseTraining();
+  };
+
+  // Battery guards: a training run behind a hidden tab or scrolled far off
+  // screen is invisible work. Pause it, remember that WE did, and resume only
+  // once both conditions clear again (a manual pause never sets the flag, so it
+  // is never undone here).
+  useEffect(() => {
+    const stage = stageRef.current;
+    const autoPause = () => {
+      if (statusRef.current !== "training") return;
+      pauseTraining();
+      autoPausedRef.current = true;
+    };
+    const autoResume = () => {
+      if (!autoPausedRef.current) return;
+      if (document.visibilityState !== "visible" || !heroOnScreenRef.current)
+        return;
+      autoPausedRef.current = false;
+      resumeTraining();
+    };
+    const onVisibility = () =>
+      document.visibilityState === "hidden" ? autoPause() : autoResume();
+    document.addEventListener("visibilitychange", onVisibility);
+    // fires once on observe, which is how heroOnScreenRef gets its real value
+    const io = new IntersectionObserver(([entry]) => {
+      heroOnScreenRef.current = entry.isIntersecting;
+      if (entry.isIntersecting) autoResume();
+      else autoPause();
+    });
+    if (stage) io.observe(stage);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      io.disconnect();
+    };
+  }, [pauseTraining, resumeTraining]);
+
+  /** "Try it" mode: run a sentence — the viewer's own, or a preset chip's —
+      through the trained policy. The color head decodes which block to pick up;
+      the motion itself is entirely the policy's. */
+  const runCommand = async (command?: string) => {
     const trainer = trainerRef.current;
     if (!trainer?.ready || statusRef.current !== "converged") return;
-    const text = tryText.trim();
+    const text = (command ?? tryText).trim();
     if (!text) return;
-    const tokens = tokenize(text);
-    const d = await trainer.decodeCommand(tokens); // worker round-trip (~ms)
-    if (!d || statusRef.current !== "converged") return;
     const words = text
       .toLowerCase()
       .replace(/[^a-z ]/g, "")
       .split(" ")
       .filter(Boolean)
       .slice(0, MAX_SEQ_LEN);
+
+    // The color head is 8-wide whatever the run config, but only the active
+    // palette ever appears in a label — so a command naming one of the colors
+    // this run never saw doesn't fail loudly, it quietly answers with the
+    // nearest color it DOES know and picks up the wrong block. Say so instead.
+    const cfg = runCfgRef.current;
+    const untrained = COLORS.slice(cfg.numColors).find((c) =>
+      c.synonyms.some((s) => words.includes(s))
+    );
+    if (untrained) {
+      const known = activePalette(cfg)
+        .map((c) => c.name)
+        .join(", ");
+      setTryNote(`this run never learned ${untrained.name} — only ${known}`);
+      setDecoded(null); // nothing ran: don't leave the previous answer standing
+      return;
+    }
+
+    const tokens = tokenize(text);
+    const d = await trainer.decodeCommand(tokens); // worker round-trip (~ms)
+    if (!d || statusRef.current !== "converged") return;
+    // a color the policy knows, but that this scene doesn't contain: the reach
+    // would silently fall back to some other block
+    if (!rolloutLayoutRef.current.some((b) => b.color === d.color)) {
+      setTryNote(`no ${COLORS[d.color].name} block in this scene — ⟳ to reshuffle`);
+      setDecoded(null);
+      return;
+    }
     const sentence: Sentence = {
       color: d.color,
       text,
@@ -894,6 +1098,16 @@ export default function Hero() {
     setTryNote(null);
     armState.current = { a1: REST[0], a2: REST[1] };
     engineRef.current!.begin(d.color, tokens);
+  };
+
+  /** Preset chips (mobile): the free-text box is the demo's payoff, but on a
+      phone it is also the highest-friction step AND the palette is half the
+      size — so offer one tap per color the run actually trained on. Derived
+      from the profile, never hand-written, so they cannot drift from it. */
+  const runPreset = (color: string) => {
+    const command = `pick up the ${color} block`;
+    setTryText(command);
+    void runCommand(command);
   };
 
   const randomizeBlocks = () => {
@@ -987,18 +1201,6 @@ export default function Hero() {
     dragRef.current = null;
   };
 
-  // ---- ⚙ run-config menu (editable while idle; locked once training runs;
-  // Reset returns to idle and re-opens the choice) ----
-  const setNumColors = (n: RunConfig["numColors"]) =>
-    setRunCfg({
-      ...runCfg,
-      numColors: n,
-      // colors are unique per scene, so the palette caps the block count
-      maxBlocks: Math.min(runCfg.maxBlocks, n) as RunConfig["maxBlocks"],
-    });
-  const setMaxBlocks = (n: RunConfig["maxBlocks"]) =>
-    setRunCfg({ ...runCfg, maxBlocks: n });
-
   const active = userSentence ?? demoSentence;
 
   // Keep the language-encoder chips on a single line for any sentence length:
@@ -1017,14 +1219,20 @@ export default function Hero() {
     fit();
     window.addEventListener("resize", fit);
     return () => window.removeEventListener("resize", fit);
-  }, [active.text]);
+    // showDemo: opening/closing the stack changes the row's width budget
+    // without ever firing a resize event, so re-measure on the toggle too
+  }, [active.text, showDemo]);
 
   const live = status !== "idle";
+  // The curve is only meaningful while batches are actually flowing, so it is
+  // absent before the run (idle / language warm-up) and again once the run has
+  // converged and the bar's job is to get out of the way of the command box.
+  const showLoss = status === "training" || status === "paused";
   const statusText =
     status === "idle"
       ? "Idle"
       : status === "loading"
-        ? "Loading"
+        ? "Language Warmup"
         : status === "paused"
           ? "Paused"
           : status === "converged"
@@ -1042,7 +1250,104 @@ export default function Hero() {
             : "is-live";
 
   return (
-    <header className={`hero ${stateClass}`} ref={stageRef}>
+    <header
+      className={`hero ${stateClass}${showDemo ? " demo-open" : ""}`}
+      ref={stageRef}
+    >
+      {/* ✕ + training bar travel together: stacked, they pin to the top of the
+          viewport as one sticky unit, so the controls AND the way out stay
+          reachable however far down the pipeline the reader has scrolled. On
+          desktop the wrapper is `display: contents` — it leaves no box behind,
+          and the bar keeps floating at the bottom of the ring exactly as before. */}
+      <div className="vla-topbar">
+        {/* mobile only: leaves the stacked demo, pausing any run behind it */}
+        <button
+          className="vla-close"
+          onClick={closeDemo}
+          type="button"
+          aria-label="Close the VLA demo"
+        >
+          ✕
+        </button>
+
+        {/* training control bar */}
+        <div className={`vla-bar${showLoss ? "" : " is-compact"}`}>
+          <div className="vla-status">
+            {/* the pulse means "work is happening": the language warm-up is
+                already loading embeddings, so it beats there too */}
+            <span
+              className={`vla-dot${
+                status === "training" || status === "loading" ? " is-on" : ""
+              }${status === "converged" ? " is-done" : ""}`}
+            />
+            <div className="vla-status-col">
+              <span className="vla-status-text">{statusText}</span>
+              {live && hud.samples > 0 && (
+                <>
+                  <span className="vla-status-sub">
+                    {hud.samples.toLocaleString()} examples
+                  </span>
+                  <span className="vla-status-sub">
+                    {hud.batches.toLocaleString()} batches
+                  </span>
+                </>
+              )}
+            </div>
+          </div>
+          {/* straight into the write-up: what this pipeline is and how it was
+              built. It rides the middle slot of the bar whether or not the loss
+              curve is there to host it — centred in the gap while the bar is
+              waiting, tucked into the curve's caption row while it plots. */}
+          {showLoss ? (
+            <>
+              <div className="vla-loss">
+                <div className="vla-loss-head">
+                  <div className="vla-loss-label">Huber Loss</div>
+                  <Link className="vla-project-link" href="/projects/mini-vla">
+                    mini-vla ↗
+                  </Link>
+                </div>
+                <canvas className="vla-loss-canvas" ref={lossRef} />
+              </div>
+              <div className="vla-loss-val">{hud.lossText}</div>
+            </>
+          ) : (
+            <div className="vla-link-slot">
+              <Link className="vla-project-link" href="/projects/mini-vla">
+                mini-vla ↗
+              </Link>
+            </div>
+          )}
+          {status === "idle" || status === "loading" ? (
+            <button
+              className="vla-btn"
+              onClick={onPrimary}
+              type="button"
+              disabled={status === "loading"}
+            >
+              Start Training
+            </button>
+          ) : status === "converged" ? (
+            <button className="vla-btn vla-btn-ghost" onClick={onReset} type="button">
+              Reset
+            </button>
+          ) : (
+            <>
+              <button className="vla-btn" onClick={onPrimary} type="button">
+                {status === "training" ? "Pause" : "Resume"}
+              </button>
+              <button
+                className="vla-btn vla-btn-ghost"
+                onClick={onReset}
+                type="button"
+              >
+                Reset
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+
       {/* No drawn connectors — the pipeline is stitched together purely by
           motion: a payload token detaches from each source card and glides
           across the gap into the next (offset-path trajectories set in
@@ -1155,12 +1460,19 @@ export default function Hero() {
               className="vla-try-input"
               placeholder="e.g. grab the blue cube"
               value={tryText}
-              onChange={(e) => setTryText(e.target.value)}
+              onChange={(e) => {
+                setTryText(e.target.value);
+                setTryNote(null); // the note described the previous command
+              }}
               onKeyDown={(e) => {
                 if (e.key === "Enter") void runCommand();
               }}
             />
-            <button className="vla-try-btn" onClick={runCommand} type="button">
+            <button
+              className="vla-try-btn"
+              onClick={() => void runCommand()}
+              type="button"
+            >
               Run
             </button>
             <button
@@ -1171,6 +1483,24 @@ export default function Hero() {
             >
               ⟳
             </button>
+            {/* one chip per trained color — display:none above the breakpoint,
+                where all eight colors are trained and typing is cheap */}
+            <div className="vla-try-presets">
+              {activePalette(runCfg).map((c) => (
+                <button
+                  key={c.name}
+                  className="vla-try-chip"
+                  onClick={() => runPreset(c.name)}
+                  type="button"
+                >
+                  <span
+                    className="vla-try-chip-dot"
+                    style={{ background: c.hex }}
+                  />
+                  {c.name}
+                </button>
+              ))}
+            </div>
             {tryNote && <div className="vla-try-note">{tryNote}</div>}
           </div>
         )}
@@ -1183,7 +1513,7 @@ export default function Hero() {
               status === "paused" ||
               status === "converged") && (
               <div className="vla-seen">
-                trained on {rolloutSamples.toLocaleString()} demonstrations
+                trained on {rolloutSamples.toLocaleString()} demos
               </div>
             )}
         </div>
@@ -1198,122 +1528,6 @@ export default function Hero() {
         />
       </div>
 
-      {/* training control bar */}
-      <div className="vla-bar">
-        <div className="vla-status">
-          <span
-            className={`vla-dot${status === "training" ? " is-on" : ""}${
-              status === "converged" ? " is-done" : ""
-            }`}
-          />
-          <div className="vla-status-col">
-            <span className="vla-status-text">{statusText}</span>
-            {live && hud.samples > 0 && (
-              <>
-                <span className="vla-status-sub">
-                  {hud.samples.toLocaleString()} examples
-                </span>
-                <span className="vla-status-sub">
-                  {hud.batches.toLocaleString()} batches
-                </span>
-              </>
-            )}
-          </div>
-        </div>
-        <div className="vla-loss">
-          <div className="vla-loss-label">Huber (smooth L1) Loss</div>
-          <canvas className="vla-loss-canvas" ref={lossRef} />
-        </div>
-        <div className="vla-loss-val">{hud.lossText}</div>
-        {status === "idle" || status === "loading" ? (
-          <>
-            {/* ⚙ run config — what to train (palette / density / task set),
-                pickable only before training starts */}
-            <div className="vla-cfg">
-              <button
-                className={`vla-btn vla-btn-ghost vla-cfg-btn${cfgOpen ? " is-open" : ""}`}
-                onClick={() => setCfgOpen((o) => !o)}
-                type="button"
-                disabled={status === "loading"}
-                aria-expanded={cfgOpen}
-                title="Configure what to train"
-              >
-                ⚙
-              </button>
-              {cfgOpen && status === "idle" && (
-                <div className="vla-cfg-pop">
-                  <div className="vla-cfg-row">
-                    <span className="vla-cfg-k">colors</span>
-                    <div className="vla-cfg-opts">
-                      {([2, 4, 8] as const).map((n) => (
-                        <button
-                          key={n}
-                          type="button"
-                          className={`vla-cfg-opt${runCfg.numColors === n ? " is-sel" : ""}`}
-                          onClick={() => setNumColors(n)}
-                        >
-                          {n}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="vla-cfg-row">
-                    <span className="vla-cfg-k">blocks</span>
-                    <div className="vla-cfg-opts">
-                      {([2, 3, 4] as const).map((n) => (
-                        <button
-                          key={n}
-                          type="button"
-                          className={`vla-cfg-opt${runCfg.maxBlocks === n ? " is-sel" : ""}`}
-                          disabled={n > runCfg.numColors}
-                          title={
-                            n > runCfg.numColors
-                              ? "every block is a unique color — capped by the palette"
-                              : undefined
-                          }
-                          onClick={() => setMaxBlocks(n)}
-                        >
-                          ≤{n}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="vla-cfg-eta">
-                    est. training ~{estimateTrainingSeconds(runCfg)}s
-                    <span className="vla-cfg-eta-note"> · on a laptop GPU</span>
-                  </div>
-                </div>
-              )}
-            </div>
-            <button
-              className="vla-btn"
-              onClick={onPrimary}
-              type="button"
-              disabled={status === "loading"}
-            >
-              Start Training
-            </button>
-          </>
-        ) : status === "converged" ? (
-          <button className="vla-btn vla-btn-ghost" onClick={onReset} type="button">
-            Reset
-          </button>
-        ) : (
-          <>
-            <button className="vla-btn" onClick={onPrimary} type="button">
-              {status === "training" ? "Pause" : "Resume"}
-            </button>
-            <button
-              className="vla-btn vla-btn-ghost"
-              onClick={onReset}
-              type="button"
-            >
-              Reset
-            </button>
-          </>
-        )}
-      </div>
-
       <div className="hero-content">
         <h1>{profile.name}</h1>
         <div className="hero-tag">{profile.field}</div>
@@ -1324,6 +1538,13 @@ export default function Hero() {
           <a className="btn-outline" href="/resume.pdf" download={resumeDownloadName()}>
             Download Resume
           </a>
+          {/* the pipeline's way in on phones, where it cannot ring the name.
+              Always rendered (SSR/hydration parity) — CSS hides it on desktop,
+              where the ring is already on screen, and drops it onto its own row
+              below the other two so neither of them has to wrap. */}
+          <button className="btn-outline hero-demo-btn" onClick={openDemo} type="button">
+            mini-vla Demo
+          </button>
         </div>
       </div>
     </header>

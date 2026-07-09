@@ -1,13 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-<rect x="0.5" y="0.5" width="63" height="63" rx="12" fill="#ffffff" stroke="#e4e4e4" stroke-width="1"/>
-<line x1="7.50" y1="52.13" x2="56.50" y2="52.13" stroke="#dcdcdc" stroke-width="1.20"/>
-<rect x="9.50" y="43.12" width="9.01" height="9.01" rx="0.54" fill="#1c1c1c"/>
-<rect x="41.86" y="43.12" width="9.01" height="9.01" rx="0.54" fill="#e12d1a"/>
-<rect x="27.88" y="40.57" width="4.62" height="11.56" fill="#1c1c1c"/>
-<rect x="23.83" y="49.21" width="12.71" height="2.92" rx="0.88" fill="#1c1c1c"/>
-<line x1="30.19" y1="40.57" x2="38.58" y2="24.10" stroke="#8a8a8a" stroke-width="4.04" stroke-linecap="round"/>
-<line x1="38.58" y1="24.10" x2="50.89" y2="15.48" stroke="#8a8a8a" stroke-width="3.18" stroke-linecap="round"/>
-<circle cx="30.19" cy="40.57" r="2.66" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.10"/>
-<circle cx="38.58" cy="24.10" r="2.20" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.10"/>
-<circle cx="50.89" cy="15.48" r="2.89" fill="#ffffff" stroke="#6f6f6f" stroke-width="1.10"/>
+  <style>
+    .ink { stroke: #1c1c1c; fill: none; }
+    .pad { fill: #1c1c1c; }
+    @media (prefers-color-scheme: dark) {
+      .ink { stroke: #f2f2f2; }
+      .pad { fill: #f2f2f2; }
+    }
+  </style>
+  <path class="ink" d="M32 52 V32 L50 14" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect class="pad" x="12" y="52" width="40" height="8" rx="2"/>
+  <rect x="44" y="8" width="12" height="12" rx="2" fill="#e12d1a"/>
 </svg>

@@ -10,6 +10,17 @@
 
   --font-sans: "Helvetica Neue", Archivo, Arial, sans-serif;
   --font-mono: ui-monospace, Menlo, monospace;
+
+  /* height of the sticky .nav — anything else that pins to the top of the
+     viewport has to clear it (the nav hides on scroll-down but returns on
+     scroll-up, so it cannot simply be painted over). Grows on phones, where
+     the hamburger is taller than the brand line. */
+  --nav-h: 51px;
+}
+@media (max-width: 720px) {
+  :root {
+    --nav-h: 67px;
+  }
 }
 
 * {
@@ -209,6 +220,31 @@ a {
   border-radius: 3px;
   text-decoration: none;
 }
+/* Both of these belong to the mobile stacked demo and are switched on inside
+   the max-width:1099px block. On desktop the pipeline already rings the name,
+   so there is nothing to open and nothing to close. */
+.hero-demo-btn {
+  display: none;
+  cursor: pointer;
+}
+/* ✕ + control bar as one unit. `contents` leaves no box in the desktop layout,
+   so the bar keeps resolving its absolute position against the .hero exactly as
+   it did before this wrapper existed. Mobile turns it into a sticky header. */
+.vla-topbar {
+  display: contents;
+}
+.vla-close {
+  display: none;
+  cursor: pointer;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  font: 500 14px/1 var(--font-sans);
+  color: var(--ink);
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+}
 
 /* ---- VLA pipeline (hero) ----
    Idle: all four boxes fully visible, gently drifting around their anchors,
@@ -275,17 +311,19 @@ a {
   opacity: 0;
 }
 /* travel the gap once, fading in as it detaches and out as it arrives so there
-   is no hard pop at either card (a soft handoff, not an explosion) */
+   is no hard pop at either card (a soft handoff, not an explosion). Peaks well
+   short of opaque: the tokens are connective tissue between the cards, and at
+   full strength they pull the eye off the cards themselves. */
 @keyframes vla-glide {
   0% {
     offset-distance: 0%;
     opacity: 0;
   }
   12% {
-    opacity: 1;
+    opacity: 0.55;
   }
   88% {
-    opacity: 1;
+    opacity: 0.55;
   }
   100% {
     offset-distance: 100%;
@@ -326,6 +364,12 @@ a {
   top: min(73%, calc(100% - 250px));
   transform: translateX(-50%);
   padding: 14px 16px;
+  /* re-states .vla-node's opacity transition (it would otherwise be replaced):
+     the warm-up's red wash has to ease back out when the pulse stops, not snap */
+  transition:
+    opacity 0.5s ease,
+    background-color 0.5s ease,
+    border-color 0.5s ease;
 }
 /* Action Head — small node where the vision + language wires merge into the
    policy's action output; parked a fixed gap to the LEFT of the Rollout (it
@@ -442,6 +486,9 @@ a {
 .is-idle .vla-vision .vla-label,
 .is-idle .vla-lang .vla-label,
 .is-idle .vla-action .vla-label,
+.is-loading .vla-vision .vla-label,
+.is-loading .vla-lang .vla-label,
+.is-loading .vla-action .vla-label,
 .is-converged .vla-vision .vla-label,
 .is-converged .vla-lang .vla-label {
   top: 50%;
@@ -451,10 +498,11 @@ a {
 /* On training start the label does NOT slide centre→corner (that path reads
    as shaky); instead it fades out where it sits (centre) and fades back in at
    the corner, the position switching while it is invisible. Plays once, when
-   .is-live first appears. */
-.is-live .vla-vision .vla-label,
-.is-live .vla-lang .vla-label,
-.is-live .vla-action .vla-label {
+   the coupled loop begins — the warm-up leaves every box, the pulsing Language
+   Encoder included, in its untouched pre-training shape. */
+.is-live:not(.is-loading) .vla-vision .vla-label,
+.is-live:not(.is-loading) .vla-lang .vla-label,
+.is-live:not(.is-loading) .vla-action .vla-label {
   animation: vla-label-hop 0.5s ease;
 }
 @keyframes vla-label-hop {
@@ -483,6 +531,35 @@ a {
     opacity: 1;
   }
 }
+/* Stacked (mobile) variant of the hop: the pipeline reads top-to-bottom there,
+   so a live label settles at the TOP CENTRE of its card rather than the corner.
+   Same fade-out-centre / fade-in-destination shape as vla-label-hop. */
+@keyframes vla-label-hop-center {
+  0% {
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    opacity: 1;
+  }
+  40% {
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    opacity: 0;
+  }
+  60% {
+    top: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    opacity: 0;
+  }
+  100% {
+    top: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    opacity: 1;
+  }
+}
 /* the boxes' real content fades in as the label leaves the centre */
 .vla-vision-canvas,
 .vla-vision-hint,
@@ -495,6 +572,13 @@ a {
 .is-idle .vla-prompt-echo,
 .is-idle .vla-chip-row,
 .is-idle .vla-decoded,
+/* the warm-up holds every box at its pre-training look: the vision branch is
+   not in that graph at all, and the language readouts have nothing to say yet
+   (langViz only polls the trainer once it is `ready`, i.e. training) */
+.is-loading .vla-vision-canvas,
+.is-loading .vla-prompt-echo,
+.is-loading .vla-chip-row,
+.is-loading .vla-decoded,
 .is-converged .vla-vision-canvas,
 .is-converged .vla-prompt-echo,
 .is-converged .vla-chip-row,
@@ -511,6 +595,35 @@ a {
 .is-converged .vla-vision,
 .is-converged .vla-lang {
   opacity: 0.45;
+}
+
+/* Language warm-up ("Language Warmup" in the bar): the ONLY box doing any work
+   is the Language Encoder. languageWarmup (mini-vla trainer.core) runs text-only
+   gradient steps on the language twin's colour head and its attention scorer —
+   the vision branch is not in that graph at all, and no demonstration is being
+   consumed. Every box keeps its dormant pre-training shape (label centred,
+   contents hidden); this one alone comes up to full opacity, fills with the
+   same wash of red that sits under the loss curve, and pulses. When .is-loading
+   drops, the pipeline wakes together and the payload flow starts. */
+.is-loading .vla-node {
+  opacity: 0.45;
+}
+.is-loading .vla-lang {
+  opacity: 1;
+  /* ACCENT at 0.08 alpha — the exact fill drawLossCurve lays under the curve */
+  background-color: rgba(225, 45, 26, 0.08);
+  animation: vla-lang-warm 1.5s ease-in-out infinite;
+}
+@keyframes vla-lang-warm {
+  0%,
+  100% {
+    border-color: var(--border);
+    box-shadow: 0 0 0 0 rgba(225, 45, 26, 0);
+  }
+  50% {
+    border-color: var(--red);
+    box-shadow: 0 0 0 5px rgba(225, 45, 26, 0.07);
+  }
 }
 
 .vla-canvas {
@@ -540,7 +653,8 @@ a {
 .vla-av-v {
   font-variant-numeric: tabular-nums;
 }
-.is-idle .vla-action-vals {
+.is-idle .vla-action-vals,
+.is-loading .vla-action-vals {
   opacity: 0;
 }
 /* the 32x32 model input, blown up pixelated */
@@ -607,8 +721,10 @@ a {
   transition: opacity 0.5s ease;
 }
 /* hidden (not just dimmed) before training — no command has been given yet;
-   stays in normal layout flow so layoutWires can still measure it once live */
+   stays in normal layout flow so layoutWires can still measure it once live.
+   The warm-up counts as "before": no demonstration is being consumed yet. */
 .is-idle .vla-prompt,
+.is-loading .vla-prompt,
 .is-converged .vla-prompt {
   opacity: 0;
   pointer-events: none;
@@ -738,6 +854,32 @@ a {
   border-color: rgba(0, 0, 0, 0.22);
   padding: 8px 10px;
 }
+/* One tap per color the run actually trained on. Mobile only: above the
+   breakpoint every color in the palette is trained, so free text can't miss
+   and there is nothing to discover. Rendered on both tiers regardless — the
+   chips are derived from the run config, and hiding them in CSS keeps the
+   markup identical across the breakpoint. */
+.vla-try-presets {
+  display: none;
+}
+.vla-try-chip {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 999px;
+  padding: 6px 11px 6px 8px;
+  font: 500 12px/1 var(--font-mono);
+  color: var(--body);
+  background: transparent;
+  border: 1px solid var(--border);
+}
+.vla-try-chip-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+}
 /* e.g. "no purple block in this scene — ⟳ to reshuffle" */
 .vla-try-note {
   position: absolute;
@@ -756,7 +898,9 @@ a {
   bottom: 3.5%;
   transform: translateX(-50%);
   z-index: 8;
-  width: min(560px, 86vw);
+  /* 600, not 560: the loss caption row now carries the mini-vla link beside
+     the "Huber (smooth L1) Loss" label, and both need to fit unwrapped */
+  width: min(600px, 86vw);
   display: flex;
   align-items: center;
   gap: 16px;
@@ -764,6 +908,12 @@ a {
   border: 1px solid var(--border);
   border-radius: 3px;
   padding: 12px 14px;
+  transition: width 0.35s ease;
+}
+/* no curve to plot: the bar shrinks to what is left — a status word, the link
+   and one button — instead of framing a stretch of empty paper. */
+.vla-bar.is-compact {
+  width: min(420px, 86vw);
 }
 .vla-status {
   display: flex;
@@ -776,10 +926,11 @@ a {
   flex-direction: column;
   gap: 4px;
 }
-/* background progress: examples consumed by the training loop */
+/* background progress — examples consumed by the training loop. Live only. */
 .vla-status-sub {
   font: 500 9px/1 var(--font-mono);
   color: var(--muted);
+  white-space: nowrap;
 }
 .vla-dot {
   width: 8px;
@@ -813,11 +964,43 @@ a {
 }
 .vla-loss {
   flex: 1;
+  min-width: 0;
+}
+/* the curve's caption row: what is plotted (left) and where to read about the
+   thing that is plotting it (right). Costs the bar no extra width — it sits in
+   the space the label already occupied. */
+.vla-loss-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 5px;
 }
 .vla-loss-label {
   font: 500 10px/1 var(--font-mono);
   color: var(--muted);
-  margin-bottom: 5px;
+  white-space: nowrap;
+}
+/* the middle slot when there is no curve to caption: the link alone, centred
+   between the status and the buttons. Same width the curve would have taken, so
+   the bar's other columns do not shift when training starts. */
+.vla-link-slot {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  justify-content: center;
+}
+.vla-loss-head .vla-project-link {
+  margin-left: auto; /* right-aligned, and stays there once the label is hidden */
+}
+.vla-project-link {
+  font: 500 10px/1 var(--font-mono);
+  color: var(--muted);
+  text-decoration: none;
+  white-space: nowrap;
+  transition: color 0.2s ease;
+}
+.vla-project-link:hover {
+  color: var(--red);
 }
 .vla-loss-canvas {
   width: 100%;
@@ -850,104 +1033,35 @@ a {
   border-color: rgba(0, 0, 0, 0.22);
 }
 
-/* ⚙ run-config menu (idle only): what to train — palette size, scene
-   density, task set — plus the (placeholder) training-time estimate. Anchored
-   to the gear inside the control bar; opens UPWARD so it never covers it. */
-.vla-cfg {
-  position: relative;
-}
-.vla-cfg-btn {
-  padding: 10px 12px;
-  font-size: 14px;
-  line-height: 1;
-}
-.vla-cfg-btn.is-open {
-  border-color: var(--ink);
-}
-.vla-cfg-pop {
-  position: absolute;
-  bottom: calc(100% + 10px);
-  right: -8px;
-  z-index: 9;
-  width: 232px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  padding: 12px 14px;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.09);
-}
-.vla-cfg-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.vla-cfg-k {
-  font: 500 9.5px/1 var(--font-mono);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--muted);
-  width: 46px;
-  flex: none;
-}
-.vla-cfg-opts {
-  display: flex;
-  gap: 4px;
-  flex: 1;
-}
-.vla-cfg-opt {
-  cursor: pointer;
-  flex: 1;
-  padding: 6px 0;
-  font: 600 10.5px/1 var(--font-mono);
-  color: var(--body);
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  white-space: nowrap;
-}
-.vla-cfg-opt.is-sel {
-  background: var(--ink);
-  border-color: var(--ink);
-  color: #fff;
-}
-.vla-cfg-opt:disabled {
-  opacity: 0.35;
-  cursor: default;
-}
-.vla-cfg-eta {
-  font: 500 10px/1.4 var(--font-mono);
-  color: var(--body);
-  border-top: 1px solid var(--border);
-  padding-top: 9px;
-}
-.vla-cfg-eta-note {
-  color: var(--muted);
-}
-
 @media (prefers-reduced-motion: reduce) {
   .vla-payload,
-  .is-live .vla-vision .vla-label,
-  .is-live .vla-lang .vla-label,
-  .is-live .vla-action .vla-label,
+  .is-live:not(.is-loading) .vla-vision .vla-label,
+  .is-live:not(.is-loading) .vla-lang .vla-label,
+  .is-live:not(.is-loading) .vla-action .vla-label,
   .vla-dot.is-on,
   .is-idle .vla-input,
   .is-idle .vla-output,
   .is-idle .vla-action,
   .is-idle .vla-vision,
   .is-idle .vla-lang,
+  .is-loading .vla-lang,
   .is-converged .vla-input,
   .is-converged .vla-vision,
   .is-converged .vla-lang {
     animation: none;
   }
+  /* the warm-up pulse is the only cue that the Language Encoder is the box
+     doing the work; without the animation it has to be stated statically */
+  .is-loading .vla-lang {
+    border-color: var(--red);
+  }
 }
 
 /* Below the desktop tier the four boxes would collide with the name — the
    pipeline (and its control bar) steps aside and the hero stays a clean
-   centered intro. */
+   centered intro, with a third CTA that unrolls the same pipeline into a
+   vertical stack (.demo-open). Everything below is scoped to this breakpoint,
+   so the desktop ring never sees any of it. */
 @media (max-width: 1099px) {
   .vla-node,
   .vla-flow,
@@ -957,6 +1071,232 @@ a {
   .hero {
     height: auto;
     min-height: 560px;
+  }
+  /* the intro dims for the pipeline only when there IS a pipeline on screen:
+     closing the demo mid-run would otherwise leave the name greyed out */
+  .hero.is-live:not(.demo-open) .hero-content {
+    opacity: 1;
+  }
+  /* `left: 50%` with no `right` leaves the intro only HALF the hero to lay out
+     in, which is what squeezed "Download Resume" onto two lines. Span the hero
+     and let align-items keep everything centred. */
+  .hero-content {
+    left: 0;
+    right: 0;
+    transform: translateY(-50%);
+    padding: 0 20px;
+  }
+  /* Two auto columns: Contact | Download Resume on the first row, the demo
+     button spanning both underneath — so it inherits their combined width
+     instead of needing a magic number. */
+  .hero-cta {
+    display: grid;
+    grid-template-columns: auto auto;
+  }
+  .hero-demo-btn {
+    display: block;
+    grid-column: 1 / -1;
+    text-align: center;
+  }
+  .hero-cta .btn-primary,
+  .hero-cta .btn-outline {
+    white-space: nowrap;
+  }
+
+  /* ---- demo open: the ring unrolls into a stack ----
+     Demonstration / Action Head / Rollout / bar span both columns; the two
+     encoders share a row. JSX order already matches, so the grid does the
+     whole job. .vla-flow stays absolute and overlays the (now much taller)
+     hero, and the payload tokens glide down vertical Béziers instead of
+     across horizontal ones (see layoutWires). */
+  .hero.demo-open {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 26px 14px; /* the row gap IS the payload's runway — keep it generous */
+    align-content: start;
+    height: auto;
+    min-height: 0;
+    overflow: visible; /* or the sticky bar has no scroll container to stick to */
+    padding: 16px 16px 12px;
+  }
+  .hero.demo-open .hero-content {
+    display: none;
+  }
+  .hero.demo-open .vla-flow {
+    display: block;
+  }
+  /* In flow. The desktop anchors and their centering transforms go, and so do
+     the idle/converged drift animations — their keyframes hard-code those very
+     transforms, which off the ring would displace each card by half its size.
+     `relative`, not `static`: the labels, prompt and try-row inside each card
+     are absolutely positioned against it. */
+  .hero.demo-open .vla-node {
+    display: block;
+    position: relative;
+    left: auto;
+    right: auto;
+    top: auto;
+    bottom: auto;
+    width: auto;
+    transform: none;
+    animation: none;
+  }
+  .hero.demo-open .vla-input,
+  .hero.demo-open .vla-action,
+  .hero.demo-open .vla-output {
+    grid-column: 1 / -1;
+  }
+  /* the controls lead the pipeline rather than trail it: ✕ and the bar pin to
+     just under the (auto-hiding) nav as one unit, and the cards scroll beneath.
+     `order: -1` puts them first without moving them in the JSX. */
+  .hero.demo-open .vla-topbar {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    grid-column: 1 / -1;
+    order: -1;
+    position: sticky;
+    top: var(--nav-h);
+    z-index: 9;
+    background: var(--bg);
+    padding-bottom: 10px;
+  }
+  .hero.demo-open .vla-close {
+    display: block;
+    align-self: flex-end;
+  }
+  /* sceneMap scales the scene by canvas HEIGHT, so a full-bleed canvas would
+     just add empty floor either side — keep the arm at a legible size instead */
+  .hero.demo-open .vla-canvas {
+    height: 220px;
+    max-width: 300px;
+    margin: 0 auto;
+  }
+  .hero.demo-open .vla-vision-canvas {
+    width: 100%;
+    max-width: 176px;
+    height: auto;
+    aspect-ratio: 1;
+  }
+  .hero.demo-open .vla-vision-hint::after {
+    content: "tap: what the CNN sees";
+  }
+  /* the row overflows its (now much narrower) box before --chip-fit scales it
+     down; scaling about the box CENTRE would leave the shrunk row hanging off
+     the right edge, so pin the origin to the left where the content starts */
+  .hero.demo-open .vla-chip-row {
+    max-width: 100%;
+    transform-origin: left center;
+  }
+  .hero.demo-open .vla-action-vals {
+    max-width: 320px;
+    margin: 0 auto;
+  }
+  /* The prompt folds into the Demonstration card (it floats below the card on
+     desktop, which stacked would drop it onto the encoder row). It is the
+     card's FIRST child, so the card becomes a flex column and `order` sends it
+     back under the canvas without touching the JSX. Still in layout — never
+     display:none — so layoutWires can keep measuring it. `relative` with auto
+     offsets = in flow, but still the containing block for the .vla-grip corner. */
+  .hero.demo-open .vla-input {
+    display: flex;
+    flex-direction: column;
+  }
+  .hero.demo-open .vla-prompt {
+    order: 1;
+    position: relative;
+    top: auto;
+    left: auto;
+    right: auto;
+    margin-top: 12px;
+  }
+  /* likewise the try-row, which on desktop hangs above the Rollout and reaches
+     back over the Action Head (left: -44px) */
+  .hero.demo-open .vla-try {
+    position: relative;
+    left: auto;
+    right: auto;
+    bottom: auto;
+    margin: 0 0 12px;
+    flex-wrap: wrap;
+  }
+  /* anything below 16px makes iOS Safari zoom the page on focus */
+  .hero.demo-open .vla-try-input {
+    font-size: 16px;
+  }
+  /* the trained palette, one tap each: typing is the highest-friction step on a
+     phone, and the mobile profile only learns four of the eight colors */
+  .hero.demo-open .vla-try-presets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    flex: 1 0 100%;
+  }
+  /* in flow under the chips. Absolute (`top: 100%`) it would hang over the
+     rollout canvas, which on desktop is only ever a 10px gap away. */
+  .hero.demo-open .vla-try-note {
+    position: static;
+    flex: 1 0 100%;
+    margin-top: 0;
+  }
+
+  /* in flow inside the sticky topbar. Status and the controls never fit on one
+     320px row beside the curve, so the curve drops to a full-width second row
+     underneath them — carrying the mini-vla link, since the label does not fit. */
+  .hero.demo-open .vla-bar {
+    display: flex;
+    position: static;
+    left: auto;
+    bottom: auto;
+    transform: none;
+    width: auto;
+    flex-wrap: wrap;
+    gap: 8px 10px;
+    padding: 10px 12px;
+  }
+  .hero.demo-open .vla-status {
+    flex: 1; /* pushes the value + buttons to the right edge */
+    min-width: 0;
+  }
+  .hero.demo-open .vla-loss {
+    order: 1;
+    flex: 1 0 100%;
+  }
+  .hero.demo-open .vla-loss-label {
+    display: none;
+  }
+  .hero.demo-open .vla-loss-canvas {
+    height: 26px;
+  }
+  /* Stacked, the pipeline reads top-to-bottom, so each card's title reads from
+     its top centre instead of hugging the left corner. Scoped to the live
+     states: idle (and converged, upstream) still park the label dead centre of
+     the empty card, and those rules must keep winning. */
+  .hero.demo-open .vla-input > .vla-label,
+  .hero.demo-open .vla-out-head {
+    text-align: center;
+  }
+  .hero.demo-open.is-live:not(.is-converged):not(.is-loading) .vla-vision .vla-label,
+  .hero.demo-open.is-live:not(.is-converged):not(.is-loading) .vla-lang .vla-label,
+  .hero.demo-open.is-live:not(.is-loading) .vla-action .vla-label {
+    left: 50%;
+    transform: translateX(-50%);
+  }
+  .hero.demo-open.is-live:not(.is-loading) .vla-vision .vla-label,
+  .hero.demo-open.is-live:not(.is-loading) .vla-lang .vla-label,
+  .hero.demo-open.is-live:not(.is-loading) .vla-action .vla-label {
+    animation: vla-label-hop-center 0.5s ease;
+  }
+}
+
+/* G7: the stacked layout's own animated selector outranks the global
+   reduced-motion kill-list (more classes, and it comes later), so it needs its
+   own opt-out here rather than an entry up there. */
+@media (max-width: 1099px) and (prefers-reduced-motion: reduce) {
+  .hero.demo-open.is-live:not(.is-loading) .vla-vision .vla-label,
+  .hero.demo-open.is-live:not(.is-loading) .vla-lang .vla-label,
+  .hero.demo-open.is-live:not(.is-loading) .vla-action .vla-label {
+    animation: none;
   }
 }
 
