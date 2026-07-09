@@ -1,6 +1,14 @@
 "use client";
 
-import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import Link from "next/link";
 import { profile, resumeDownloadName } from "@/lib/content";
 import { REST, clamp } from "mini-vla/geometry";
 import {
@@ -82,9 +90,17 @@ const LANG_MS = CONFIG.rollout.langMs;
 
 const fmtAngle = (v: number) => `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(2)}`;
 
+// Below this width the ring can't fit around the name: the hero is a plain
+// centered intro until the viewer opens the demo, which stacks the same five
+// cards vertically. Kept in sync with the `max-width: 1099px` block in
+// globals.css — layoutWires needs to know which geometry it is drawing for.
+const STACKED_MQ = "(max-width: 1099px)";
+
 /** Resize a canvas to its CSS box at devicePixelRatio; returns a cleared ctx. */
 function fitCanvas(c: HTMLCanvasElement, fallbackW = 190, fallbackH = 186) {
-  const dpr = window.devicePixelRatio || 1;
+  // capped at 2: phones report DPR 3, which costs 2.25x the pixels per frame
+  // with nothing visible to show for it in panels this small
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const W = c.offsetWidth || fallbackW;
   const H = c.offsetHeight || fallbackH;
   if (c.width !== Math.round(W * dpr)) c.width = Math.round(W * dpr);
@@ -203,14 +219,55 @@ export default function Hero() {
   // Hover handles it on desktop (CSS); this drives the tap toggle on touch.
   const [modelView, setModelView] = useState(false);
 
+  // Below STACKED_MQ the pipeline is hidden behind a "Mini VLA Demo" CTA and
+  // unrolls into a vertical stack when opened. Mirrored into a ref because the
+  // mount-once rAF loop needs it every frame (path geometry + draw skipping).
+  // Above the breakpoint this state is inert: the CTA and ✕ are display:none
+  // and every `demo-open` rule lives inside the mobile media query.
+  const [showDemo, setShowDemo] = useState(false);
+  const showDemoRef = useRef(false);
+  // Auto-pause bookkeeping (tab hidden / hero scrolled off screen). Only a
+  // pause WE initiated may be auto-resumed — a user's manual Pause is sacred.
+  const autoPausedRef = useRef(false);
+  const heroOnScreenRef = useRef(true);
+
   const setStatusBoth = (s: TrainerStatus) => {
     statusRef.current = s;
     setStatus(s);
   };
 
+  // The one pause/resume mechanism. Wall-clock bookkeeping (pauseStartRef /
+  // pausedAccumRef) keeps the demonstration cycle resuming exactly where it
+  // left off instead of jumping ahead by the real pause duration. Every caller
+  // — the bar button, closing the demo, the visibility/viewport guards — goes
+  // through these two.
+  const pauseTraining = useCallback(() => {
+    const trainer = trainerRef.current;
+    if (!trainer || trainer.status !== "training") return;
+    trainer.pause();
+    pauseStartRef.current = performance.now();
+    statusRef.current = "paused";
+    setStatus("paused");
+  }, []);
+
+  const resumeTraining = useCallback(() => {
+    const trainer = trainerRef.current;
+    if (!trainer || trainer.status !== "paused") return;
+    if (pauseStartRef.current !== null) {
+      pausedAccumRef.current += performance.now() - pauseStartRef.current;
+      pauseStartRef.current = null;
+    }
+    trainer.resume();
+    statusRef.current = "training";
+    setStatus("training");
+  }, []);
+
   // ---- the single rAF loop: wires + all four canvases, every frame ----
   useEffect(() => {
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const narrow = window.matchMedia(STACKED_MQ);
+    /** Cards are stacked vertically (mobile, demo open) rather than ringed. */
+    const stacked = () => narrow.matches && showDemoRef.current;
 
     const layoutWires = () => {
       const stage = stageRef.current;
@@ -249,31 +306,55 @@ export default function Hero() {
       const O = m(outputCardRef.current);
       const r = (n: number) => n.toFixed(1);
       // No drawn connectors any more — a payload token glides across each gap,
-      // so the "connection" is carried by motion. Each hop is a single smooth
-      // cubic Bézier between two facing card edges (horizontal-biased controls
-      // → the token leaves and arrives along the horizontal, arcing gently in
-      // between; nearly straight for the short Action→Rollout hop). Five hops:
-      //   p1 Demonstration → Vision      p3 Vision   → Action Head (top)
-      //   p2 Prompt        → Language    p4 Language → Action Head (bottom)
-      //                                  p5 Action Head → Rollout
+      // so the "connection" is carried by motion. Each hop is a single cubic
+      // Bézier that leaves the CENTRE of the source card's facing edge and
+      // lands on the CENTRE of the target's facing edge. `sDir`/`eDir` lock the
+      // tangent at each end to that edge's normal ("h" = horizontal, "v" =
+      // vertical), so a token slides straight out of one card and straight into
+      // the next, sweeping a quarter-turn in between when the two differ.
+      type Dir = "h" | "v";
       const arc = (
         sx: number,
         sy: number,
+        sDir: Dir,
         ex: number,
-        ey: number
+        ey: number,
+        eDir: Dir
       ) => {
-        const dx = ex - sx;
-        return `path("M ${r(sx)} ${r(sy)} C ${r(sx + dx * 0.42)} ${r(sy)}, ${r(
-          sx + dx * 0.58
-        )} ${r(ey)}, ${r(ex)} ${r(ey)}")`;
+        const dx = (ex - sx) * 0.5;
+        const dy = (ey - sy) * 0.5;
+        const [c1x, c1y] = sDir === "h" ? [sx + dx, sy] : [sx, sy + dy];
+        const [c2x, c2y] = eDir === "h" ? [ex - dx, ey] : [ex, ey - dy];
+        return `path("M ${r(sx)} ${r(sy)} C ${r(c1x)} ${r(c1y)}, ${r(c2x)} ${r(
+          c2y
+        )}, ${r(ex)} ${r(ey)}")`;
       };
-      const paths: Record<string, string> = {
-        p1: arc(I.right, I.cy, V.cx, V.bottom),
-        p2: arc(P.right, P.cy, L.cx, L.top),
-        p3: arc(V.right, V.cy, A.cx, A.top),
-        p4: arc(L.right, L.cy, A.cx, A.bottom),
-        p5: arc(A.right, A.cy, O.left, O.cy),
-      };
+      // Stacked hops run straight down the column the payload is feeding, so
+      // each token visibly drops out of one card and into the next. The Action
+      // Head takes its two inputs at the thirds of its top edge (vision left,
+      // language right) rather than both at dead centre.
+      const aw = A.right - A.left;
+      const paths: Record<string, string> = stacked()
+        ? {
+            p1: arc(V.cx, I.bottom, "v", V.cx, V.top, "v"),
+            // the prompt is folded inside the Demonstration card on mobile, so
+            // "prompt → language" leaves from the card's bottom edge, under it
+            p2: arc(L.cx, I.bottom, "v", L.cx, L.top, "v"),
+            p3: arc(V.cx, V.bottom, "v", A.left + aw * 0.32, A.top, "v"),
+            p4: arc(L.cx, L.bottom, "v", A.left + aw * 0.68, A.top, "v"),
+            p5: arc(A.cx, A.bottom, "v", O.cx, O.top, "v"),
+          }
+        : // Side-by-side: Vision sits above Demonstration and Language below
+          // Prompt, so the first pair exits vertically and enters horizontally;
+          // the encoders then hand off horizontally into the Action Head's top
+          // and bottom edges. Action → Rollout is a near-straight sidestep.
+          {
+            p1: arc(I.cx, I.top, "v", V.left, V.cy, "h"),
+            p2: arc(P.cx, P.bottom, "v", L.left, L.cy, "h"),
+            p3: arc(V.right, V.cy, "h", A.cx, A.top, "v"),
+            p4: arc(L.right, L.cy, "h", A.cx, A.bottom, "v"),
+            p5: arc(A.right, A.cy, "h", O.left, O.cy, "h"),
+          };
       flow.querySelectorAll<HTMLElement>("[data-flow]").forEach((el) => {
         const d = paths[el.dataset.flow ?? ""];
         if (d) el.style.offsetPath = d;
@@ -748,6 +829,12 @@ export default function Hero() {
 
     let raf = 0;
     const loop = (now: number) => {
+      // mobile, demo closed: every card is display:none, so painting them would
+      // just burn a phone battery rasterising invisible fallback-sized canvases
+      if (narrow.matches && !showDemoRef.current) {
+        raf = requestAnimationFrame(loop);
+        return;
+      }
       layoutWires();
       drawDemo(now);
       drawArm(now);
@@ -793,17 +880,13 @@ export default function Hero() {
 
   const onPrimary = () => {
     const trainer = (trainerRef.current ??= new VLATrainer());
+    // any press of the bar is a deliberate choice: it ends any auto-pause, so
+    // becoming visible again never overrides what the viewer just asked for
+    autoPausedRef.current = false;
     if (trainer.status === "training") {
-      trainer.pause();
-      pauseStartRef.current = performance.now();
-      setStatusBoth("paused");
+      pauseTraining();
     } else if (trainer.status === "paused") {
-      if (pauseStartRef.current !== null) {
-        pausedAccumRef.current += performance.now() - pauseStartRef.current;
-        pauseStartRef.current = null;
-      }
-      trainer.resume();
-      setStatusBoth("training");
+      resumeTraining();
     } else if (trainer.status === "idle") {
       engineRef.current!.reset();
       rolloutCycleRef.current = -1;
@@ -834,6 +917,7 @@ export default function Hero() {
 
   const onReset = () => {
     trainerRef.current?.reset();
+    autoPausedRef.current = false;
     setStatusBoth("idle");
     engineRef.current!.reset();
     rolloutCycleRef.current = -1;
@@ -859,6 +943,56 @@ export default function Hero() {
     setRolloutSamples(0);
     setHud({ lossText: "—", samples: 0, batches: 0 });
   };
+
+  // ---- mobile: open / close the stacked demo ----
+  // "Closed" is not a trainer state — closing only hides the UI and, if a run
+  // was in progress, pauses it through the normal path so status/loss/bar stay
+  // consistent when it is reopened. Reopening deliberately does NOT resume:
+  // the viewer restarts it from the bar, exactly as after any manual pause.
+  const openDemo = () => {
+    showDemoRef.current = true;
+    setShowDemo(true);
+  };
+  const closeDemo = () => {
+    showDemoRef.current = false;
+    setShowDemo(false);
+    autoPausedRef.current = false;
+    pauseTraining();
+  };
+
+  // Battery guards: a training run behind a hidden tab or scrolled far off
+  // screen is invisible work. Pause it, remember that WE did, and resume only
+  // once both conditions clear again (a manual pause never sets the flag, so it
+  // is never undone here).
+  useEffect(() => {
+    const stage = stageRef.current;
+    const autoPause = () => {
+      if (statusRef.current !== "training") return;
+      pauseTraining();
+      autoPausedRef.current = true;
+    };
+    const autoResume = () => {
+      if (!autoPausedRef.current) return;
+      if (document.visibilityState !== "visible" || !heroOnScreenRef.current)
+        return;
+      autoPausedRef.current = false;
+      resumeTraining();
+    };
+    const onVisibility = () =>
+      document.visibilityState === "hidden" ? autoPause() : autoResume();
+    document.addEventListener("visibilitychange", onVisibility);
+    // fires once on observe, which is how heroOnScreenRef gets its real value
+    const io = new IntersectionObserver(([entry]) => {
+      heroOnScreenRef.current = entry.isIntersecting;
+      if (entry.isIntersecting) autoResume();
+      else autoPause();
+    });
+    if (stage) io.observe(stage);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      io.disconnect();
+    };
+  }, [pauseTraining, resumeTraining]);
 
   /** "Try it" mode: run the user's own sentence through the trained policy.
       The color head decodes which block to pick up; the motion itself is
@@ -1017,7 +1151,9 @@ export default function Hero() {
     fit();
     window.addEventListener("resize", fit);
     return () => window.removeEventListener("resize", fit);
-  }, [active.text]);
+    // showDemo: opening/closing the stack changes the row's width budget
+    // without ever firing a resize event, so re-measure on the toggle too
+  }, [active.text, showDemo]);
 
   const live = status !== "idle";
   const statusText =
@@ -1042,7 +1178,150 @@ export default function Hero() {
             : "is-live";
 
   return (
-    <header className={`hero ${stateClass}`} ref={stageRef}>
+    <header
+      className={`hero ${stateClass}${showDemo ? " demo-open" : ""}`}
+      ref={stageRef}
+    >
+      {/* ✕ + training bar travel together: stacked, they pin to the top of the
+          viewport as one sticky unit, so the controls AND the way out stay
+          reachable however far down the pipeline the reader has scrolled. On
+          desktop the wrapper is `display: contents` — it leaves no box behind,
+          and the bar keeps floating at the bottom of the ring exactly as before. */}
+      <div className="vla-topbar">
+        {/* mobile only: leaves the stacked demo, pausing any run behind it */}
+        <button
+          className="vla-close"
+          onClick={closeDemo}
+          type="button"
+          aria-label="Close the VLA demo"
+        >
+          ✕
+        </button>
+
+        {/* training control bar */}
+        <div className="vla-bar">
+          <div className="vla-status">
+            <span
+              className={`vla-dot${status === "training" ? " is-on" : ""}${
+                status === "converged" ? " is-done" : ""
+              }`}
+            />
+            <div className="vla-status-col">
+              <span className="vla-status-text">{statusText}</span>
+              {live && hud.samples > 0 && (
+                <>
+                  <span className="vla-status-sub">
+                    {hud.samples.toLocaleString()} examples
+                  </span>
+                  <span className="vla-status-sub">
+                    {hud.batches.toLocaleString()} batches
+                  </span>
+                </>
+              )}
+            </div>
+          </div>
+          <div className="vla-loss">
+            <div className="vla-loss-head">
+              <div className="vla-loss-label">Huber (smooth L1) Loss</div>
+              {/* straight into the write-up: what this pipeline is and how it
+                  was built. Lives in the panel on both layouts. */}
+              <Link className="vla-project-link" href="/projects/mini-vla">
+                mini-vla ↗
+              </Link>
+            </div>
+            <canvas className="vla-loss-canvas" ref={lossRef} />
+          </div>
+          <div className="vla-loss-val">{hud.lossText}</div>
+          {status === "idle" || status === "loading" ? (
+            <>
+              {/* ⚙ run config — what to train (palette / density / task set),
+                  pickable only before training starts */}
+              <div className="vla-cfg">
+                <button
+                  className={`vla-btn vla-btn-ghost vla-cfg-btn${cfgOpen ? " is-open" : ""}`}
+                  onClick={() => setCfgOpen((o) => !o)}
+                  type="button"
+                  disabled={status === "loading"}
+                  aria-expanded={cfgOpen}
+                  title="Configure what to train"
+                >
+                  ⚙
+                </button>
+                {cfgOpen && status === "idle" && (
+                  <div className="vla-cfg-pop">
+                    <div className="vla-cfg-row">
+                      <span className="vla-cfg-k">colors</span>
+                      <div className="vla-cfg-opts">
+                        {([2, 4, 8] as const).map((n) => (
+                          <button
+                            key={n}
+                            type="button"
+                            className={`vla-cfg-opt${runCfg.numColors === n ? " is-sel" : ""}`}
+                            onClick={() => setNumColors(n)}
+                          >
+                            {n}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="vla-cfg-row">
+                      <span className="vla-cfg-k">blocks</span>
+                      <div className="vla-cfg-opts">
+                        {([2, 3, 4] as const).map((n) => (
+                          <button
+                            key={n}
+                            type="button"
+                            className={`vla-cfg-opt${runCfg.maxBlocks === n ? " is-sel" : ""}`}
+                            disabled={n > runCfg.numColors}
+                            title={
+                              n > runCfg.numColors
+                                ? "every block is a unique color — capped by the palette"
+                                : undefined
+                            }
+                            onClick={() => setMaxBlocks(n)}
+                          >
+                            ≤{n}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="vla-cfg-eta">
+                      est. training ~{estimateTrainingSeconds(runCfg)}s
+                      <span className="vla-cfg-eta-note"> · on a laptop GPU</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+              <button
+                className="vla-btn"
+                onClick={onPrimary}
+                type="button"
+                disabled={status === "loading"}
+              >
+                Start Training
+              </button>
+            </>
+          ) : status === "converged" ? (
+            <button className="vla-btn vla-btn-ghost" onClick={onReset} type="button">
+              Reset
+            </button>
+          ) : (
+            <>
+              <button className="vla-btn" onClick={onPrimary} type="button">
+                {status === "training" ? "Pause" : "Resume"}
+              </button>
+              <button
+                className="vla-btn vla-btn-ghost"
+                onClick={onReset}
+                type="button"
+              >
+                Reset
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+
       {/* No drawn connectors — the pipeline is stitched together purely by
           motion: a payload token detaches from each source card and glides
           across the gap into the next (offset-path trajectories set in
@@ -1183,7 +1462,7 @@ export default function Hero() {
               status === "paused" ||
               status === "converged") && (
               <div className="vla-seen">
-                trained on {rolloutSamples.toLocaleString()} demonstrations
+                trained on {rolloutSamples.toLocaleString()} demos
               </div>
             )}
         </div>
@@ -1198,122 +1477,6 @@ export default function Hero() {
         />
       </div>
 
-      {/* training control bar */}
-      <div className="vla-bar">
-        <div className="vla-status">
-          <span
-            className={`vla-dot${status === "training" ? " is-on" : ""}${
-              status === "converged" ? " is-done" : ""
-            }`}
-          />
-          <div className="vla-status-col">
-            <span className="vla-status-text">{statusText}</span>
-            {live && hud.samples > 0 && (
-              <>
-                <span className="vla-status-sub">
-                  {hud.samples.toLocaleString()} examples
-                </span>
-                <span className="vla-status-sub">
-                  {hud.batches.toLocaleString()} batches
-                </span>
-              </>
-            )}
-          </div>
-        </div>
-        <div className="vla-loss">
-          <div className="vla-loss-label">Huber (smooth L1) Loss</div>
-          <canvas className="vla-loss-canvas" ref={lossRef} />
-        </div>
-        <div className="vla-loss-val">{hud.lossText}</div>
-        {status === "idle" || status === "loading" ? (
-          <>
-            {/* ⚙ run config — what to train (palette / density / task set),
-                pickable only before training starts */}
-            <div className="vla-cfg">
-              <button
-                className={`vla-btn vla-btn-ghost vla-cfg-btn${cfgOpen ? " is-open" : ""}`}
-                onClick={() => setCfgOpen((o) => !o)}
-                type="button"
-                disabled={status === "loading"}
-                aria-expanded={cfgOpen}
-                title="Configure what to train"
-              >
-                ⚙
-              </button>
-              {cfgOpen && status === "idle" && (
-                <div className="vla-cfg-pop">
-                  <div className="vla-cfg-row">
-                    <span className="vla-cfg-k">colors</span>
-                    <div className="vla-cfg-opts">
-                      {([2, 4, 8] as const).map((n) => (
-                        <button
-                          key={n}
-                          type="button"
-                          className={`vla-cfg-opt${runCfg.numColors === n ? " is-sel" : ""}`}
-                          onClick={() => setNumColors(n)}
-                        >
-                          {n}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="vla-cfg-row">
-                    <span className="vla-cfg-k">blocks</span>
-                    <div className="vla-cfg-opts">
-                      {([2, 3, 4] as const).map((n) => (
-                        <button
-                          key={n}
-                          type="button"
-                          className={`vla-cfg-opt${runCfg.maxBlocks === n ? " is-sel" : ""}`}
-                          disabled={n > runCfg.numColors}
-                          title={
-                            n > runCfg.numColors
-                              ? "every block is a unique color — capped by the palette"
-                              : undefined
-                          }
-                          onClick={() => setMaxBlocks(n)}
-                        >
-                          ≤{n}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="vla-cfg-eta">
-                    est. training ~{estimateTrainingSeconds(runCfg)}s
-                    <span className="vla-cfg-eta-note"> · on a laptop GPU</span>
-                  </div>
-                </div>
-              )}
-            </div>
-            <button
-              className="vla-btn"
-              onClick={onPrimary}
-              type="button"
-              disabled={status === "loading"}
-            >
-              Start Training
-            </button>
-          </>
-        ) : status === "converged" ? (
-          <button className="vla-btn vla-btn-ghost" onClick={onReset} type="button">
-            Reset
-          </button>
-        ) : (
-          <>
-            <button className="vla-btn" onClick={onPrimary} type="button">
-              {status === "training" ? "Pause" : "Resume"}
-            </button>
-            <button
-              className="vla-btn vla-btn-ghost"
-              onClick={onReset}
-              type="button"
-            >
-              Reset
-            </button>
-          </>
-        )}
-      </div>
-
       <div className="hero-content">
         <h1>{profile.name}</h1>
         <div className="hero-tag">{profile.field}</div>
@@ -1324,6 +1487,13 @@ export default function Hero() {
           <a className="btn-outline" href="/resume.pdf" download={resumeDownloadName()}>
             Download Resume
           </a>
+          {/* the pipeline's way in on phones, where it cannot ring the name.
+              Always rendered (SSR/hydration parity) — CSS hides it on desktop,
+              where the ring is already on screen, and drops it onto its own row
+              below the other two so neither of them has to wrap. */}
+          <button className="btn-outline hero-demo-btn" onClick={openDemo} type="button">
+            mini-vla Demo
+          </button>
         </div>
       </div>
     </header>
