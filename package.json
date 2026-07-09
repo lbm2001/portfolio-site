@@ -19,7 +19,7 @@
     "@tensorflow/tfjs": "^4.22.0",
     "katex": "^0.17.0",
     "marked": "^18.0.5",
-    "mini-vla": "github:lbm2001/mini-vla#v0.1.0",
+    "mini-vla": "github:lbm2001/mini-vla#v0.2.1",
     "next": "^16.2.9",
     "react": "19.0.0",
     "react-dom": "19.0.0"

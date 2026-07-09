@@ -22,6 +22,7 @@ import {
   DEFAULT_LAYOUT,
   DEFAULT_SENTENCE,
   MAX_SEQ_LEN,
+  activePalette,
   randomLayout,
   sampleCommand,
   tokenize,
@@ -33,7 +34,13 @@ import {
   type Sentence,
   type DemoPlan,
 } from "mini-vla/task";
-import { CONFIG, setRunConfig, type RunConfig } from "mini-vla/config";
+import {
+  CONFIG,
+  DESKTOP_RUN_CONFIG,
+  MOBILE_RUN_CONFIG,
+  setRunConfig,
+  type RunConfig,
+} from "mini-vla/config";
 import { IMG_SIZE } from "mini-vla/model";
 import { VLATrainer, type TrainerStatus } from "mini-vla/trainer";
 import {
@@ -99,13 +106,12 @@ const STACKED_MQ = "(max-width: 1099px)";
 // a Worker has no `matchMedia`, so the host resolves the profile and ships it
 // through `trainer.start(onUpdate, cfg)` — which also installs it on this
 // thread's samplers via setRunConfig (the two threads hold separate copies).
-const DESKTOP_RUN_CONFIG: RunConfig = { numColors: 8, maxBlocks: 4 };
-const MOBILE_RUN_CONFIG: RunConfig = { numColors: 4, maxBlocks: 3 };
-
-/** The colors a run of `cfg` can actually put in a scene: mini-vla's samplers
-    draw from the FIRST numColors palette entries, so the mobile profile only
-    ever shows (and only ever learns) red / black / blue / yellow. */
-const activePalette = (cfg: RunConfig) => COLORS.slice(0, cfg.numColors);
+//
+// The two profiles and the "which colors does this profile train on" rule are
+// the package's to define (DESKTOP_RUN_CONFIG / MOBILE_RUN_CONFIG /
+// activePalette); the host only chooses between them. Re-deriving the palette
+// here as COLORS.slice(0, numColors) was a second copy of a rule that lives in
+// examples.ts, and it would silently drift the moment the package changed it.
 
 /** Resize a canvas to its CSS box at devicePixelRatio; returns a cleared ctx. */
 function fitCanvas(c: HTMLCanvasElement, fallbackW = 190, fallbackH = 186) {

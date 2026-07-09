@@ -291,26 +291,32 @@ a {
   offset-distance: 0%;
   opacity: 0;
 }
-/* staggered so the flow reads as travelling down the pipeline: source →
-   encoder (a), encoder → action head (b), action head → rollout (c) */
-.vla-flow-a {
+/* One payload works its way down the pipeline hop by hop: source → encoder (a),
+   encoder → action head (b), action head → rollout (c). Each delay is exactly
+   one hop duration, so a hop only launches as the upstream token lands — the
+   flow reads as a single token being handed forward, not three tokens set
+   loose at once. Keep the delays as multiples of the duration if either is
+   retuned. The animations are also scoped to the running pipeline rather than
+   left looping from page load: otherwise the flow layer fades in over cycles
+   already in progress and the chain starts mid-pipeline. */
+.is-live:not(.is-loading) .vla-flow-a {
   animation: vla-glide 2.8s linear infinite;
 }
-.vla-flow-b {
+.is-live:not(.is-loading) .vla-flow-b {
   animation: vla-glide 2.8s linear infinite;
-  animation-delay: 0.9s;
+  animation-delay: 2.8s;
 }
-.vla-flow-c {
+.is-live:not(.is-loading) .vla-flow-c {
   animation: vla-glide 2.8s linear infinite;
-  animation-delay: 1.8s;
+  animation-delay: 5.6s;
 }
 .is-paused .vla-payload {
   animation-play-state: paused;
 }
 /* Converged: only the Action Head → Rollout hop (flow c) keeps carrying a
    payload; the upstream hops into/between the now-dormant encoders go quiet. */
-.is-converged .vla-flow-a,
-.is-converged .vla-flow-b {
+.is-live.is-converged .vla-flow-a,
+.is-live.is-converged .vla-flow-b {
   animation: none;
   opacity: 0;
 }
@@ -1038,7 +1044,7 @@ a {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .vla-payload,
+  .is-live:not(.is-loading) .vla-payload,
   .is-live:not(.is-loading) .vla-vision .vla-label,
   .is-live:not(.is-loading) .vla-lang .vla-label,
   .is-live:not(.is-loading) .vla-action .vla-label,

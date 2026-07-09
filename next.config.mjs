@@ -21,6 +21,11 @@ export default (phase) => {
   // disagrees with it silently breaks module resolution.
   if (phase === PHASE_DEVELOPMENT_SERVER) {
     nextConfig.turbopack = { root: path.resolve(import.meta.dirname, "..") };
+    // Testing the hero on a real phone means loading `next dev` over the LAN IP
+    // rather than localhost. Next 16 refuses to serve /_next dev resources to a
+    // cross-origin host by default, so the page arrives as HTML and never
+    // hydrates: every button is dead and no worker is ever constructed.
+    nextConfig.allowedDevOrigins = ["192.168.178.103"];
   }
 
   return nextConfig;
