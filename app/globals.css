@@ -311,17 +311,19 @@ a {
   opacity: 0;
 }
 /* travel the gap once, fading in as it detaches and out as it arrives so there
-   is no hard pop at either card (a soft handoff, not an explosion) */
+   is no hard pop at either card (a soft handoff, not an explosion). Peaks well
+   short of opaque: the tokens are connective tissue between the cards, and at
+   full strength they pull the eye off the cards themselves. */
 @keyframes vla-glide {
   0% {
     offset-distance: 0%;
     opacity: 0;
   }
   12% {
-    opacity: 1;
+    opacity: 0.55;
   }
   88% {
-    opacity: 1;
+    opacity: 0.55;
   }
   100% {
     offset-distance: 100%;
@@ -906,6 +908,12 @@ a {
   border: 1px solid var(--border);
   border-radius: 3px;
   padding: 12px 14px;
+  transition: width 0.35s ease;
+}
+/* no curve to plot: the bar shrinks to what is left — a status word, the link
+   and one button — instead of framing a stretch of empty paper. */
+.vla-bar.is-compact {
+  width: min(420px, 86vw);
 }
 .vla-status {
   display: flex;
@@ -918,8 +926,7 @@ a {
   flex-direction: column;
   gap: 4px;
 }
-/* idle: the task this run would train (the ⚙ menu used to say it).
-   live: background progress — examples consumed by the training loop. */
+/* background progress — examples consumed by the training loop. Live only. */
 .vla-status-sub {
   font: 500 9px/1 var(--font-mono);
   color: var(--muted);
@@ -973,8 +980,19 @@ a {
   color: var(--muted);
   white-space: nowrap;
 }
-.vla-project-link {
+/* the middle slot when there is no curve to caption: the link alone, centred
+   between the status and the buttons. Same width the curve would have taken, so
+   the bar's other columns do not shift when training starts. */
+.vla-link-slot {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  justify-content: center;
+}
+.vla-loss-head .vla-project-link {
   margin-left: auto; /* right-aligned, and stays there once the label is hidden */
+}
+.vla-project-link {
   font: 500 10px/1 var(--font-mono);
   color: var(--muted);
   text-decoration: none;

@@ -33,12 +33,7 @@ import {
   type Sentence,
   type DemoPlan,
 } from "mini-vla/task";
-import {
-  CONFIG,
-  estimateTrainingSeconds,
-  setRunConfig,
-  type RunConfig,
-} from "mini-vla/config";
+import { CONFIG, setRunConfig, type RunConfig } from "mini-vla/config";
 import { IMG_SIZE } from "mini-vla/model";
 import { VLATrainer, type TrainerStatus } from "mini-vla/trainer";
 import {
@@ -1229,6 +1224,10 @@ export default function Hero() {
   }, [active.text, showDemo]);
 
   const live = status !== "idle";
+  // The curve is only meaningful while batches are actually flowing, so it is
+  // absent before the run (idle / language warm-up) and again once the run has
+  // converged and the bar's job is to get out of the way of the command box.
+  const showLoss = status === "training" || status === "paused";
   const statusText =
     status === "idle"
       ? "Idle"
@@ -1272,29 +1271,17 @@ export default function Hero() {
         </button>
 
         {/* training control bar */}
-        <div className="vla-bar">
+        <div className={`vla-bar${showLoss ? "" : " is-compact"}`}>
           <div className="vla-status">
+            {/* the pulse means "work is happening": the language warm-up is
+                already loading embeddings, so it beats there too */}
             <span
-              className={`vla-dot${status === "training" ? " is-on" : ""}${
-                status === "converged" ? " is-done" : ""
-              }`}
+              className={`vla-dot${
+                status === "training" || status === "loading" ? " is-on" : ""
+              }${status === "converged" ? " is-done" : ""}`}
             />
             <div className="vla-status-col">
               <span className="vla-status-text">{statusText}</span>
-              {/* what Start would train. The ⚙ menu used to be the only place
-                  the viewer could learn that the job is "find the named block
-                  among up to four, out of eight colors" — which is the whole
-                  reason the loss curve takes the better part of a minute. */}
-              {!live && (
-                <>
-                  <span className="vla-status-sub">
-                    {runCfg.numColors} colors · ≤{runCfg.maxBlocks} blocks
-                  </span>
-                  <span className="vla-status-sub">
-                    est. ~{estimateTrainingSeconds(runCfg)}s on a laptop GPU
-                  </span>
-                </>
-              )}
               {live && hud.samples > 0 && (
                 <>
                   <span className="vla-status-sub">
@@ -1307,18 +1294,30 @@ export default function Hero() {
               )}
             </div>
           </div>
-          <div className="vla-loss">
-            <div className="vla-loss-head">
-              <div className="vla-loss-label">Huber (smooth L1) Loss</div>
-              {/* straight into the write-up: what this pipeline is and how it
-                  was built. Lives in the panel on both layouts. */}
+          {/* straight into the write-up: what this pipeline is and how it was
+              built. It rides the middle slot of the bar whether or not the loss
+              curve is there to host it — centred in the gap while the bar is
+              waiting, tucked into the curve's caption row while it plots. */}
+          {showLoss ? (
+            <>
+              <div className="vla-loss">
+                <div className="vla-loss-head">
+                  <div className="vla-loss-label">Huber Loss</div>
+                  <Link className="vla-project-link" href="/projects/mini-vla">
+                    mini-vla ↗
+                  </Link>
+                </div>
+                <canvas className="vla-loss-canvas" ref={lossRef} />
+              </div>
+              <div className="vla-loss-val">{hud.lossText}</div>
+            </>
+          ) : (
+            <div className="vla-link-slot">
               <Link className="vla-project-link" href="/projects/mini-vla">
                 mini-vla ↗
               </Link>
             </div>
-            <canvas className="vla-loss-canvas" ref={lossRef} />
-          </div>
-          <div className="vla-loss-val">{hud.lossText}</div>
+          )}
           {status === "idle" || status === "loading" ? (
             <button
               className="vla-btn"
