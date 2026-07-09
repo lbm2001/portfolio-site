@@ -2,13 +2,13 @@
 
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { profile, resumeDownloadName } from "@/lib/content";
-import { REST, clamp } from "@/lib/vla/geometry";
+import { REST, clamp } from "mini-vla/geometry";
 import {
   paintScene,
   paintSilhouette,
   sceneMap,
   type ScenePalette,
-} from "@/lib/vla/scene";
+} from "mini-vla/scene";
 import {
   COLORS,
   DEFAULT_LAYOUT,
@@ -17,25 +17,28 @@ import {
   randomLayout,
   sampleCommand,
   tokenize,
+  DEMO_PERIOD_MS,
+  demoPose,
+  makeDemoPlan,
   type BlockPos,
   type Layout,
   type Sentence,
-} from "@/lib/vla/examples";
+  type DemoPlan,
+} from "mini-vla/task";
 import {
+  CONFIG,
   DEFAULT_RUN_CONFIG,
   estimateTrainingSeconds,
   setRunConfig,
   type RunConfig,
-} from "@/lib/vla/run-config";
-import { DEMO_PERIOD_MS, demoPose, makeDemoPlan, type DemoPlan } from "@/lib/vla/demo";
-import { IMG_SIZE } from "@/lib/vla/model";
-import { VLATrainer, type TrainerStatus } from "@/lib/vla/trainer";
+} from "mini-vla/config";
+import { IMG_SIZE } from "mini-vla/model";
+import { VLATrainer, type TrainerStatus } from "mini-vla/trainer";
 import {
   RolloutEngine,
   type RolloutFrame,
   type RolloutPhase,
-} from "@/lib/vla/rollout";
-import { CONFIG } from "@/lib/vla/config";
+} from "mini-vla/rollout";
 
 // Live Vision-Language-Action hero: four pipeline boxes ringed around the
 // name (Demonstration left w/ floating prompt above, Vision Encoder top,
