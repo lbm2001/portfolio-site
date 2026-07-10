@@ -8,7 +8,7 @@ import { collectPageErrors } from "./helpers";
 // build renders from — a slug in the JSON without a working page is exactly
 // the kind of regression this sweep exists to catch.
 
-const root = join(__dirname, "../..");
+const root = join(import.meta.dirname, "../..");
 const projects: { slug: string }[] = JSON.parse(
   readFileSync(join(root, "lib/projects-data.json"), "utf8"),
 );

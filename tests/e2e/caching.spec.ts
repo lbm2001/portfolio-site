@@ -17,7 +17,7 @@ import { expect, test } from "@playwright/test";
 // Widening that rule to a catch-all would kill repeat-visit performance;
 // dropping it brings the outage back. Neither shows up in any other test.
 
-const root = join(__dirname, "../..");
+const root = join(import.meta.dirname, "../..");
 const projects: { slug: string }[] = JSON.parse(
   readFileSync(join(root, "lib/projects-data.json"), "utf8"),
 );
