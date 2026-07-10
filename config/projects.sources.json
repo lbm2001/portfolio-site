@@ -4,6 +4,7 @@
   "projects": [
     { "repo": "lbm2001/algo-lens" },
     { "repo": "lbm2001/mini-vla" },
+    { "repo": "lbm2001/portfolio-site" },
     { "repo": "lbm2001/au-mdt", "slug": "ev-charging-optimal-vs-heuristics" },
     { "slug": "cavitation-experiment-database", "contentDir": "cavitation-experiment-database" },
     { "repo": "lbm2001/mujopy" },
