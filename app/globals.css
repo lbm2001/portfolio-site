@@ -1838,7 +1838,7 @@ a {
 .resume-entry-dates {
   flex-shrink: 0;
   font: 500 12px var(--font-mono);
-  color: var(--muted);
+  color: var(--red);
 }
 .resume-entry-sub {
   margin-top: 2px;
