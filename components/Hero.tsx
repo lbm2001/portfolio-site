@@ -290,6 +290,11 @@ export default function Hero() {
     if (!trainer || trainer.status !== "training") return;
     trainer.pause();
     pauseStartRef.current = performance.now();
+    flowRef.current
+      ?.querySelectorAll<HTMLElement>(".vla-payload")
+      .forEach((el) => {
+        el.style.animationPlayState = "paused";
+      });
     statusRef.current = "paused";
     setStatus("paused");
   }, []);
@@ -301,6 +306,11 @@ export default function Hero() {
       pausedAccumRef.current += performance.now() - pauseStartRef.current;
       pauseStartRef.current = null;
     }
+    flowRef.current
+      ?.querySelectorAll<HTMLElement>(".vla-payload")
+      .forEach((el) => {
+        el.style.animationPlayState = "";
+      });
     trainer.resume();
     statusRef.current = "training";
     setStatus("training");
@@ -401,7 +411,7 @@ export default function Hero() {
           };
       flow.querySelectorAll<HTMLElement>("[data-flow]").forEach((el) => {
         const d = paths[el.dataset.flow ?? ""];
-        if (d) el.style.offsetPath = d;
+        if (d && el.style.offsetPath !== d) el.style.offsetPath = d;
       });
     };
 
