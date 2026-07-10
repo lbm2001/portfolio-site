@@ -1156,6 +1156,13 @@ a {
     transform: none;
     animation: none;
   }
+  /* The reset above kills every .vla-node's animation to neutralize the
+     desktop ring-position drift keyframes, but vla-lang-warm only touches
+     border-color/box-shadow — it's collateral damage, not a ring transform.
+     Outrank the reset (3 classes) with 4 to bring the warmup pulse back. */
+  .hero.demo-open.is-loading .vla-lang {
+    animation: vla-lang-warm 1.5s ease-in-out infinite;
+  }
   .hero.demo-open .vla-input,
   .hero.demo-open .vla-action,
   .hero.demo-open .vla-output {
@@ -1310,7 +1317,8 @@ a {
 @media (max-width: 1099px) and (prefers-reduced-motion: reduce) {
   .hero.demo-open.is-live:not(.is-loading) .vla-vision .vla-label,
   .hero.demo-open.is-live:not(.is-loading) .vla-lang .vla-label,
-  .hero.demo-open.is-live:not(.is-loading) .vla-action .vla-label {
+  .hero.demo-open.is-live:not(.is-loading) .vla-action .vla-label,
+  .hero.demo-open.is-loading .vla-lang {
     animation: none;
   }
 }
