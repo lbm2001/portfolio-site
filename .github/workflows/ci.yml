@@ -1,0 +1,83 @@
+# Two lanes on every push/PR:
+#   check — typecheck, lint, unit tests, `next build` (fast static signal)
+#   e2e   — OpenNext worker build + Playwright against `wrangler dev` (workerd),
+#           i.e. the same runtime Cloudflare deploys. Passing e2e is the
+#           "this branch deploys cleanly and the site actually runs" gate.
+#
+# Both lanes deliberately run `next build` directly rather than `npm run build`.
+# The `prebuild` hook fetches the résumé from a private repo and REQUIRES a
+# GITHUB_TOKEN (see scripts/build-resume.sh), which a fork's PR cannot have.
+# The parsed data those scripts produce (lib/resume-data.json,
+# lib/projects-data.json, lib/posts-data.json) is committed, so the app builds
+# from last-known content with no secrets — which is exactly what we want to
+# verify here. The real content fetch is exercised by the deploy.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      # public/vla/<version>/ is gitignored (copied from node_modules/mini-vla),
+      # and tests/unit/vla-assets.test.ts asserts Hero's asset path points at a
+      # directory that really exists — so stage it before the unit tests run.
+      - name: Stage mini-vla assets
+        run: node scripts/copy-vla-assets.mjs
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        run: npx next build
+
+  e2e:
+    runs-on: ubuntu-latest
+    env:
+      WRANGLER_SEND_METRICS: "false"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build worker (next build + OpenNext bundle)
+        run: npm run e2e:build
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      # Route sweep + VLA hero alive-gate on desktop and mobile viewports.
+      # The slow train-to-convergence specs are opt-in (npm run e2e:full)
+      # and intentionally not part of CI.
+      - name: E2E (Playwright vs wrangler dev)
+        run: npm run e2e
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7

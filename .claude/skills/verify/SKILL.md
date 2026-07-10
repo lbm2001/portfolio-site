@@ -5,9 +5,33 @@ description: How to build, launch and drive this portfolio site (esp. the live V
 
 # Verifying this repo
 
+## Test harness (prefer this over ad-hoc scripts)
+- `npm test` — Vitest units: lib/ parsers (post-md, project-md, resume,
+  richtext) + committed lib/*-data.json invariants.
+- `npm run e2e:build && npm run e2e` — Playwright against the REAL worker
+  (`opennextjs-cloudflare build` → `wrangler dev`/workerd on :8787): route
+  sweep from the committed JSONs, /vla asset reachability, cache-header
+  regression guard (caching.spec.ts — the stale-chunk outage), hero alive-gate
+  (training starts + batches advance) on desktop (1440×900) and mobile
+  (390×844) viewports. This is the "deploys cleanly on Cloudflare" gate; CI
+  runs it on every PR (.github/workflows/ci.yml, e2e job).
+- `npm run e2e:full` — opt-in slow specs (VLA_FULL=1): train to "Ready" and
+  drive the try-it command box. ~6 min per viewport (headless SwiftShader does
+  ~2 batches/s; mini-vla converges ~370-560 batches, `maxBatches: 800` is the
+  hard fallback). Runs serially (workers: 1). **Never drive a second browser
+  while it runs** — sharing SwiftShader cuts the batch rate ~5x and freezes the
+  counter for minutes; waitForConverged() will fail it as a 180s stall.
+- `npm run smoke:live` — same suite against https://lukasmueller.dev; run
+  after every `npm run deploy`.
+- Selectors/waits live in tests/e2e/helpers.ts — reuse them in scratch
+  scripts instead of re-deriving.
+
 ## Build / typecheck
 - `npx tsc --noEmit` — strict, catches most integration breaks.
 - `npm run build` — Next.js 16 (Turbopack). `prebuild` builds the resume PDF.
+- `opennextjs-cloudflare build` now uses a buildCommand override in
+  open-next.config.ts (copy-vla-assets + `npx next build`, NO résumé fetch) —
+  deploy/preview scripts fetch the résumé explicitly beforehand.
 
 ## Launch
 - `npm run dev` — but the user often already has `next dev` running on

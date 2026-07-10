@@ -42,7 +42,12 @@ import {
   type RunConfig,
 } from "mini-vla/config";
 import { IMG_SIZE } from "mini-vla/model";
-import { VLATrainer, type TrainerStatus } from "mini-vla/trainer";
+import {
+  VLATrainer,
+  type TrainerError,
+  type TrainerStatus,
+} from "mini-vla/trainer";
+import { VLA_ASSET_BASE } from "@/lib/vla-assets";
 import {
   RolloutEngine,
   type RolloutFrame,
@@ -265,6 +270,10 @@ export default function Hero() {
   // pause WE initiated may be auto-resumed — a user's manual Pause is sacred.
   const autoPausedRef = useRef(false);
   const heroOnScreenRef = useRef(true);
+  // Why the trainer is in "error" (see onUpdate). Decides the recovery the bar
+  // offers: "worker" means a dead chunk URL that only a reload can escape,
+  // everything else can be retried in place.
+  const [errorReason, setErrorReason] = useState<TrainerError | null>(null);
 
   const setStatusBoth = (s: TrainerStatus) => {
     statusRef.current = s;
@@ -903,6 +912,9 @@ export default function Hero() {
       // NOT a handoff — only loading → training re-stamps.
       if (statusRef.current === "loading" && trainer.status === "training")
         trainStartRef.current = performance.now() + 500; // half-second ease-in
+      // Failures arrive as status "error" (mini-vla >= 0.4.0) with a reason
+      // that decides the way out — see the error branch of the bar below.
+      if (trainer.status === "error") setErrorReason(trainer.errorReason);
       setStatusBoth(trainer.status);
       if (trainer.status === "converged") {
         // auto-episodes end; the rollout waits for the user's command
@@ -926,7 +938,9 @@ export default function Hero() {
   };
 
   const onPrimary = () => {
-    const trainer = (trainerRef.current ??= new VLATrainer());
+    const trainer = (trainerRef.current ??= new VLATrainer({
+      assetBase: VLA_ASSET_BASE,
+    }));
     // any press of the bar is a deliberate choice: it ends any auto-pause, so
     // becoming visible again never overrides what the viewer just asked for
     autoPausedRef.current = false;
@@ -934,7 +948,10 @@ export default function Hero() {
       pauseTraining();
     } else if (trainer.status === "paused") {
       resumeTraining();
-    } else if (trainer.status === "idle") {
+    } else if (trainer.status === "idle" || trainer.status === "error") {
+      // "error" restarts in place: start() clears errorReason and refetches
+      // (loadEmbeddings un-caches a rejected promise). Only "worker" can't be
+      // retried this way, and that arm offers Reload instead of this button.
       engineRef.current!.reset();
       rolloutCycleRef.current = -1;
       visGazeRef.current = null;
@@ -958,6 +975,7 @@ export default function Hero() {
       // stay pristine
       demoLayoutRef.current = DEFAULT_LAYOUT.map((b) => ({ ...b }));
       rolloutLayoutRef.current = DEFAULT_LAYOUT.map((b) => ({ ...b }));
+      setErrorReason(null); // mirrors start()'s own clear; a retry shows no stale reason
       void trainer.start(onUpdate, cfg);
     }
   };
@@ -970,6 +988,7 @@ export default function Hero() {
     cfgLockedRef.current = false;
     syncRunCfg();
     setStatusBoth("idle");
+    setErrorReason(null);
     engineRef.current!.reset();
     rolloutCycleRef.current = -1;
     visGazeRef.current = null;
@@ -1229,23 +1248,26 @@ export default function Hero() {
     // without ever firing a resize event, so re-measure on the toggle too
   }, [active.text, showDemo]);
 
-  const live = status !== "idle";
+  // "error" is a dead run, not a live one: it shows the idle chrome plus a way out.
+  const live = status !== "idle" && status !== "error";
   // The curve is only meaningful while batches are actually flowing, so it is
   // absent before the run (idle / language warm-up) and again once the run has
   // converged and the bar's job is to get out of the way of the command box.
   const showLoss = status === "training" || status === "paused";
   const statusText =
-    status === "idle"
-      ? "Idle"
-      : status === "loading"
-        ? "Language Warmup"
-        : status === "paused"
-          ? "Paused"
-          : status === "converged"
-            ? "Ready"
-            : "Training";
+    status === "error"
+      ? "Load failed"
+      : status === "idle"
+        ? "Idle"
+        : status === "loading"
+          ? "Language Warmup"
+          : status === "paused"
+            ? "Paused"
+            : status === "converged"
+              ? "Ready"
+              : "Training";
   const stateClass =
-    status === "idle"
+    status === "idle" || status === "error"
       ? "is-idle"
       : status === "loading"
         ? "is-live is-loading"
@@ -1324,7 +1346,25 @@ export default function Hero() {
               </Link>
             </div>
           )}
-          {status === "idle" || status === "loading" ? (
+          {status === "error" ? (
+            // "worker": a content-hashed chunk a redeploy deleted under this
+            // open tab. A fresh `new Worker(...)` resolves the same dead URL,
+            // so only a page load can help. "assets"/"train": start() refetches
+            // (the rejected promise is un-cached) and can genuinely succeed.
+            errorReason === "worker" ? (
+              <button
+                className="vla-btn"
+                onClick={() => window.location.reload()}
+                type="button"
+              >
+                Reload
+              </button>
+            ) : (
+              <button className="vla-btn" onClick={onPrimary} type="button">
+                Try again
+              </button>
+            )
+          ) : status === "idle" || status === "loading" ? (
             <button
               className="vla-btn"
               onClick={onPrimary}

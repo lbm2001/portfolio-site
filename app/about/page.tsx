@@ -44,13 +44,13 @@ export default function AboutPage() {
             computer science at TU Darmstadt.
           </p>
           <p>
-            Since then I've focused on machine learning, both in my studies and
+            Since then I&apos;ve focused on machine learning, both in my studies and
             as a working student, most recently at Compredict, building ML and
             data engineering tools, and before that at BioNTech and Fresenius. I
-            think that "embodied AI" (robots) is the next big step after the current LLM wave.
-            by bringing this kind of learning into the physical world. Therefore, that's the direction I want
-            to keep pushing, currently by exploring Imitation Learning and VLAs. 
-            Away from the screen you'll usually find me in the gym or on my bike.
+            think that &quot;embodied AI&quot; (robots) is the next big step after the current LLM wave.
+            Therefore, that&apos;s the direction I want
+            to keep pushing, currently by exploring Imitation Learning and VLAs.
+            Away from the screen you&apos;ll usually find me in the gym or on my bike.
           </p>
         </div>
 
