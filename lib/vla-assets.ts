@@ -13,9 +13,15 @@
 //
 // Only embeddings-50d.bin and vocab.txt are fetched at runtime; grammar.json is
 // a bundle-time import and assetBase does not apply to it.
-import { version } from "mini-vla/package.json";
+// Node's native ESM loader (which e2e's Playwright/wrangler run under, unlike
+// Next's bundler) requires this attribute on a bare JSON import — without it,
+// tests/e2e/routes.spec.ts's import chain throws "needs an import attribute
+// of type: json" before a single test runs. It also only provides a DEFAULT
+// export (no per-property named exports the way a bundler's JSON loader
+// allows), hence destructuring off `pkg` below rather than a named import.
+import pkg from "mini-vla/package.json" with { type: "json" };
 
-export const VLA_VERSION: string = version;
+export const VLA_VERSION: string = pkg.version;
 
 /** Passed to `new VLATrainer({ assetBase })`. Root-relative, no trailing slash. */
 export const VLA_ASSET_BASE = `/vla/${VLA_VERSION}`;

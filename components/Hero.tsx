@@ -94,6 +94,15 @@ const SCENE_PALETTE: ScenePalette = {
 // throttle for the language + vision-gaze readouts (CONFIG.rollout).
 const LANG_MS = CONFIG.rollout.langMs;
 
+// How long "loading" (Language Warmup) may run before the host gives up on the
+// worker and offers a reload. A fixed product ceiling, not a derived margin: a
+// software-rendered smoke test measured a legitimate 45s run once, so 30s WILL
+// misfire on some genuinely slow-but-working devices — accepted deliberately,
+// since a device that takes that long is deemed a bad experience anyway. If
+// that turns out to bite real visitors, the fix is making "loading" itself
+// faster, not raising this number.
+const LOADING_WATCHDOG_MS = 30_000;
+
 const fmtAngle = (v: number) => `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(2)}`;
 
 // Below this width the ring can't fit around the name: the hero is a plain
@@ -274,6 +283,19 @@ export default function Hero() {
   // offers: "worker" means a dead chunk URL that only a reload can escape,
   // everything else can be retried in place.
   const [errorReason, setErrorReason] = useState<TrainerError | null>(null);
+  // Host-detected condition mini-vla itself has no signal for: the worker went
+  // silent mid-"loading" and never posted training/error. Traced (2026-07) to
+  // Safari losing the worker's WebGL context on arrival — bfcache keeps other
+  // tabs' workers/contexts alive against the browser's per-process WebGL
+  // context cap, so a fresh context can die the instant it's created, and
+  // tf.ready() then hangs against it forever with no error to catch. A same-tab
+  // retry doesn't reliably escape this (the cap is process-wide, not per-tab),
+  // so — like mini-vla's own "worker" error — the only offered way out is a
+  // full page reload. Kept separate from TrainerError (mini-vla's own closed
+  // union): this is host-side detection of a failure mini-vla cannot see from
+  // inside the worker it lost contact with.
+  const [stuck, setStuck] = useState(false);
+  const loadWatchdogRef = useRef<number | null>(null);
 
   const setStatusBoth = (s: TrainerStatus) => {
     statusRef.current = s;
@@ -914,10 +936,30 @@ export default function Hero() {
       cancelAnimationFrame(raf);
       window.removeEventListener("resize", layoutWires);
       trainerRef.current?.destroy(); // reset + terminate the trainer worker
+      if (loadWatchdogRef.current !== null) window.clearTimeout(loadWatchdogRef.current);
     };
   }, []);
 
   // ---- controls ----
+  // Fires when "loading" outlasts LOADING_WATCHDOG_MS with no word from the
+  // worker — see the `stuck` state's comment for the failure this catches. The
+  // worker itself never posts an error here (it isn't dead, just wedged
+  // against a WebGL context that died on arrival), so nothing else would ever
+  // move status off "loading". Tearing the worker down on detection matters as
+  // much as reporting it: destroy() releases the lost context instead of
+  // leaving it pinned for the rest of the tab's life.
+  const onLoadStuck = useCallback(() => {
+    loadWatchdogRef.current = null;
+    if (statusRef.current !== "loading") return; // already moved on; stale fire
+    console.warn(
+      `VLA trainer: no progress out of Language Warmup within ${LOADING_WATCHDOG_MS}ms — releasing the worker`
+    );
+    trainerRef.current?.destroy();
+    trainerRef.current = null; // next Start Training builds a genuinely fresh worker
+    setStatusBoth("idle");
+    setStuck(true);
+  }, []);
+
   const onUpdate = () => {
     const trainer = trainerRef.current!;
     if (trainer.status !== statusRef.current) {
@@ -928,6 +970,19 @@ export default function Hero() {
       // NOT a handoff — only loading → training re-stamps.
       if (statusRef.current === "loading" && trainer.status === "training")
         trainStartRef.current = performance.now() + 500; // half-second ease-in
+      // Arm the stuck-loading watchdog for exactly the "loading" span: entering
+      // it starts the clock, leaving it (to training OR to a real error the
+      // worker DID manage to report) means the run is progressing on its own.
+      if (trainer.status === "loading" && statusRef.current !== "loading") {
+        if (loadWatchdogRef.current !== null)
+          window.clearTimeout(loadWatchdogRef.current);
+        loadWatchdogRef.current = window.setTimeout(onLoadStuck, LOADING_WATCHDOG_MS);
+      } else if (statusRef.current === "loading" && trainer.status !== "loading") {
+        if (loadWatchdogRef.current !== null) {
+          window.clearTimeout(loadWatchdogRef.current);
+          loadWatchdogRef.current = null;
+        }
+      }
       // Failures arrive as status "error" (mini-vla >= 0.4.0) with a reason
       // that decides the way out — see the error branch of the bar below.
       if (trainer.status === "error") setErrorReason(trainer.errorReason);
@@ -992,6 +1047,7 @@ export default function Hero() {
       demoLayoutRef.current = DEFAULT_LAYOUT.map((b) => ({ ...b }));
       rolloutLayoutRef.current = DEFAULT_LAYOUT.map((b) => ({ ...b }));
       setErrorReason(null); // mirrors start()'s own clear; a retry shows no stale reason
+      setStuck(false);
       void trainer.start(onUpdate, cfg);
     }
   };
@@ -1005,6 +1061,11 @@ export default function Hero() {
     syncRunCfg();
     setStatusBoth("idle");
     setErrorReason(null);
+    setStuck(false);
+    if (loadWatchdogRef.current !== null) {
+      window.clearTimeout(loadWatchdogRef.current);
+      loadWatchdogRef.current = null;
+    }
     engineRef.current!.reset();
     rolloutCycleRef.current = -1;
     visGazeRef.current = null;
@@ -1277,8 +1338,9 @@ export default function Hero() {
   // absent before the run (idle / language warm-up) and again once the run has
   // converged and the bar's job is to get out of the way of the command box.
   const showLoss = status === "training" || status === "paused";
-  const statusText =
-    status === "error"
+  const statusText = stuck
+    ? "Stuck — reload to retry"
+    : status === "error"
       ? "Load failed"
       : status === "idle"
         ? "Idle"
@@ -1369,7 +1431,20 @@ export default function Hero() {
               </Link>
             </div>
           )}
-          {status === "error" ? (
+          {stuck ? (
+            // Same reasoning as errorReason "worker" below: the worker's dead
+            // WebGL context is a browser-process-wide resource (other tabs'
+            // suspended pages can be holding it), so a fresh `new Worker(...)`
+            // in THIS tab is not reliably safe from hitting it again — only a
+            // reload (or closing other tabs first) actually clears it.
+            <button
+              className="vla-btn"
+              onClick={() => window.location.reload()}
+              type="button"
+            >
+              Reload
+            </button>
+          ) : status === "error" ? (
             // "worker": a content-hashed chunk a redeploy deleted under this
             // open tab. A fresh `new Worker(...)` resolves the same dead URL,
             // so only a page load can help. "assets"/"train": start() refetches
