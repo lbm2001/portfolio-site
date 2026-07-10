@@ -2,3 +2,13 @@
 # https://opennext.js.org/cloudflare/caching#static-assets-caching
 /_next/static/*
   Cache-Control: public,max-age=31536000,immutable
+
+# mini-vla's embedding assets. Safe to cache forever ONLY because the path
+# carries the package version (scripts/copy-vla-assets.mjs writes
+# public/vla/<version>/, Hero.tsx requests /vla/<version>/): a new release
+# fetches a new URL rather than a stale body from someone's cache. Since v0.4.0
+# the package validates these bytes against constants compiled into its JS, so
+# serving one release's embeddings to another release's code is a hard error
+# rather than a hero that trains on noise.
+/vla/*
+  Cache-Control: public,max-age=31536000,immutable

@@ -13,6 +13,12 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "e2e:build": "opennextjs-cloudflare build",
+    "e2e": "playwright test",
+    "e2e:full": "VLA_FULL=1 playwright test",
+    "smoke:live": "PLAYWRIGHT_BASE_URL=https://lukasmueller.dev playwright test",
     "preview": "./scripts/build-resume.sh && opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "deploy": "./scripts/build-resume.sh && opennextjs-cloudflare build && opennextjs-cloudflare deploy",
     "upload": "./scripts/build-resume.sh && opennextjs-cloudflare build && opennextjs-cloudflare upload",
@@ -23,18 +29,20 @@
     "@tensorflow/tfjs": "^4.22.0",
     "katex": "^0.17.0",
     "marked": "^18.0.5",
-    "mini-vla": "github:lbm2001/mini-vla#v0.3.0",
+    "mini-vla": "github:lbm2001/mini-vla#v0.4.0",
     "next": "^16.2.9",
     "react": "19.0.0",
     "react-dom": "19.0.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@types/node": "22.10.7",
     "@types/react": "19.0.7",
     "@types/react-dom": "19.0.3",
     "eslint": "^9.39.4",
     "eslint-config-next": "^16.2.10",
     "typescript": "5.7.3",
+    "vitest": "^4.1.10",
     "wrangler": "^4.107.0"
   }
 }

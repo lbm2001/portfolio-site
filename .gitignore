@@ -29,6 +29,10 @@ next-env.d.ts
 # OpenNext
 .open-next
 
+# playwright artifacts
+/test-results/
+/playwright-report/
+
 # wrangler files
 .wrangler
 .dev.vars*
@@ -66,3 +70,4 @@ next-env.d.ts
 # Drop-in portfolio/ folders staged for the project repos (copy out, then delete)
 portfolio-staging/
 mockups/
+.concuctor/*
