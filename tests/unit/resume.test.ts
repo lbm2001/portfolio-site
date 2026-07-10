@@ -64,9 +64,12 @@ const texPath = join(__dirname, "../../public/resume.tex");
 describe.runIf(existsSync(texPath))("parseResume (fetched public/resume.tex)", () => {
   // Guards the real content path: if the template drifts away from what the
   // parser understands, the /resume page silently loses content.
-  const r = parseResume(readFileSync(texPath, "utf8"));
-
+  //
+  // Read inside the test, not in the describe body: Vitest executes a suite's
+  // factory during collection even when runIf skips the suite, so a read out
+  // here throws ENOENT in tokenless CI, where the file is never staged.
   it("still understands the live template", () => {
+    const r = parseResume(readFileSync(texPath, "utf8"));
     expect(r.name.length).toBeGreaterThan(0);
     expect(r.contacts.length).toBeGreaterThan(0);
     expect(r.sections.length).toBeGreaterThan(1);
