@@ -310,7 +310,7 @@ a {
   animation: vla-glide 2.8s linear infinite;
   animation-delay: 5.6s;
 }
-.is-paused .vla-payload {
+.is-live.is-paused .vla-payload {
   animation-play-state: paused;
 }
 /* Converged: only the Action Head → Rollout hop (flow c) keeps carrying a
