@@ -1,0 +1,37 @@
+# Typecheck, lint and build on every push/PR.
+#
+# Deliberately runs `next build` directly rather than `npm run build`. The
+# `prebuild` hook fetches the résumé from a private repo and REQUIRES a
+# GITHUB_TOKEN (see scripts/build-resume.sh), which a fork's PR cannot have.
+# The parsed data those scripts produce (lib/resume-data.json,
+# lib/projects-data.json, lib/posts-data.json) is committed, so the app builds
+# from last-known content with no secrets — which is exactly what we want to
+# verify here. The real content fetch is exercised by the deploy.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npx next build

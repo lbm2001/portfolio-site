@@ -10,8 +10,15 @@ import { nav, profile } from "@/lib/content";
 export default function Nav() {
   const navRef = useRef<HTMLElement>(null);
   const [open, setOpen] = useState(false);
+  // Mirrored for the mount-once scroll listener below, which must not be torn
+  // down and re-added every time the menu toggles. Written on commit rather
+  // than during render (writing a ref while rendering is unsafe under
+  // concurrent rendering); the listener only ever fires after a commit, so it
+  // never observes a stale value.
   const openRef = useRef(false);
-  openRef.current = open;
+  useEffect(() => {
+    openRef.current = open;
+  }, [open]);
 
   useEffect(() => {
     let last = 0;

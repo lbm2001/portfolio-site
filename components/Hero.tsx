@@ -265,6 +265,9 @@ export default function Hero() {
   // pause WE initiated may be auto-resumed — a user's manual Pause is sacred.
   const autoPausedRef = useRef(false);
   const heroOnScreenRef = useRef(true);
+  // The trainer never loaded (see onUpdate). Retrying in-page is futile, so the
+  // bar swaps "Start Training" for a reload.
+  const [loadFailed, setLoadFailed] = useState(false);
 
   const setStatusBoth = (s: TrainerStatus) => {
     statusRef.current = s;
@@ -903,6 +906,15 @@ export default function Hero() {
       // NOT a handoff — only loading → training re-stamps.
       if (statusRef.current === "loading" && trainer.status === "training")
         trainStartRef.current = performance.now() + 500; // half-second ease-in
+      // A trainer that cannot load — a stale worker/tfjs chunk URL in a tab
+      // left open across a deploy, or a failed embeddings fetch — reports it
+      // only by dropping back to "idle" without ever reaching "training",
+      // logging to the console and otherwise recovering silently. Left alone
+      // that reads as a dead button. Starting again just rebuilds a worker
+      // against the same dead chunk URL, so the only real way out of the
+      // stale-chunk case is a fresh page load.
+      if (statusRef.current === "loading" && trainer.status === "idle")
+        setLoadFailed(true);
       setStatusBoth(trainer.status);
       if (trainer.status === "converged") {
         // auto-episodes end; the rollout waits for the user's command
@@ -1234,8 +1246,9 @@ export default function Hero() {
   // absent before the run (idle / language warm-up) and again once the run has
   // converged and the bar's job is to get out of the way of the command box.
   const showLoss = status === "training" || status === "paused";
-  const statusText =
-    status === "idle"
+  const statusText = loadFailed
+    ? "Load failed"
+    : status === "idle"
       ? "Idle"
       : status === "loading"
         ? "Language Warmup"
@@ -1324,7 +1337,15 @@ export default function Hero() {
               </Link>
             </div>
           )}
-          {status === "idle" || status === "loading" ? (
+          {loadFailed ? (
+            <button
+              className="vla-btn"
+              onClick={() => window.location.reload()}
+              type="button"
+            >
+              Reload
+            </button>
+          ) : status === "idle" || status === "loading" ? (
             <button
               className="vla-btn"
               onClick={onPrimary}

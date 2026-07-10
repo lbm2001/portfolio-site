@@ -2,13 +2,42 @@ import path from "node:path";
 import { PHASE_DEVELOPMENT_SERVER } from "next/constants.js";
 
 /** @type {(phase: string) => import('next').NextConfig} */
-export default (phase) => {
+const config = (phase) => {
   /** @type {import('next').NextConfig} */
   const nextConfig = {
     reactStrictMode: true,
     // mini-vla ships TS source; Next must transpile it (and bundle its module
     // Web Worker) as if it were first-party code.
     transpilePackages: ["mini-vla"],
+
+    // Next serves prerendered pages with `s-maxage=31536000`, so a returning
+    // visitor can be handed year-old HTML that still names the PREVIOUS
+    // deploy's hashed chunks. Those files no longer exist (each Workers
+    // deploy ships a fresh asset manifest), and the hero only reaches for its
+    // trainer/tfjs chunks lazily, on "Start Training" — so the page looks
+    // fine and the button silently does nothing. Revalidate the HTML on every
+    // request instead; the ETag keeps that a cheap 304.
+    //
+    // Scoped to page routes ON PURPOSE. A catch-all would also match
+    // /_next/static/*, whose content-hashed URLs must keep the immutable,
+    // one-year caching that makes repeat visits fast (see public/_headers).
+    async headers() {
+      const pageRoutes = [
+        "/",
+        "/about",
+        "/resume",
+        "/projects",
+        "/projects/:slug",
+        "/blog",
+        "/blog/:slug",
+      ];
+      return pageRoutes.map((source) => ({
+        source,
+        headers: [
+          { key: "Cache-Control", value: "public, max-age=0, must-revalidate" },
+        ],
+      }));
+    },
   };
 
   // mini-vla is pinned to a `github:` git-ref (a normal node_modules copy inside
@@ -30,5 +59,7 @@ export default (phase) => {
 
   return nextConfig;
 };
+
+export default config;
 
 import('@opennextjs/cloudflare').then(m => m.initOpenNextCloudflareForDev());

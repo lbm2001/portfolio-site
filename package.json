@@ -2,13 +2,17 @@
   "name": "portfolio-site",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22.6.0"
+  },
   "scripts": {
     "predev": "node scripts/copy-vla-assets.mjs && node --experimental-strip-types scripts/gen-projects-data.mjs && node --experimental-strip-types scripts/gen-blog-data.mjs",
     "prebuild": "node scripts/copy-vla-assets.mjs && ./scripts/build-resume.sh",
     "build": "next build",
     "dev": "next dev",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
     "preview": "./scripts/build-resume.sh && opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "deploy": "./scripts/build-resume.sh && opennextjs-cloudflare build && opennextjs-cloudflare deploy",
     "upload": "./scripts/build-resume.sh && opennextjs-cloudflare build && opennextjs-cloudflare upload",
@@ -28,6 +32,8 @@
     "@types/node": "22.10.7",
     "@types/react": "19.0.7",
     "@types/react-dom": "19.0.3",
+    "eslint": "^9.39.4",
+    "eslint-config-next": "^16.2.10",
     "typescript": "5.7.3",
     "wrangler": "^4.107.0"
   }
