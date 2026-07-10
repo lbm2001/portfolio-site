@@ -1,9 +1,8 @@
 name: Claude Code Review
 
 on:
-  # Auto-review when a PR opens or leaves draft — NOT on every push
-  # (`synchronize`), which would re-run and re-bill on each commit. Comment
-  # "@claude" on the PR to trigger a fresh review by hand.
+  # Keep `pull_request` in the trigger list so a check row always appears on
+  # PRs — the `if:` below skips it there. Only an "@claude" comment runs it.
   pull_request:
     types: [opened, ready_for_review]
   issue_comment:
@@ -12,15 +11,15 @@ on:
 jobs:
   review:
     if: >
-      (github.event_name == 'pull_request') ||
-      (github.event_name == 'issue_comment' &&
-       github.event.issue.pull_request &&
-       contains(github.event.comment.body, '@claude'))
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request &&
+      contains(github.event.comment.body, '@claude')
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
       pull-requests: write
-      issues: write
+      issues: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -29,4 +28,7 @@ jobs:
       - uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          model: claude-sonnet-5
+          # Without this, the action defaults to a GitHub-App OIDC token
+          # exchange (needs `id-token: write`) just to post as claude[bot].
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          claude_args: "--model claude-sonnet-5"
