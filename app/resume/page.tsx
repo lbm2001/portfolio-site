@@ -18,6 +18,11 @@ export const dynamic = "force-static";
 
 const resume = resumeData as Resume;
 
+// The .tex (and downloadable PDF) list a lukasmueller.dev website link among the
+// contacts, which is redundant when the résumé is already being viewed on this
+// site — drop it here rather than in the parser/source so the download is unaffected.
+const siteContacts = resume.contacts.filter((c) => !/lukasmueller\.dev/i.test(c.href) || c.href.startsWith("mailto:"));
+
 export default function ResumePage() {
   return (
     <main>
@@ -29,7 +34,7 @@ export default function ResumePage() {
             <h1 className="page-title">{resume.name || profile.name}</h1>
             <div className="resume-contacts">
               {resume.location && <span>{resume.location}</span>}
-              {resume.contacts.map((c) => (
+              {siteContacts.map((c) => (
                 <a key={c.href} href={c.href}>
                   {c.label}
                 </a>
