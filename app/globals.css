@@ -1788,17 +1788,20 @@ a {
   margin-bottom: 44px;
 }
 .resume-contacts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 0;
   margin-top: 14px;
   font: 500 13px var(--font-mono);
   color: var(--body-2);
+  line-height: 2;
 }
-.resume-contacts > * + *::before {
+.resume-contacts > span,
+.resume-contacts > a {
+  white-space: nowrap;
+}
+.resume-contacts > *:not(:last-child)::after {
   content: "·";
   margin: 0 12px;
   color: var(--muted);
+  display: inline-block;
 }
 .resume-contacts a {
   color: var(--red);
