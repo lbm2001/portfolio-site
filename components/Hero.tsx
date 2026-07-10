@@ -792,8 +792,12 @@ export default function Hero() {
             p.carry
           )
           .then((r) => {
-            visGazeInFlightRef.current = false;
             if (r) visGazeRef.current = r.attn;
+          })
+          // clear the guard even if the round-trip rejects — otherwise a single
+          // failed request would freeze the gaze overlay for the rest of the session
+          .finally(() => {
+            visGazeInFlightRef.current = false;
           });
       }
     };
@@ -881,7 +885,9 @@ export default function Hero() {
       const attnP = trainer.attentionWeights(tokens).then((bars) => {
         if (bars) setTokenBars(bars);
       });
-      void Promise.all([decodeP, attnP]).then(() => {
+      // clear the guard in .finally so a rejected round-trip can't wedge it
+      // true and freeze the language readouts for the rest of the session
+      void Promise.all([decodeP, attnP]).finally(() => {
         langInFlightRef.current = false;
       });
     };
@@ -1107,7 +1113,14 @@ export default function Hero() {
     }
 
     const tokens = tokenize(text);
-    const d = await trainer.decodeCommand(tokens); // worker round-trip (~ms)
+    // worker round-trip (~ms); swallow a rejected decode so a transient worker
+    // failure just no-ops the command instead of surfacing an unhandled rejection
+    let d: Awaited<ReturnType<typeof trainer.decodeCommand>>;
+    try {
+      d = await trainer.decodeCommand(tokens);
+    } catch {
+      return;
+    }
     if (!d || statusRef.current !== "converged") return;
     // a color the policy knows, but that this scene doesn't contain: the reach
     // would silently fall back to some other block

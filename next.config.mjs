@@ -54,7 +54,8 @@ const config = (phase) => {
     // rather than localhost. Next 16 refuses to serve /_next dev resources to a
     // cross-origin host by default, so the page arrives as HTML and never
     // hydrates: every button is dead and no worker is ever constructed.
-    nextConfig.allowedDevOrigins = ["192.168.178.103"];
+    // Override the machine-specific default per-shell with NEXT_DEV_ORIGIN.
+    nextConfig.allowedDevOrigins = [process.env.NEXT_DEV_ORIGIN ?? "192.168.178.103"];
   }
 
   return nextConfig;

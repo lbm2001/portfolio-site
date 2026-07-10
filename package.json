@@ -2,6 +2,7 @@
   "name": "portfolio-site",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "engines": {
     "node": ">=22.6.0"
   },
@@ -13,6 +14,7 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
+    "pretest": "node scripts/copy-vla-assets.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "e2e:build": "opennextjs-cloudflare build",

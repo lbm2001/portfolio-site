@@ -8,7 +8,9 @@
   --bg-alt: #fcfcfc;
   --border: rgba(0, 0, 0, 0.1);
 
-  --font-sans: "Helvetica Neue", Archivo, Arial, sans-serif;
+  /* Archivo is loaded and self-hosted by next/font (app/layout.tsx), which
+     exposes it as --font-archivo; falls back to the plain family name if unset. */
+  --font-sans: "Helvetica Neue", var(--font-archivo, Archivo), Arial, sans-serif;
   --font-mono: ui-monospace, Menlo, monospace;
 
   /* height of the sticky .nav — anything else that pins to the top of the

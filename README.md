@@ -63,6 +63,9 @@ blog are best-effort and keep the committed data on any failure.
 | `npx next build`    | Builds from committed data, no token needed. What CI runs.           |
 | `npm run typecheck` | `tsc --noEmit`.                                                      |
 | `npm run lint`      | `eslint .`.                                                          |
+| `npm test`          | Vitest units (parsers + committed-data invariants). Stages the VLA assets first via `pretest`. |
+| `npm run e2e`       | Playwright against the real Workers bundle (run `npm run e2e:build` first). |
+| `npm run e2e:full`  | Adds the slow train-to-convergence hero specs (`VLA_FULL=1`).        |
 | `npm run preview`   | Builds and serves the Workers bundle locally.                        |
 | `npm run deploy`    | Builds and deploys to Cloudflare.                                    |
 
