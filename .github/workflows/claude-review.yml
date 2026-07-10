@@ -1,7 +1,11 @@
 name: Claude Code Review
 
 on:
+  # Auto-review when a PR opens or leaves draft — NOT on every push
+  # (`synchronize`), which would re-run and re-bill on each commit. Comment
+  # "@claude" on the PR to trigger a fresh review by hand.
   pull_request:
+    types: [opened, ready_for_review]
   issue_comment:
     types: [created]
 
