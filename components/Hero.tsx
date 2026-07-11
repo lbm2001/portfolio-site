@@ -325,8 +325,8 @@ export default function Hero() {
   const autoPausedRef = useRef(false);
   const heroOnScreenRef = useRef(true);
   // Why the trainer is in "error" (see onUpdate). Decides the recovery the bar
-  // offers: "worker" means a dead chunk URL that only a reload can escape,
-  // everything else can be retried in place.
+  // offers: "worker" (dead chunk URL) and "context" (lost WebGL context) can
+  // only be escaped by a reload; everything else can be retried in place.
   const [errorReason, setErrorReason] = useState<TrainerError | null>(null);
   // Why the run failed on the host side (null while healthy). See HostFailure:
   // all three are the browser losing the worker's WebGL context, detected here
@@ -1546,14 +1546,28 @@ export default function Hero() {
   // absent before the run (idle / language warm-up) and again once the run has
   // converged and the bar's job is to get out of the way of the command box.
   const showLoss = status === "training" || status === "paused";
+  // Each failure path reads distinctly so a live run is self-reporting: the
+  // exact phrase on screen tells us the mechanism without any telemetry.
+  //   "Graphics context lost" — mini-vla (v0.4.1) itself caught a lost WebGL
+  //     context, mid-run or via its zero-loss guard: direct evidence of GL loss.
+  //   "Stuck — reload to retry" — never left warmup; context likely dead on
+  //     arrival (or tf.ready hung).
+  //   "Training stalled" — host watchdog; batches stopped with no package error
+  //     (thermal/throttle/memory, or a context death that fired no event).
+  //   "Training collapsed" — host watchdog; non-physical losses the package did
+  //     not flag as context (fp16 NaN, or undetected silent-zero readbacks).
+  //   "Load failed" — assets/worker/train: NOT a GPU-context failure.
+  //   (Page silently self-reloads with no label — iOS evicted the whole tab.)
   const statusText = hostFailure
     ? hostFailure === "load-stuck"
       ? "Stuck — reload to retry"
       : hostFailure === "train-stalled"
         ? "Training stalled — reload"
-        : "Training failed — reload"
+        : "Training collapsed — reload"
     : status === "error"
-      ? "Load failed"
+      ? errorReason === "context"
+        ? "Graphics context lost — reload"
+        : "Load failed"
       : status === "idle"
         ? "Idle"
         : status === "loading"
@@ -1659,9 +1673,14 @@ export default function Hero() {
           ) : status === "error" ? (
             // "worker": a content-hashed chunk a redeploy deleted under this
             // open tab. A fresh `new Worker(...)` resolves the same dead URL,
-            // so only a page load can help. "assets"/"train": start() refetches
-            // (the rejected promise is un-cached) and can genuinely succeed.
-            errorReason === "worker" ? (
+            // so only a page load can help. "context": the worker's WebGL
+            // context was lost (mini-vla v0.4.1 detects dead-on-arrival and
+            // mid-run silent-zero readbacks) — a lost context never recovers
+            // without a new backend, and a fresh one is liable to be evicted
+            // again under the same memory pressure, so reload too. "assets"/
+            // "train": start() refetches (the rejected promise is un-cached)
+            // and can genuinely succeed.
+            errorReason === "worker" || errorReason === "context" ? (
               <button
                 className="vla-btn"
                 onClick={() => window.location.reload()}
