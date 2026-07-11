@@ -1709,7 +1709,10 @@ export default function Hero() {
                     onClick={() => setShowReplayInfo((v) => !v)}
                     aria-expanded={showReplayInfo}
                   >
-                    replay <span aria-hidden="true">?</span>
+                    replay
+                    <span className="vla-replay-info-icon" aria-hidden="true">
+                      i
+                    </span>
                   </button>
                   {showReplayInfo && (
                     <span className="vla-replay-info" role="note">
