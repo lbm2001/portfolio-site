@@ -2134,7 +2134,7 @@ export default function Hero() {
               where the ring is already on screen, and drops it onto its own row
               below the other two so neither of them has to wrap. */}
           <button className="btn-outline hero-demo-btn" onClick={openDemo} type="button">
-            mini-vla Demo
+            Try mini-vla
           </button>
         </div>
       </div>
