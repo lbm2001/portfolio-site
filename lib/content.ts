@@ -55,7 +55,7 @@ export const profile = {
   location: "Frankfurt, Germany",
   email: "contact@lukasmueller.dev",
   links: {
-    github: "https://github.com/lbm2001",
+    github: "https://github.com/lukasmueller-dev",
     linkedin: "https://www.linkedin.com/in/lukas-m-695b06195/",
     email: "mailto:contact@lukasmueller.dev",
   },

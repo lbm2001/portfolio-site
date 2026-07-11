@@ -9,7 +9,7 @@ const FIXTURE = String.raw`
   \textbf{\Huge \scshape Lukas M\"uller} \\ \vspace{1pt}
   \small Frankfurt, Germany $|$
   \href{mailto:contact@lukasmueller.dev}{\underline{contact@lukasmueller.dev}} $|$
-  \href{https://github.com/lbm2001}{\underline{github.com/lbm2001}}
+  \href{https://github.com/lukasmueller-dev}{\underline{github.com/lukasmueller-dev}}
 \end{center}
 
 \section{Experience}
@@ -30,7 +30,7 @@ describe("parseResume (fixture)", () => {
     expect(r.location).toBe("Frankfurt, Germany");
     expect(r.contacts).toEqual([
       { label: "contact@lukasmueller.dev", href: "mailto:contact@lukasmueller.dev" },
-      { label: "github.com/lbm2001", href: "https://github.com/lbm2001" },
+      { label: "github.com/lukasmueller-dev", href: "https://github.com/lukasmueller-dev" },
     ]);
   });
 

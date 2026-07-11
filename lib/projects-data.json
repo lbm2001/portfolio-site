@@ -12,7 +12,7 @@
     "links": [
       {
         "label": "Code",
-        "href": "https://github.com/lbm2001/algo-lens"
+        "href": "https://github.com/lukasmueller-dev/algo-lens"
       },
       {
         "label": "Website",
@@ -33,7 +33,7 @@
     "links": [
       {
         "label": "Code",
-        "href": "https://github.com/lbm2001/mini-vla"
+        "href": "https://github.com/lukasmueller-dev/mini-vla"
       }
     ],
     "body": "Writing coming soon."
@@ -52,11 +52,11 @@
     "links": [
       {
         "label": "Code",
-        "href": "https://github.com/lbm2001/au-mdt"
+        "href": "https://github.com/lukasmueller-dev/au-mdt"
       },
       {
         "label": "Paper",
-        "href": "https://github.com/lbm2001/au-mdt/releases/download/paper-latest/lukas-mueller_ev-charging-optimal-vs-heuristic.pdf"
+        "href": "https://github.com/lukasmueller-dev/au-mdt/releases/download/paper-latest/lukas-mueller_ev-charging-optimal-vs-heuristic.pdf"
       },
       {
         "label": "Streamlit App",
@@ -95,7 +95,7 @@
     "links": [
       {
         "label": "Code",
-        "href": "https://github.com/lbm2001/mujopy"
+        "href": "https://github.com/lukasmueller-dev/mujopy"
       },
       {
         "label": "PyPI",
@@ -120,11 +120,11 @@
     "links": [
       {
         "label": "Code",
-        "href": "https://github.com/lbm2001/lascroge"
+        "href": "https://github.com/lukasmueller-dev/lascroge"
       },
       {
         "label": "Paper",
-        "href": "https://github.com/lbm2001/lascroge/releases/download/paper-latest/lukas-mueller_large-scale-robot-generation.pdf"
+        "href": "https://github.com/lukasmueller-dev/lascroge/releases/download/paper-latest/lukas-mueller_large-scale-robot-generation.pdf"
       }
     ],
     "aiAssisted": true,
@@ -147,7 +147,7 @@
     "links": [
       {
         "label": "Code",
-        "href": "https://github.com/lbm2001/easy_eda_visualizations"
+        "href": "https://github.com/lukasmueller-dev/easy_eda_visualizations"
       },
       {
         "label": "PyPI",
@@ -171,7 +171,7 @@
     "links": [
       {
         "label": "Code",
-        "href": "https://github.com/lbm2001/udacity_data_science_airbnb_project"
+        "href": "https://github.com/lukasmueller-dev/udacity_data_science_airbnb_project"
       },
       {
         "label": "Write-up",

@@ -7,7 +7,7 @@
 // serves a fully static, pre-fetched snapshot.
 //
 // Content (README + assets + an optional paper) lives in ONE PRIVATE repo,
-// config.contentRepo (currently lbm2001/portfolio-project-content), one
+// config.contentRepo (currently lukasmueller-dev/portfolio-project-content), one
 // directory per project:
 //   <contentDir>/README.md      frontmatter + Markdown body
 //   <contentDir>/assets/*.png   images the README references relatively
@@ -15,7 +15,7 @@
 // Each project's own repo (config/projects.sources.json's `repo`) supplies
 // only public GitHub metadata (description -> blurb fallback, topics -> tags
 // fallback, html_url -> the "Code" link) and, unless overridden, the derived
-// slug/contentDir (both default to the repo name, e.g. lbm2001/mujopy ->
+// slug/contentDir (both default to the repo name, e.g. lukasmueller-dev/mujopy ->
 // "mujopy"; set `slug`/`contentDir` on a project entry to override).
 //
 // `repo` is OPTIONAL: for a project with no code to show, omit it and set

@@ -7,7 +7,7 @@ The landing page runs a live Vision-Language-Action demo: a TensorFlow.js
 behaviour-cloning policy that trains in the browser, in a Web Worker, against an
 analytical-IK expert, and then takes typed commands. The model, rollout engine and
 canvas renderers live in a separate package,
-[mini-vla](https://github.com/lbm2001/mini-vla); this repo renders the encoder
+[mini-vla](https://github.com/lukasmueller-dev/mini-vla); this repo renders the encoder
 panels around it.
 
 ## Requirements
@@ -41,9 +41,9 @@ import statically:
 
 | Source (private repo)                    | Script                    | Output                   |
 | ---------------------------------------- | ------------------------- | ------------------------ |
-| `lbm2001/application-material` (résumé)  | `gen-resume-source.mjs` → `gen-resume-data.mjs` | `public/resume.{tex,pdf}`, `lib/resume-data.json` |
-| `lbm2001/portfolio-project-content`      | `gen-projects-data.mjs`   | `lib/projects-data.json` |
-| `lbm2001/blog`                           | `gen-blog-data.mjs`       | `lib/posts-data.json`    |
+| `lukasmueller-dev/application-material` (résumé)  | `gen-resume-source.mjs` → `gen-resume-data.mjs` | `public/resume.{tex,pdf}`, `lib/resume-data.json` |
+| `lukasmueller-dev/portfolio-project-content`      | `gen-projects-data.mjs`   | `lib/projects-data.json` |
+| `lukasmueller-dev/blog`                           | `gen-blog-data.mjs`       | `lib/posts-data.json`    |
 | `node_modules/mini-vla/assets`           | `copy-vla-assets.mjs`     | `public/vla/`            |
 
 The three `lib/*-data.json` files are **committed** so that `next dev`, `tsc` and CI
