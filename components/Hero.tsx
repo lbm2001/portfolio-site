@@ -94,17 +94,18 @@ const SCENE_PALETTE: ScenePalette = {
 // throttle for the language + vision-gaze readouts (CONFIG.rollout).
 const LANG_MS = CONFIG.rollout.langMs;
 
-// How long "loading" (Language Warmup) may run before the host gives up on the
-// worker and offers a reload. On real hardware the warm-up is a few seconds —
-// 200 text-only batches that early-stop the moment the color head plateaus
-// (~tens of steps), which a GPU eats easily — so 10s is a comfortable ceiling
-// for a genuinely healthy run while recovering the COMMON failure (a WebGL
-// context that died on arrival, wedging tf.ready forever) three times faster
-// than the old 30s. Tradeoff: the slow cpu-backend fallback warm-up, or a
-// pathologically throttled device, can legitimately run past 10s and misfire
-// here — accepted, since a device that slow is already a bad experience; the
-// right fix is making "loading" faster, not raising this number.
-const LOADING_WATCHDOG_MS = 10_000;
+// How long "loading" (Language Warmup) may run before the host gives up. With
+// replayFallback on, the package itself owns load-stuck recovery: on a stall it
+// swaps to the replay at CONFIG.replay.watchdogMs (7.5s), and the replay's own
+// load (tfjs-cpu + embeddings + checkpoints, ~1–2s) reaches "training" around
+// ~9s. So this host watchdog is no longer the first responder — it is a
+// last-resort net (see onLoadStuck: it only fires when usingReplay === false,
+// i.e. the swap never happened). 15s gives that ~9s replay-ready path clear
+// headroom before the net trips. On real hardware a healthy live warm-up is a
+// few seconds — 200 text-only batches that early-stop the moment the color head
+// plateaus (~tens of steps), which a GPU eats easily — so 15s still misfires
+// only on a device already having a bad time.
+const LOADING_WATCHDOG_MS = 15_000;
 
 // A backgrounded hero (tab hidden or scrolled off-screen) keeps pausing
 // gradient steps as before, but after this grace period we go further and
@@ -332,6 +333,11 @@ export default function Hero() {
   // all three are the browser losing the worker's WebGL context, detected here
   // because the worker can't report a failure from inside the context it lost.
   const [hostFailure, setHostFailure] = useState<HostFailure | null>(null);
+  // Mirror of trainer.usingReplay: true once the package has transparently
+  // swapped the live WebGL run for the CPU-backend replay (the iOS/iPadOS
+  // path). Drives the small "replay" chip — honesty that this device is showing
+  // a captured-policy replay, not live training. Folded into onUpdate's mirror.
+  const [usingReplay, setUsingReplay] = useState(false);
   const loadWatchdogRef = useRef<number | null>(null);
   // Training-phase watchdog: re-armed on every batch, fires if batches stop
   // landing while status still reads "training". Cleared on pause/converge.
@@ -1002,6 +1008,7 @@ export default function Hero() {
     syncRunCfg();
     setErrorReason(null);
     setHostFailure(null);
+    setUsingReplay(false);
     if (loadWatchdogRef.current !== null) {
       window.clearTimeout(loadWatchdogRef.current);
       loadWatchdogRef.current = null;
@@ -1097,6 +1104,16 @@ export default function Hero() {
   const onLoadStuck = useCallback(() => {
     loadWatchdogRef.current = null;
     if (statusRef.current !== "loading") return; // already moved on; stale fire
+    // Last-resort net, not the first responder: with replayFallback on the
+    // package owns load-stuck recovery — it swaps to the replay at ~7.5s and
+    // the replay re-enters loading → training on its own. If that swap is
+    // underway (usingReplay === true), a still-"loading" status is the replay
+    // loading, NOT a wedged run: stand down and let it finish. (If the replay's
+    // OWN assets 404, the package lands on status "error"/errorReason "assets",
+    // which the bar already surfaces.) Only when the package never swapped
+    // (usingReplay === false) has the load genuinely wedged with no recovery in
+    // flight — the sole case this host watchdog still owns.
+    if (trainerRef.current?.usingReplay) return;
     console.warn(
       `VLA trainer: no progress out of Language Warmup within ${LOADING_WATCHDOG_MS}ms — releasing the worker`
     );
@@ -1107,6 +1124,10 @@ export default function Hero() {
   const onUpdate = () => {
     const trainer = trainerRef.current;
     if (!trainer) return; // torn down mid-flight (a watchdog just released it)
+    // Mirror the package's transparent swap to the replay so the "replay" chip
+    // tracks it. Read every tick — the swap can flip mid-run; React bails on an
+    // unchanged value, so this is free.
+    setUsingReplay(trainer.usingReplay);
     if (trainer.status !== statusRef.current) {
       // the language warm-up has just handed off to the coupled loop: this is
       // when the demonstration cycle actually begins, so stamp its clock here
@@ -1201,6 +1222,12 @@ export default function Hero() {
   const onPrimary = () => {
     const trainer = (trainerRef.current ??= new VLATrainer({
       assetBase: VLA_ASSET_BASE,
+      // On a stall or error the package transparently swaps in the CPU-backend
+      // replay (real rollouts off a captured policy ladder, scripted loss
+      // curve) behind the same surface — the fix for the iOS/iPadOS WebGL
+      // context cap that no backend switch can rescue. See §4/§6: the host
+      // watchdogs become a thin outer net and a "replay" chip flags it.
+      replayFallback: true,
     }));
     // any press of the bar is a deliberate choice: it ends any auto-pause, so
     // becoming visible again never overrides what the viewer just asked for
@@ -1621,6 +1648,18 @@ export default function Hero() {
             />
             <div className="vla-status-col">
               <span className="vla-status-text">{statusText}</span>
+              {/* Honesty marker: the package swapped live training for the
+                  CPU-backend replay (iOS/iPadOS, where the live WebGL run can't
+                  get going). Understated by intent — the point is disclosure,
+                  not a banner. */}
+              {usingReplay && (
+                <span
+                  className="vla-replay-chip"
+                  title="This device is showing a captured-policy replay, not live on-device training."
+                >
+                  replay
+                </span>
+              )}
               {live && hud.samples > 0 && (
                 <>
                   <span className="vla-status-sub">

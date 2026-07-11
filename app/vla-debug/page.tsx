@@ -209,6 +209,7 @@ export default function VlaDebug() {
       append(`→ real VLATrainer (worker path, ${label} cfg)`);
       const t = (trainerRef.current ??= new VLATrainer({
         assetBase: VLA_ASSET_BASE,
+        replayFallback: true,
       }));
       t.reset();
       t.start(watch(`worker-trainer(${label})`, () => t), cfg);

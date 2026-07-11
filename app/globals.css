@@ -974,6 +974,19 @@ a {
   text-transform: uppercase;
   color: var(--body);
 }
+/* Shown only when the package has swapped live training for the CPU-backend
+   replay (iOS/iPadOS). A small muted pill hugging its text — deliberately quiet,
+   sitting under the status word without competing with it. */
+.vla-replay-chip {
+  align-self: flex-start;
+  font: 600 8px/1 var(--font-mono);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 6px;
+}
 .vla-loss {
   flex: 1;
   min-width: 0;

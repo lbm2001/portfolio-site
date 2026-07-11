@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 import { expect, test } from "@playwright/test";
 import { VLA_ASSET_BASE } from "../../lib/vla-assets";
 import { collectPageErrors } from "./helpers";
@@ -66,12 +66,21 @@ test("resume PDF is served", async ({ request }) => {
 test("VLA embedding assets are deployed and reachable", async ({ request }) => {
   // scripts/copy-vla-assets.mjs must have staged mini-vla's assets into the
   // build, under the VERSIONED path Hero.tsx actually requests; a miss here is
-  // the "Start Training silently dies" failure mode. Both sides derive from
-  // mini-vla/package.json (see tests/unit/vla-assets.test.ts).
-  const assets = readdirSync(join(root, "node_modules/mini-vla/assets"));
-  expect(assets.length).toBeGreaterThan(0);
-  for (const name of assets) {
-    const path = `${VLA_ASSET_BASE}/${name}`;
+  // the "Start Training silently dies" failure mode. The copy is RECURSIVE and
+  // since v0.5.0 the tree nests assets/replay/ (the fallback's manifest +
+  // checkpoint bins), so walk it and check every FILE — requesting a bare
+  // directory would 404. Both sides derive from mini-vla/package.json (see
+  // tests/unit/vla-assets.test.ts).
+  const assetsRoot = join(root, "node_modules/mini-vla/assets");
+  const walk = (dir: string): string[] =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const abs = join(dir, entry.name);
+      return entry.isDirectory() ? walk(abs) : [relative(assetsRoot, abs)];
+    });
+  const files = walk(assetsRoot);
+  expect(files.length).toBeGreaterThan(0);
+  for (const rel of files) {
+    const path = `${VLA_ASSET_BASE}/${rel.split(sep).join("/")}`;
     const res = await request.get(path);
     expect(res.status(), path).toBe(200);
     expect((await res.body()).length, path).toBeGreaterThan(0);
