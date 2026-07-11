@@ -62,6 +62,10 @@ next-env.d.ts
 # without a fetch; with no GITHUB_TOKEN the text renders but the images 404.
 /public/projects/
 
+# Build ID: generated at build/dev startup (next.config.mjs) for the stale-tab
+# reload guard. The deployed /build-id.json is revalidated (see public/_headers).
+/public/build-id.json
+
 # VLA embedding assets copied from node_modules/mini-vla/assets/ on predev/
 # prebuild (scripts/copy-vla-assets.mjs). The mini-vla package is their source
 # of truth.

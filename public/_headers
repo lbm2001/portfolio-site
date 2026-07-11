@@ -12,3 +12,10 @@
 # rather than a hero that trains on noise.
 /vla/*
   Cache-Control: public,max-age=31536000,immutable
+
+# Stale-tab reload guard: a tab left open across a deploy fetches this on
+# visibilitychange and reloads if the id no longer matches the one baked into
+# its JS bundle. Must revalidate so the CDN always serves the current deploy's
+# value — the browser fetch already uses cache:"no-store".
+/build-id.json
+  Cache-Control: public,max-age=0,must-revalidate
