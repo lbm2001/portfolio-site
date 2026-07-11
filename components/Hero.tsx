@@ -86,6 +86,8 @@ const LIGHT_SCENE_PALETTE: ScenePalette = {
   effectorOpen: "#fff",
   effectorOpenEdge: "#6f6f6f",
   effectorClosed: "#6f6f6f",
+  // faint stroke so same-tone blocks (e.g. white) stay legible on the light floor
+  blockEdge: "rgba(0,0,0,0.12)",
 };
 // Dark-mode arm/scene look: the near-black pedestal becomes a light structural
 // tone, the white joints/open-jaw stay light, and the floor line lifts just
@@ -99,6 +101,11 @@ const DARK_SCENE_PALETTE: ScenePalette = {
   effectorOpen: "#f2f2f2",
   effectorOpenEdge: "#8a8a8a",
   effectorClosed: "#9a9a9a",
+  // the trained "black" block (#1c1c1c) vanishes against the dark floor — remap
+  // it to a light structural tone for display only (paintSilhouette is untouched,
+  // so the model input keeps the real black); stroke keeps the rest legible.
+  blockColor: (_i, hex) => (hex.toLowerCase() === "#1c1c1c" ? "#d8d8d8" : hex),
+  blockEdge: "rgba(255,255,255,0.18)",
 };
 
 // Canvases can't read CSS vars cheaply, so the theme is resolved here and
@@ -383,8 +390,11 @@ export default function Hero() {
     prob: number;
   } | null>(null);
   const [tryNote, setTryNote] = useState<string | null>(null);
-  // Vision Encoder panel: flip to the exact inverted tensor the CNN receives.
-  // Hover handles it on desktop (CSS); this drives the tap toggle on touch.
+  // Vision Encoder panel: toggle between the host view and the inverted tensor
+  // the CNN receives. Hover handles it on desktop (CSS); this drives the tap
+  // toggle on touch. Which view is the RESTING one flips per theme (dark rests
+  // on the inverted view — see --vision-*-invert in globals.css), so this is
+  // just "flipped from the theme default", not "showing the model input".
   const [modelView, setModelView] = useState(false);
 
   // Below STACKED_MQ the pipeline is hidden behind a "Mini VLA Demo" CTA and

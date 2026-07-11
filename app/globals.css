@@ -21,6 +21,19 @@
   --nav-panel: rgba(255, 255, 255, 0.94);
   --hatch: rgba(0, 0, 0, 0.3);
 
+  /* Vision Encoder panel — the CNN feeds on 1 - pixel, so a CSS invert(1) shows
+     its literal input. Light REST shows the host view (invert 0) and flips to
+     the model view on hover/tap; dark REST shows the model view (invert 1, no
+     glaring white square) and flips to the host view. These vars flip the invert
+     amount AND the hint copy together, so the label always names what is actually
+     on screen rather than a fixed direction. Kept next to the dark palette so the
+     two dark blocks below stay in sync. */
+  --vision-rest-invert: 0;
+  --vision-flip-invert: 1;
+  --vision-rest-label: "hover: what the CNN sees";
+  --vision-flip-label: "CNN input (1 − pixel)";
+  --vision-rest-label-touch: "tap: what the CNN sees";
+
   /* Archivo is loaded and self-hosted by next/font (app/layout.tsx), which
      exposes it as --font-archivo; falls back to the plain family name if unset. */
   --font-sans: "Helvetica Neue", var(--font-archivo, Archivo), Arial, sans-serif;
@@ -59,6 +72,13 @@
     --fill: rgba(255, 255, 255, 0.08);
     --nav-panel: rgba(15, 15, 15, 0.94);
     --hatch: rgba(255, 255, 255, 0.28);
+    /* dark rests on the model view; hover/tap reveals the host input — the copy
+       follows the displayed state, so it flips with the invert. */
+    --vision-rest-invert: 1;
+    --vision-flip-invert: 0;
+    --vision-rest-label: "CNN input (1 − pixel)";
+    --vision-flip-label: "host input (raw pixels)";
+    --vision-rest-label-touch: "CNN input (1 − pixel)";
   }
 }
 :root[data-theme="dark"] {
@@ -74,6 +94,12 @@
   --fill: rgba(255, 255, 255, 0.08);
   --nav-panel: rgba(15, 15, 15, 0.94);
   --hatch: rgba(255, 255, 255, 0.28);
+  /* keep in sync with the prefers-color-scheme block above */
+  --vision-rest-invert: 1;
+  --vision-flip-invert: 0;
+  --vision-rest-label: "CNN input (1 − pixel)";
+  --vision-flip-label: "host input (raw pixels)";
+  --vision-rest-label-touch: "CNN input (1 − pixel)";
 }
 
 * {
@@ -788,18 +814,22 @@ a {
   margin: 0 auto;
   transition: opacity 0.45s ease, filter 0.25s ease;
 }
-/* Hover / tap flips the panel to what the CNN actually receives: the model
-   feeds on 1 - pixel (see visionTensor in trainer.ts) — a per-channel invert —
-   so CSS invert(1) is an exact reproduction, not a stylisation (background goes
-   black, each block shows its complement: red→cyan, blue→orange). Gated to the
-   states where a live input actually exists — running OR paused, but NOT idle
-   (blocks still floating), loading (wires drawing), or converged (done). */
+/* Hover / tap flips the panel between the host view and what the CNN actually
+   receives: the model feeds on 1 - pixel (see visionTensor in trainer.ts) — a
+   per-channel invert — so CSS invert(1) is an exact reproduction, not a
+   stylisation (background goes black, each block shows its complement: red→cyan,
+   blue→orange). Which of the two the panel RESTS on flips per theme (light rests
+   on the host view, dark on the model view — see --vision-*-invert), so this
+   reads the rest/flip amount from those vars instead of hard-coding a direction.
+   Gated to the states where a live input actually exists — running OR paused,
+   but NOT idle (blocks still floating), loading (wires drawing), or converged. */
 .hero.is-live:not(.is-loading):not(.is-converged) .vla-vision-canvas {
   cursor: pointer;
+  filter: invert(var(--vision-rest-invert));
 }
 .hero.is-live:not(.is-loading):not(.is-converged) .vla-vision:hover .vla-vision-canvas,
 .hero.is-live:not(.is-loading):not(.is-converged) .vla-vision.model-view .vla-vision-canvas {
-  filter: invert(1);
+  filter: invert(var(--vision-flip-invert));
 }
 .vla-vision-hint {
   margin-top: 7px;
@@ -810,7 +840,7 @@ a {
   opacity: 0;
 }
 .vla-vision-hint::after {
-  content: "hover: what the CNN sees";
+  content: var(--vision-rest-label);
 }
 .hero.is-live:not(.is-loading):not(.is-converged) .vla-vision-hint {
   opacity: 0.55;
@@ -821,7 +851,7 @@ a {
 }
 .hero.is-live:not(.is-loading):not(.is-converged) .vla-vision:hover .vla-vision-hint::after,
 .hero.is-live:not(.is-loading):not(.is-converged) .vla-vision.model-view .vla-vision-hint::after {
-  content: "CNN input (1 − pixel)";
+  content: var(--vision-flip-label);
 }
 
 /* the raw prompt "textarea" — a SEPARATE input floating just below the
@@ -1368,7 +1398,7 @@ a {
     aspect-ratio: 1;
   }
   .hero.demo-open .vla-vision-hint::after {
-    content: "tap: what the CNN sees";
+    content: var(--vision-rest-label-touch);
   }
   /* the row overflows its (now much narrower) box before --chip-fit scales it
      down; scaling about the box CENTRE would leave the shrunk row hanging off
