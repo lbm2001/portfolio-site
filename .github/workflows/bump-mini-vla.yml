@@ -50,17 +50,16 @@ jobs:
           esac
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
-      - name: Bump mini-vla pin
-        run: npm pkg set "dependencies.mini-vla=github:lbm2001/mini-vla#${{ steps.tag.outputs.tag }}"
-
-      # npm caches git deps keyed by URL#committish. A brand-new tag is a fresh
-      # key so `npm install` re-resolves it, but stale node_modules/mini-vla and
-      # any prior clone of the same commit can shadow it — so clear both, then
-      # reinstall to re-resolve and rewrite package-lock.json.
-      - name: Cache-clean reinstall
+      # Re-point the pin AND reinstall in one step: `npm install <spec>` rewrites
+      # both package.json and package-lock.json. setup-node restores ~/.npm, so a
+      # stale git resolution can survive across runs — `npm cache clean --force`
+      # forces a fresh clone of the tag, and removing node_modules/mini-vla stops
+      # an old checkout from shadowing it.
+      - name: Bump pin + cache-clean reinstall
         run: |
+          npm cache clean --force
           rm -rf node_modules/mini-vla
-          npm install --no-audit --no-fund
+          npm install "mini-vla@github:lukasmueller-dev/mini-vla#${{ steps.tag.outputs.tag }}" --no-audit --no-fund
 
       # vla-assets.test.ts asserts public/vla/<version>/ exists (see ci.yml).
       - name: Stage mini-vla assets
