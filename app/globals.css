@@ -982,6 +982,9 @@ a {
   align-self: flex-start;
 }
 .vla-replay-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font: 600 8px/1 var(--font-mono);
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -991,6 +994,21 @@ a {
   border-radius: 999px;
   padding: 3px 6px;
   cursor: pointer;
+}
+/* The "more info" glyph: a real circled icon rather than a bare "?", so it
+   reads as a tap affordance instead of a stray character caught in the
+   chip's wide letter-spacing. */
+.vla-replay-info-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 9px;
+  height: 9px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  font: 700 6.5px/1 var(--font-mono);
+  letter-spacing: normal;
+  text-transform: none;
 }
 /* Tap-revealed disclosure: title tooltips never fire on the touch-only
    devices (iPad/iOS) this chip appears on, so the explanation lives here
