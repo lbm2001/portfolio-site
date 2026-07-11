@@ -95,17 +95,32 @@ const SCENE_PALETTE: ScenePalette = {
 const LANG_MS = CONFIG.rollout.langMs;
 
 // How long "loading" (Language Warmup) may run before the host gives up. With
-// replayFallback on, the package itself owns load-stuck recovery: on a stall it
-// swaps to the replay at CONFIG.replay.watchdogMs (7.5s), and the replay's own
-// load (tfjs-cpu + embeddings + checkpoints, ~1–2s) reaches "training" around
-// ~9s. So this host watchdog is no longer the first responder — it is a
-// last-resort net (see onLoadStuck: it only fires when usingReplay === false,
-// i.e. the swap never happened). 15s gives that ~9s replay-ready path clear
-// headroom before the net trips. On real hardware a healthy live warm-up is a
-// few seconds — 200 text-only batches that early-stop the moment the color head
+// replayFallback on, the package itself owns first-line load-stuck recovery: on
+// a stall it swaps to the replay at CONFIG.replay.watchdogMs (7.5s), and the
+// replay's own load (tfjs-cpu + embeddings + checkpoints, ~1–2s) reaches
+// "training" around ~9s. So this host watchdog is no longer the first responder.
+// When it trips it splits on which run is still loading (see onLoadStuck): a
+// real run that never swapped (usingReplay === false) is genuinely wedged and
+// gets torn down here; a swap already underway (usingReplay === true) is the
+// replay loading, so it hands off to a second, longer ceiling
+// (REPLAY_LOAD_WATCHDOG_MS) rather than either killing a healthy swap or
+// standing down forever. 15s gives that ~9s replay-ready path clear headroom
+// before the net trips. On real hardware a healthy live warm-up is a few
+// seconds — 200 text-only batches that early-stop the moment the color head
 // plateaus (~tens of steps), which a GPU eats easily — so 15s still misfires
 // only on a device already having a bad time.
 const LOADING_WATCHDOG_MS = 15_000;
+
+// Second-tier load ceiling, measured from the first watchdog's trip, that bounds
+// the REPLAY's own load once the package has swapped to it. The replay fetches
+// its manifest + checkpoint ladder with plain, timeout-free fetch() calls
+// (mini-vla trainer.replay.ts), so a response body that stalls without
+// rejecting — the flaky-mobile network this fallback exists for — would pin the
+// run in "loading" forever with no error to surface. This is the only net for
+// that. The healthy replay load is a ~300KB ladder plus tfjs-cpu init, seconds
+// even on a slow link, so 20s past the first watchdog (~35s from Start) clears
+// every working case and only a true stall trips it.
+const REPLAY_LOAD_WATCHDOG_MS = 20_000;
 
 // A backgrounded hero (tab hidden or scrolled off-screen) keeps pausing
 // gradient steps as before, but after this grace period we go further and
@@ -1094,6 +1109,25 @@ export default function Hero() {
   };
 
   // ---- controls ----
+  // Second-tier load net, armed by onLoadStuck once the package has swapped to
+  // the replay (usingReplay === true) yet is STILL in "loading" past the first
+  // watchdog. The replay loads off timeout-free fetches (mini-vla
+  // trainer.replay.ts), so a body that stalls without rejecting — the
+  // flaky-mobile case this whole fallback targets — never surfaces as an error;
+  // this is the only thing that catches it. Generous by design (see
+  // REPLAY_LOAD_WATCHDOG_MS): the healthy replay load finishes well under this
+  // budget, so a trip means a real stall, not a slow link. Same recovery as a
+  // wedged real load — destroy() also disposes the replay's tf models.
+  const onReplayLoadStuck = useCallback(() => {
+    loadWatchdogRef.current = null;
+    if (statusRef.current !== "loading") return; // replay reached training; stale
+    console.warn(
+      `VLA replay: still loading ${REPLAY_LOAD_WATCHDOG_MS}ms past the first watchdog — a stalled asset fetch; tearing down`
+    );
+    releaseWorkerToIdle();
+    setHostFailure("load-stuck");
+  }, [releaseWorkerToIdle]);
+
   // Fires when "loading" outlasts LOADING_WATCHDOG_MS with no word from the
   // worker — see HostFailure's "load-stuck" for the failure this catches. The
   // worker itself never posts an error here (it isn't dead, just wedged
@@ -1104,22 +1138,30 @@ export default function Hero() {
   const onLoadStuck = useCallback(() => {
     loadWatchdogRef.current = null;
     if (statusRef.current !== "loading") return; // already moved on; stale fire
-    // Last-resort net, not the first responder: with replayFallback on the
-    // package owns load-stuck recovery — it swaps to the replay at ~7.5s and
-    // the replay re-enters loading → training on its own. If that swap is
-    // underway (usingReplay === true), a still-"loading" status is the replay
-    // loading, NOT a wedged run: stand down and let it finish. (If the replay's
-    // OWN assets 404, the package lands on status "error"/errorReason "assets",
-    // which the bar already surfaces.) Only when the package never swapped
-    // (usingReplay === false) has the load genuinely wedged with no recovery in
-    // flight — the sole case this host watchdog still owns.
-    if (trainerRef.current?.usingReplay) return;
+    // With replayFallback on the package owns first-line load-stuck recovery: it
+    // swaps to the replay at ~7.5s and the replay re-enters loading → training
+    // on its own. If that swap is underway (usingReplay === true), a still-
+    // "loading" status is the REPLAY loading, not the wedged real run — so don't
+    // kill it here. But don't stand down for good either: the replay's own load
+    // is a chain of timeout-free fetches, so a stalled-but-not-rejected asset
+    // fetch on a flaky connection would leave it pinned in "loading" with no way
+    // out — the very hang this path exists to kill, one layer down. Hand off to
+    // a second, longer ceiling that bounds the replay load itself. (A replay
+    // whose assets cleanly 404 needs no net — the package lands on status
+    // "error"/errorReason "assets", which the bar already surfaces.)
+    if (trainerRef.current?.usingReplay) {
+      loadWatchdogRef.current = window.setTimeout(
+        onReplayLoadStuck,
+        REPLAY_LOAD_WATCHDOG_MS
+      );
+      return;
+    }
     console.warn(
       `VLA trainer: no progress out of Language Warmup within ${LOADING_WATCHDOG_MS}ms — releasing the worker`
     );
     releaseWorkerToIdle(); // destroy the worker + release its lost context
     setHostFailure("load-stuck");
-  }, [releaseWorkerToIdle]);
+  }, [releaseWorkerToIdle, onReplayLoadStuck]);
 
   const onUpdate = () => {
     const trainer = trainerRef.current;
@@ -1577,8 +1619,9 @@ export default function Hero() {
   // exact phrase on screen tells us the mechanism without any telemetry.
   //   "Graphics context lost" — mini-vla (v0.4.1) itself caught a lost WebGL
   //     context, mid-run or via its zero-loss guard: direct evidence of GL loss.
-  //   "Stuck — reload to retry" — never left warmup; context likely dead on
-  //     arrival (or tf.ready hung).
+  //   "Stuck — reload to retry" — never left warmup: either the real run's
+  //     context was dead on arrival with no swap (tf.ready hung), or the replay
+  //     it swapped to stalled on a timeout-free asset fetch (a flaky link).
   //   "Training stalled" — host watchdog; batches stopped with no package error
   //     (thermal/throttle/memory, or a context death that fired no event).
   //   "Training collapsed" — host watchdog; non-physical losses the package did
