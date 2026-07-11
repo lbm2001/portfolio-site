@@ -1,0 +1,102 @@
+# Listens for a mini-vla release and opens a PR bumping this repo's pin.
+#
+# mini-vla's e2e workflow fires a `mini-vla-release` repository_dispatch on every
+# green v* tag (see its dispatch-portfolio job), carrying the tag in
+# client_payload.tag. That dispatch must come from a PAT — the default
+# GITHUB_TOKEN can't trigger a workflow in another repo — which is why mini-vla
+# stores one. This side needs no extra secret: it runs inside portfolio-site, so
+# the built-in GITHUB_TOKEN (with the permissions below) is enough to push a
+# branch and open the PR.
+#
+# The job re-runs the real gates (asset staging, typecheck, unit tests, build)
+# against the new pin BEFORE opening the PR, because a PR opened by GITHUB_TOKEN
+# does NOT trigger ci.yml (GitHub blocks that recursion). Treat this run as the
+# PR's CI. If branch protection later requires ci.yml's checks on the PR itself,
+# swap `token` below for a PAT stored here too.
+name: bump-mini-vla
+
+on:
+  repository_dispatch:
+    types: [mini-vla-release]
+  # Manual escape hatch: bump to an explicit tag without waiting for a release.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: mini-vla tag to pin (e.g. v0.5.0)
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Resolve tag
+        id: tag
+        run: |
+          TAG='${{ github.event.client_payload.tag || github.event.inputs.tag }}'
+          case "$TAG" in
+            v[0-9]*) ;;
+            *) echo "refusing to bump to unexpected tag: '$TAG'"; exit 1 ;;
+          esac
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Bump mini-vla pin
+        run: npm pkg set "dependencies.mini-vla=github:lbm2001/mini-vla#${{ steps.tag.outputs.tag }}"
+
+      # npm caches git deps keyed by URL#committish. A brand-new tag is a fresh
+      # key so `npm install` re-resolves it, but stale node_modules/mini-vla and
+      # any prior clone of the same commit can shadow it — so clear both, then
+      # reinstall to re-resolve and rewrite package-lock.json.
+      - name: Cache-clean reinstall
+        run: |
+          rm -rf node_modules/mini-vla
+          npm install --no-audit --no-fund
+
+      # vla-assets.test.ts asserts public/vla/<version>/ exists (see ci.yml).
+      - name: Stage mini-vla assets
+        run: node scripts/copy-vla-assets.mjs
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        run: npx next build
+
+      - name: Open bump PR
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          add-paths: |
+            package.json
+            package-lock.json
+          branch: bump/mini-vla-${{ steps.tag.outputs.tag }}
+          commit-message: "chore(deps): bump mini-vla to ${{ steps.tag.outputs.tag }}"
+          title: "chore(deps): bump mini-vla to ${{ steps.tag.outputs.tag }}"
+          body: |
+            Automated bump: mini-vla released **${{ steps.tag.outputs.tag }}** (its
+            e2e suite passed green on the tag).
+
+            This branch was reinstalled against the new pin and the gates below
+            all passed here before the PR opened:
+
+            - `copy-vla-assets` (stages `public/vla/<version>/`)
+            - `npm run typecheck`
+            - `npm test`
+            - `npx next build`
+
+            Note: PRs opened by `GITHUB_TOKEN` don't re-run `ci.yml`, so the run
+            that produced this PR is the CI signal. Merge to ship the new
+            in-browser model to the live demo.
