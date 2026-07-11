@@ -1161,6 +1161,13 @@ export default function Hero() {
         setRolloutSamples(trainer.samples);
       }
     } else if (trainer.status === "training") {
+      // Resume re-arm: resumeTraining() pre-sets status to "training", so the
+      // worker's resume-ack "state" is NOT a transition and misses the entry-arm
+      // above. If a long pause let the pre-pause watchdog already fire (it nulls
+      // the ref), the resumed run would have NO watchdog — a resume onto a
+      // context that died while paused produces no batches and would hang with no
+      // reload prompt. Arm here whenever training is running unwatched.
+      if (trainWatchdogRef.current === null) armTrainWatchdog();
       // Steady-state training (no status change): a new batch landed. Reset the
       // stall clock and watch for a run of non-physical losses — DEAD_LOSS_LIMIT
       // zeroed/NaN readbacks in a row means the WebGL context died mid-run and
