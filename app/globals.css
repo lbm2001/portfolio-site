@@ -1206,6 +1206,10 @@ a {
   /* the row overflows its (now much narrower) box before --chip-fit scales it
      down; scaling about the box CENTRE would leave the shrunk row hanging off
      the right edge, so pin the origin to the left where the content starts */
+  .hero.demo-open .vla-prompt-echo {
+    font-size: 13px;
+    line-height: 1.35;
+  }
   .hero.demo-open .vla-chip-row {
     max-width: 100%;
     transform-origin: left center;
