@@ -353,6 +353,10 @@ export default function Hero() {
   // path). Drives the small "replay" chip — honesty that this device is showing
   // a captured-policy replay, not live training. Folded into onUpdate's mirror.
   const [usingReplay, setUsingReplay] = useState(false);
+  // The chip's disclosure text is behind a tap, not a hover title, since the
+  // devices that land here (iPad/iOS) are touch-only and never see a title
+  // tooltip. Reset whenever the replay flag itself changes off.
+  const [showReplayInfo, setShowReplayInfo] = useState(false);
   const loadWatchdogRef = useRef<number | null>(null);
   // Training-phase watchdog: re-armed on every batch, fires if batches stop
   // landing while status still reads "training". Cleared on pause/converge.
@@ -1024,6 +1028,7 @@ export default function Hero() {
     setErrorReason(null);
     setHostFailure(null);
     setUsingReplay(false);
+    setShowReplayInfo(false);
     if (loadWatchdogRef.current !== null) {
       window.clearTimeout(loadWatchdogRef.current);
       loadWatchdogRef.current = null;
@@ -1694,14 +1699,26 @@ export default function Hero() {
               {/* Honesty marker: the package swapped live training for the
                   CPU-backend replay (iOS/iPadOS, where the live WebGL run can't
                   get going). Understated by intent — the point is disclosure,
-                  not a banner. */}
+                  not a banner. A title tooltip never reaches these devices
+                  (touch, no hover), so the "?" is a tap target instead. */}
               {usingReplay && (
-                <span
-                  className="vla-replay-chip"
-                  title="This device is showing a captured-policy replay, not live on-device training."
-                >
-                  replay
-                </span>
+                <div className="vla-replay-chip-wrap">
+                  <button
+                    type="button"
+                    className="vla-replay-chip"
+                    onClick={() => setShowReplayInfo((v) => !v)}
+                    aria-expanded={showReplayInfo}
+                  >
+                    replay <span aria-hidden="true">?</span>
+                  </button>
+                  {showReplayInfo && (
+                    <span className="vla-replay-info" role="note">
+                      Your browser can&apos;t provide the compute needed to
+                      show the live training process, so a replay of an
+                      actual training run is shown instead.
+                    </span>
+                  )}
+                </div>
               )}
               {live && hud.samples > 0 && (
                 <>
