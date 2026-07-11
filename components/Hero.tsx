@@ -95,13 +95,58 @@ const SCENE_PALETTE: ScenePalette = {
 const LANG_MS = CONFIG.rollout.langMs;
 
 // How long "loading" (Language Warmup) may run before the host gives up on the
-// worker and offers a reload. A fixed product ceiling, not a derived margin: a
-// software-rendered smoke test measured a legitimate 45s run once, so 30s WILL
-// misfire on some genuinely slow-but-working devices — accepted deliberately,
-// since a device that takes that long is deemed a bad experience anyway. If
-// that turns out to bite real visitors, the fix is making "loading" itself
-// faster, not raising this number.
-const LOADING_WATCHDOG_MS = 30_000;
+// worker and offers a reload. On real hardware the warm-up is a few seconds —
+// 200 text-only batches that early-stop the moment the color head plateaus
+// (~tens of steps), which a GPU eats easily — so 10s is a comfortable ceiling
+// for a genuinely healthy run while recovering the COMMON failure (a WebGL
+// context that died on arrival, wedging tf.ready forever) three times faster
+// than the old 30s. Tradeoff: the slow cpu-backend fallback warm-up, or a
+// pathologically throttled device, can legitimately run past 10s and misfire
+// here — accepted, since a device that slow is already a bad experience; the
+// right fix is making "loading" faster, not raising this number.
+const LOADING_WATCHDOG_MS = 10_000;
+
+// A backgrounded hero (tab hidden or scrolled off-screen) keeps pausing
+// gradient steps as before, but after this grace period we go further and
+// RELEASE the worker entirely — terminating it returns its WebGL context to the
+// browser's process-wide pool. That pool is the scarce resource behind the iPad
+// wedge (a fresh context can be evicted on arrival when too many live or
+// bfcache'd contexts exist), so a context pinned behind a suspended tab is
+// exactly what starves the next visit. 10s is long enough that a quick
+// tab-switch doesn't nuke a run, short enough to free the context promptly.
+const IDLE_TEARDOWN_GRACE_MS = 10_000;
+
+// Training-progress watchdog: if no new batch lands within this window while the
+// status still reads "training", the worker has gone silent mid-run — the same
+// dead-context failure as the loading wedge, just after training started. A
+// healthy batch is well under a second, and even the slow cpu-backend fallback
+// stays far under this, so only a genuine stall trips it.
+const TRAIN_STALL_MS = 20_000;
+
+// Consecutive batches whose action loss reads non-physical (0 or non-finite)
+// before we declare the run dead. A live Huber action loss for this task floors
+// around ~0.012 and is never exactly 0; a run of zeros is the zeroed GPU
+// readback of a lost WebGL context. Catching it here stops the worthless policy
+// from silently reaching the batch-107 false-convergence (minBatches 100 +
+// streak 8, all satisfied by a zeroed loss).
+const DEAD_LOSS_LIMIT = 8;
+
+// A genuinely converged action loss lands ~0.012–0.015 (the convergence
+// threshold itself). Anything at or below this floor — or non-finite — at the
+// moment the worker declares "converged" is a zeroed-readback false convergence
+// against a dead context, not a trained policy: reject it as a failure.
+const CONVERGED_LOSS_FLOOR = 1e-4;
+
+// Host-detected trainer failures mini-vla itself has no signal for — all three
+// trace to the browser losing the worker's WebGL context. "load-stuck": the
+// worker went silent during Language Warmup (context died on arrival, tf.ready
+// hangs). "train-stalled": batches stopped landing mid-run. "train-collapsed":
+// the loss went non-physical (zeroed readback), including a false convergence.
+// All three are process-wide GPU-context exhaustion, so the only reliable way
+// out is a full page reload — the bar offers exactly that. Kept separate from
+// TrainerError (mini-vla's own closed union): this is host-side detection of
+// failures the worker cannot report from inside the context it lost.
+type HostFailure = "load-stuck" | "train-stalled" | "train-collapsed";
 
 const fmtAngle = (v: number) => `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(2)}`;
 
@@ -283,19 +328,22 @@ export default function Hero() {
   // offers: "worker" means a dead chunk URL that only a reload can escape,
   // everything else can be retried in place.
   const [errorReason, setErrorReason] = useState<TrainerError | null>(null);
-  // Host-detected condition mini-vla itself has no signal for: the worker went
-  // silent mid-"loading" and never posted training/error. Traced (2026-07) to
-  // Safari losing the worker's WebGL context on arrival — bfcache keeps other
-  // tabs' workers/contexts alive against the browser's per-process WebGL
-  // context cap, so a fresh context can die the instant it's created, and
-  // tf.ready() then hangs against it forever with no error to catch. A same-tab
-  // retry doesn't reliably escape this (the cap is process-wide, not per-tab),
-  // so — like mini-vla's own "worker" error — the only offered way out is a
-  // full page reload. Kept separate from TrainerError (mini-vla's own closed
-  // union): this is host-side detection of a failure mini-vla cannot see from
-  // inside the worker it lost contact with.
-  const [stuck, setStuck] = useState(false);
+  // Why the run failed on the host side (null while healthy). See HostFailure:
+  // all three are the browser losing the worker's WebGL context, detected here
+  // because the worker can't report a failure from inside the context it lost.
+  const [hostFailure, setHostFailure] = useState<HostFailure | null>(null);
   const loadWatchdogRef = useRef<number | null>(null);
+  // Training-phase watchdog: re-armed on every batch, fires if batches stop
+  // landing while status still reads "training". Cleared on pause/converge.
+  const trainWatchdogRef = useRef<number | null>(null);
+  // Consecutive non-physical (0 / non-finite) batch losses seen — a dead WebGL
+  // context zeroes GPU readbacks, so a run of these means the policy is garbage.
+  const deadLossRunRef = useRef(0);
+  // Last batch index the training watchdog acted on (its progress detector).
+  const lastWatchedBatchRef = useRef(0);
+  // Grace-period timer that releases the worker after the hero stays
+  // backgrounded (see IDLE_TEARDOWN_GRACE_MS).
+  const graceTimerRef = useRef<number | null>(null);
 
   const setStatusBoth = (s: TrainerStatus) => {
     statusRef.current = s;
@@ -937,12 +985,110 @@ export default function Hero() {
       window.removeEventListener("resize", layoutWires);
       trainerRef.current?.destroy(); // reset + terminate the trainer worker
       if (loadWatchdogRef.current !== null) window.clearTimeout(loadWatchdogRef.current);
+      if (trainWatchdogRef.current !== null) window.clearTimeout(trainWatchdogRef.current);
     };
   }, []);
 
+  // ---- teardown + host-side failure detection ----
+  // Return every piece of local view state to its pristine idle values. Shared
+  // by the manual Reset button and the worker-teardown paths below; the only
+  // difference between them is whether the trainer is reset() (kept warm) or
+  // destroy()ed (worker terminated, context released), which the callers do.
+  const resetToIdle = useCallback(() => {
+    autoPausedRef.current = false;
+    // back to idle: the profile follows the viewport again (it may have been
+    // resized across the breakpoint during the run we just threw away)
+    cfgLockedRef.current = false;
+    syncRunCfg();
+    setErrorReason(null);
+    setHostFailure(null);
+    if (loadWatchdogRef.current !== null) {
+      window.clearTimeout(loadWatchdogRef.current);
+      loadWatchdogRef.current = null;
+    }
+    if (trainWatchdogRef.current !== null) {
+      window.clearTimeout(trainWatchdogRef.current);
+      trainWatchdogRef.current = null;
+    }
+    deadLossRunRef.current = 0;
+    lastWatchedBatchRef.current = 0;
+    engineRef.current!.reset();
+    rolloutCycleRef.current = -1;
+    visGazeRef.current = null;
+    armState.current = { a1: REST[0], a2: REST[1] };
+    // clones — the rollout's blocks are draggable; DEFAULT_LAYOUT stays pristine
+    demoLayoutRef.current = DEFAULT_LAYOUT.map((b) => ({ ...b }));
+    demoSentenceRef.current = DEFAULT_SENTENCE;
+    demoPlanRef.current = null;
+    lastCycleRef.current = -1;
+    rolloutLayoutRef.current = DEFAULT_LAYOUT.map((b) => ({ ...b }));
+    activeTokensRef.current = DEFAULT_SENTENCE.tokens;
+    userSentenceRef.current = null;
+    pausedAccumRef.current = 0;
+    pauseStartRef.current = null;
+    trainStartRef.current = 0;
+    setDemoSentence(DEFAULT_SENTENCE);
+    setUserSentence(null);
+    setTryText("");
+    setTryNote(null);
+    setTokenBars([]);
+    setDecoded(null);
+    setRolloutSamples(0);
+    setHud({ lossText: "—", samples: 0, batches: 0 });
+    statusRef.current = "idle";
+    setStatus("idle");
+  }, [syncRunCfg]);
+
+  // Terminate the worker (releasing its WebGL context back to the browser's
+  // process-wide pool) and return to idle — as opposed to reset(), which keeps
+  // the worker warm. Every context-pressure teardown goes through here.
+  // Restart-to-idle: an interrupted run is NOT resumed; the viewer presses
+  // Start again, which builds a genuinely fresh worker.
+  const releaseWorkerToIdle = useCallback(() => {
+    trainerRef.current?.destroy();
+    trainerRef.current = null;
+    resetToIdle();
+  }, [resetToIdle]);
+
+  // Fires when "training" outlives TRAIN_STALL_MS with no new batch — the worker
+  // went silent mid-run (the mid-training twin of the loading wedge). Release
+  // the worker (freeing the lost context) and surface a recoverable failure.
+  const onTrainStalled = useCallback(() => {
+    trainWatchdogRef.current = null;
+    if (statusRef.current !== "training") return; // paused/converged; stale fire
+    console.warn(
+      `VLA trainer: no batch progress within ${TRAIN_STALL_MS}ms — releasing the worker`
+    );
+    releaseWorkerToIdle();
+    setHostFailure("train-stalled");
+  }, [releaseWorkerToIdle]);
+
+  // The run's loss went non-physical (zeroed GPU readback of a dead context) —
+  // either a run of dead batches (DEAD_LOSS_LIMIT) or a "converged" that landed
+  // below CONVERGED_LOSS_FLOOR. Either way the policy is worthless: tear the
+  // worker down and surface it instead of handing off a garbage "trained" model.
+  const onTrainCollapsed = useCallback(() => {
+    console.warn(
+      "VLA trainer: action loss collapsed to a non-physical value (dead WebGL context?) — releasing the worker"
+    );
+    releaseWorkerToIdle();
+    setHostFailure("train-collapsed");
+  }, [releaseWorkerToIdle]);
+
+  const clearTrainWatchdog = () => {
+    if (trainWatchdogRef.current !== null) {
+      window.clearTimeout(trainWatchdogRef.current);
+      trainWatchdogRef.current = null;
+    }
+  };
+  const armTrainWatchdog = () => {
+    clearTrainWatchdog();
+    trainWatchdogRef.current = window.setTimeout(onTrainStalled, TRAIN_STALL_MS);
+  };
+
   // ---- controls ----
   // Fires when "loading" outlasts LOADING_WATCHDOG_MS with no word from the
-  // worker — see the `stuck` state's comment for the failure this catches. The
+  // worker — see HostFailure's "load-stuck" for the failure this catches. The
   // worker itself never posts an error here (it isn't dead, just wedged
   // against a WebGL context that died on arrival), so nothing else would ever
   // move status off "loading". Tearing the worker down on detection matters as
@@ -954,14 +1100,13 @@ export default function Hero() {
     console.warn(
       `VLA trainer: no progress out of Language Warmup within ${LOADING_WATCHDOG_MS}ms — releasing the worker`
     );
-    trainerRef.current?.destroy();
-    trainerRef.current = null; // next Start Training builds a genuinely fresh worker
-    setStatusBoth("idle");
-    setStuck(true);
-  }, []);
+    releaseWorkerToIdle(); // destroy the worker + release its lost context
+    setHostFailure("load-stuck");
+  }, [releaseWorkerToIdle]);
 
   const onUpdate = () => {
-    const trainer = trainerRef.current!;
+    const trainer = trainerRef.current;
+    if (!trainer) return; // torn down mid-flight (a watchdog just released it)
     if (trainer.status !== statusRef.current) {
       // the language warm-up has just handed off to the coupled loop: this is
       // when the demonstration cycle actually begins, so stamp its clock here
@@ -983,11 +1128,30 @@ export default function Hero() {
           loadWatchdogRef.current = null;
         }
       }
+      // Training-progress watchdog (B3): run it for exactly the "training" span.
+      // Entering training arms the stall clock and resets the dead-loss
+      // counters; leaving it (pause / converge / error / idle) disarms it — a
+      // pause legitimately stops batches and must not be read as a stall.
+      if (trainer.status === "training") {
+        lastWatchedBatchRef.current = trainer.batches;
+        deadLossRunRef.current = 0;
+        armTrainWatchdog();
+      } else {
+        clearTrainWatchdog();
+      }
       // Failures arrive as status "error" (mini-vla >= 0.4.0) with a reason
       // that decides the way out — see the error branch of the bar below.
       if (trainer.status === "error") setErrorReason(trainer.errorReason);
       setStatusBoth(trainer.status);
       if (trainer.status === "converged") {
+        // False-convergence guard (B3): a genuinely converged Huber action loss
+        // sits ~0.012–0.015; at/below CONVERGED_LOSS_FLOOR (or non-finite) it is
+        // the zeroed readback of a dead context, not a trained policy. Reject it
+        // as a collapse instead of unlocking "try it" on a worthless model.
+        if (!Number.isFinite(trainer.loss) || trainer.loss < CONVERGED_LOSS_FLOOR) {
+          onTrainCollapsed();
+          return;
+        }
         // auto-episodes end; the rollout waits for the user's command
         engineRef.current!.reset();
         visGazeRef.current = null;
@@ -995,6 +1159,25 @@ export default function Hero() {
         // the interactive policy is the final model — show the full training
         // budget it saw, not the last per-cycle snapshot count
         setRolloutSamples(trainer.samples);
+      }
+    } else if (trainer.status === "training") {
+      // Steady-state training (no status change): a new batch landed. Reset the
+      // stall clock and watch for a run of non-physical losses — DEAD_LOSS_LIMIT
+      // zeroed/NaN readbacks in a row means the WebGL context died mid-run and
+      // every subsequent gradient is worthless, so bail before the garbage
+      // policy silently reaches the batch-107 false-convergence.
+      if (trainer.batches !== lastWatchedBatchRef.current) {
+        lastWatchedBatchRef.current = trainer.batches;
+        armTrainWatchdog();
+        const l = trainer.loss;
+        if (!Number.isFinite(l) || l === 0) {
+          if (++deadLossRunRef.current >= DEAD_LOSS_LIMIT) {
+            onTrainCollapsed();
+            return;
+          }
+        } else {
+          deadLossRunRef.current = 0;
+        }
       }
     }
     const now = performance.now();
@@ -1047,48 +1230,16 @@ export default function Hero() {
       demoLayoutRef.current = DEFAULT_LAYOUT.map((b) => ({ ...b }));
       rolloutLayoutRef.current = DEFAULT_LAYOUT.map((b) => ({ ...b }));
       setErrorReason(null); // mirrors start()'s own clear; a retry shows no stale reason
-      setStuck(false);
+      setHostFailure(null);
       void trainer.start(onUpdate, cfg);
     }
   };
 
   const onReset = () => {
+    // reset() keeps the worker warm (tfjs + embeddings stay cached for a fast
+    // restart); resetToIdle() returns all the local view state to idle.
     trainerRef.current?.reset();
-    autoPausedRef.current = false;
-    // back to idle: the profile follows the viewport again (it may have been
-    // resized across the breakpoint during the run we just threw away)
-    cfgLockedRef.current = false;
-    syncRunCfg();
-    setStatusBoth("idle");
-    setErrorReason(null);
-    setStuck(false);
-    if (loadWatchdogRef.current !== null) {
-      window.clearTimeout(loadWatchdogRef.current);
-      loadWatchdogRef.current = null;
-    }
-    engineRef.current!.reset();
-    rolloutCycleRef.current = -1;
-    visGazeRef.current = null;
-    armState.current = { a1: REST[0], a2: REST[1] };
-    // clones — the rollout's blocks are draggable; DEFAULT_LAYOUT stays pristine
-    demoLayoutRef.current = DEFAULT_LAYOUT.map((b) => ({ ...b }));
-    demoSentenceRef.current = DEFAULT_SENTENCE;
-    demoPlanRef.current = null;
-    lastCycleRef.current = -1;
-    rolloutLayoutRef.current = DEFAULT_LAYOUT.map((b) => ({ ...b }));
-    activeTokensRef.current = DEFAULT_SENTENCE.tokens;
-    userSentenceRef.current = null;
-    pausedAccumRef.current = 0;
-    pauseStartRef.current = null;
-    trainStartRef.current = 0;
-    setDemoSentence(DEFAULT_SENTENCE);
-    setUserSentence(null);
-    setTryText("");
-    setTryNote(null);
-    setTokenBars([]);
-    setDecoded(null);
-    setRolloutSamples(0);
-    setHud({ lossText: "—", samples: 0, batches: 0 });
+    resetToIdle();
   };
 
   // ---- mobile: open / close the stacked demo ----
@@ -1107,39 +1258,89 @@ export default function Hero() {
     pauseTraining();
   };
 
-  // Battery guards: a training run behind a hidden tab or scrolled far off
-  // screen is invisible work. Pause it, remember that WE did, and resume only
-  // once both conditions clear again (a manual pause never sets the flag, so it
-  // is never undone here).
+  // Battery + context guards. A training run behind a hidden tab or scrolled
+  // far off screen is invisible work: pause it immediately (battery). If it
+  // STAYS backgrounded past the grace period, go further and release the whole
+  // worker (A1/A2) — the pause alone leaves the WebGL context pinned, and a
+  // context pinned behind a suspended tab is what starves the next visit
+  // against the browser's process-wide cap. Only a pause WE initiated is
+  // auto-resumed (a manual pause never sets the flag, so it is never undone).
   useEffect(() => {
     const stage = stageRef.current;
-    const autoPause = () => {
-      if (statusRef.current !== "training") return;
-      pauseTraining();
-      autoPausedRef.current = true;
+    // "Backgrounded" = the hero can't be seen: tab hidden OR scrolled off
+    // screen. Foreground requires BOTH visible and on-screen.
+    const backgrounded = () =>
+      document.visibilityState === "hidden" || !heroOnScreenRef.current;
+
+    // A2: after IDLE_TEARDOWN_GRACE_MS backgrounded, release the worker so its
+    // context returns to the pool. Armed on entry into the backgrounded state;
+    // a return to the foreground cancels it before it fires.
+    const armIdleTeardown = () => {
+      if (graceTimerRef.current !== null) return; // already ticking
+      graceTimerRef.current = window.setTimeout(() => {
+        graceTimerRef.current = null;
+        // re-check: only tear down if still backgrounded and a worker exists.
+        // A CONVERGED run is spared — it's a finished, interactive "try it"
+        // session, and nuking its trained policy on a casual tab-away is worse
+        // than holding its one context. Training/loading/idle workers are the
+        // frequent, expensive contributors to the cap and still get released.
+        if (!backgrounded() || !trainerRef.current) return;
+        if (statusRef.current === "converged") return;
+        releaseWorkerToIdle();
+      }, IDLE_TEARDOWN_GRACE_MS);
     };
-    const autoResume = () => {
-      if (!autoPausedRef.current) return;
-      if (document.visibilityState !== "visible" || !heroOnScreenRef.current)
-        return;
-      autoPausedRef.current = false;
-      resumeTraining();
+    const cancelIdleTeardown = () => {
+      if (graceTimerRef.current !== null) {
+        window.clearTimeout(graceTimerRef.current);
+        graceTimerRef.current = null;
+      }
     };
-    const onVisibility = () =>
-      document.visibilityState === "hidden" ? autoPause() : autoResume();
-    document.addEventListener("visibilitychange", onVisibility);
+
+    // The one reconciler for both signals (visibility + intersection). Pausing
+    // gradient steps is immediate; releasing the worker waits out the grace.
+    const sync = () => {
+      if (backgrounded()) {
+        if (statusRef.current === "training") {
+          pauseTraining();
+          autoPausedRef.current = true;
+        }
+        armIdleTeardown();
+      } else {
+        cancelIdleTeardown();
+        if (autoPausedRef.current) {
+          autoPausedRef.current = false;
+          resumeTraining();
+        }
+      }
+    };
+
+    document.addEventListener("visibilitychange", sync);
+    // A1: pagehide means the page is about to be frozen into bfcache (or
+    // unloaded). A frozen page keeps its worker + WebGL context ALIVE but its
+    // timers stop, so the grace teardown would never fire — release the worker
+    // NOW so its context isn't pinned against the cap for the whole suspension.
+    // A bfcache restore lands on idle; the viewer presses Start again.
+    const onPageHide = () => {
+      cancelIdleTeardown();
+      // spare a converged run (see the grace-teardown note) — a bfcache restore
+      // then brings the viewer back to their trained "try it" instead of idle.
+      if (trainerRef.current && statusRef.current !== "converged")
+        releaseWorkerToIdle();
+    };
+    window.addEventListener("pagehide", onPageHide);
     // fires once on observe, which is how heroOnScreenRef gets its real value
     const io = new IntersectionObserver(([entry]) => {
       heroOnScreenRef.current = entry.isIntersecting;
-      if (entry.isIntersecting) autoResume();
-      else autoPause();
+      sync();
     });
     if (stage) io.observe(stage);
     return () => {
-      document.removeEventListener("visibilitychange", onVisibility);
+      document.removeEventListener("visibilitychange", sync);
+      window.removeEventListener("pagehide", onPageHide);
+      cancelIdleTeardown();
       io.disconnect();
     };
-  }, [pauseTraining, resumeTraining]);
+  }, [pauseTraining, resumeTraining, releaseWorkerToIdle]);
 
   /** "Try it" mode: run a sentence — the viewer's own, or a preset chip's —
       through the trained policy. The color head decodes which block to pick up;
@@ -1338,8 +1539,12 @@ export default function Hero() {
   // absent before the run (idle / language warm-up) and again once the run has
   // converged and the bar's job is to get out of the way of the command box.
   const showLoss = status === "training" || status === "paused";
-  const statusText = stuck
-    ? "Stuck — reload to retry"
+  const statusText = hostFailure
+    ? hostFailure === "load-stuck"
+      ? "Stuck — reload to retry"
+      : hostFailure === "train-stalled"
+        ? "Training stalled — reload"
+        : "Training failed — reload"
     : status === "error"
       ? "Load failed"
       : status === "idle"
@@ -1431,12 +1636,12 @@ export default function Hero() {
               </Link>
             </div>
           )}
-          {stuck ? (
-            // Same reasoning as errorReason "worker" below: the worker's dead
-            // WebGL context is a browser-process-wide resource (other tabs'
-            // suspended pages can be holding it), so a fresh `new Worker(...)`
-            // in THIS tab is not reliably safe from hitting it again — only a
-            // reload (or closing other tabs first) actually clears it.
+          {hostFailure ? (
+            // Same reasoning as errorReason "worker" below: every host-detected
+            // failure is process-wide GPU-context exhaustion (other tabs'
+            // suspended pages can be holding contexts), so a fresh
+            // `new Worker(...)` in THIS tab is not reliably safe from hitting it
+            // again — only a reload (or closing other tabs first) clears it.
             <button
               className="vla-btn"
               onClick={() => window.location.reload()}
