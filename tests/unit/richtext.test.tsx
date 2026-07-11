@@ -15,7 +15,8 @@ describe("renderBody", () => {
     const out = html("# Title\n\nSome **bold** and a [link](https://x.dev).\n\n| a | b |\n| - | - |\n| 1 | 2 |");
     expect(out).toContain("<h1>Title</h1>");
     expect(out).toContain("<strong>bold</strong>");
-    expect(out).toContain('<a href="https://x.dev">link</a>');
+    // Outward-facing links open in a new tab.
+    expect(out).toContain('<a href="https://x.dev" target="_blank" rel="noopener noreferrer">link</a>');
     expect(out).toContain("<table>");
   });
 

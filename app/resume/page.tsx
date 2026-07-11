@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Nav from "@/components/Nav";
 import Footer from "@/components/Footer";
-import { profile, resumeDownloadName } from "@/lib/content";
+import { profile, resumeDownloadName, getProjectByTitle, externalLinkProps } from "@/lib/content";
 import type { Resume } from "@/lib/resume";
 import resumeData from "@/lib/resume-data.json";
 
@@ -35,7 +35,7 @@ export default function ResumePage() {
             <div className="resume-contacts">
               {resume.location && <span>{resume.location}</span>}
               {siteContacts.map((c) => (
-                <a key={c.href} href={c.href}>
+                <a key={c.href} href={c.href} {...externalLinkProps(c.href)}>
                   {c.label}
                 </a>
               ))}
@@ -43,7 +43,10 @@ export default function ResumePage() {
           </div>
         </div>
 
-        {resume.sections.map((s) => (
+        {resume.sections.map((s) => {
+          // Only the Projects section links its entries to project pages.
+          const isProjects = /projects/i.test(s.title);
+          return (
           <section key={s.title} className="resume-section">
             <h2 className="resume-section-title">{s.title}</h2>
 
@@ -58,10 +61,20 @@ export default function ResumePage() {
               </div>
             )}
 
-            {s.entries.map((e, i) => (
+            {s.entries.map((e, i) => {
+              const project = isProjects ? getProjectByTitle(e.title) : undefined;
+              return (
               <div key={i} className="resume-entry">
                 <div className="resume-entry-row">
-                  <span className="resume-entry-title">{e.title}</span>
+                  <span className="resume-entry-title">
+                    {project ? (
+                      <a className="resume-entry-link" href={`/projects/${project.slug}`}>
+                        {e.title}
+                      </a>
+                    ) : (
+                      e.title
+                    )}
+                  </span>
                   {e.dates && <span className="resume-entry-dates">{e.dates}</span>}
                 </div>
                 {(e.org || e.location) && (
@@ -78,9 +91,11 @@ export default function ResumePage() {
                   </ul>
                 )}
               </div>
-            ))}
+              );
+            })}
           </section>
-        ))}
+          );
+        })}
 
         <div className="resume-download">
           <a className="resume-btn" href="/resume.pdf" download={resumeDownloadName()}>

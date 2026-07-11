@@ -95,7 +95,14 @@ marked.use({ gfm: true, extensions: [blockMath, inlineMath, figure] });
 
 /** Markdown body -> HTML string, rendered at build time. */
 function renderMarkdown(md: string): string {
-  return marked.parse(md, { async: false }) as string;
+  const html = marked.parse(md, { async: false }) as string;
+  // Open outward-facing (http/https) body links in a new tab. Content is
+  // build-time and trusted (each project's own repo), so a string pass is safe;
+  // relative/internal links are left to navigate in-place.
+  return html.replace(
+    /<a href="(https?:\/\/[^"]*)"/g,
+    '<a href="$1" target="_blank" rel="noopener noreferrer"',
+  );
 }
 
 /** Convenience wrapper returning the rendered body as a React element. */

@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import Nav from "@/components/Nav";
 import Footer from "@/components/Footer";
-import { projects, getProject, profile } from "@/lib/content";
+import { projects, getProject, profile, externalLinkProps } from "@/lib/content";
 import { renderBody } from "@/lib/richtext";
 import AiDisclaimer from "@/components/AiDisclaimer";
 
@@ -64,7 +64,7 @@ export default async function ProjectPage({
         {project.links.length > 0 && (
           <div className="detail-links">
             {project.links.map((lk) => (
-              <a key={lk.label} className="detail-link" href={lk.href}>
+              <a key={lk.label} className="detail-link" href={lk.href} {...externalLinkProps(lk.href)}>
                 {lk.label} →
               </a>
             ))}
