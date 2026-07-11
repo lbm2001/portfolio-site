@@ -1409,6 +1409,17 @@ export default function Hero() {
         releaseWorkerToIdle();
     };
     window.addEventListener("pagehide", onPageHide);
+    // A2: pageshow with persisted===true means a bfcache restore — the browser
+    // thawed a frozen snapshot. pagehide spares converged runs so the viewer
+    // returns to their trained policy, but a frozen WebGL context is usually dead
+    // on thaw: the GPU process recycled it during suspension. Destroy everything
+    // and land on idle so Start builds a genuinely fresh worker + context.
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (!e.persisted) return;
+      cancelIdleTeardown();
+      if (trainerRef.current) releaseWorkerToIdle();
+    };
+    window.addEventListener("pageshow", onPageShow);
     // fires once on observe, which is how heroOnScreenRef gets its real value
     const io = new IntersectionObserver(([entry]) => {
       heroOnScreenRef.current = entry.isIntersecting;
@@ -1418,6 +1429,7 @@ export default function Hero() {
     return () => {
       document.removeEventListener("visibilitychange", sync);
       window.removeEventListener("pagehide", onPageHide);
+      window.removeEventListener("pageshow", onPageShow);
       cancelIdleTeardown();
       io.disconnect();
     };
