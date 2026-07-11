@@ -1492,6 +1492,17 @@ export default function Hero() {
         releaseWorkerToIdle();
     };
     window.addEventListener("pagehide", onPageHide);
+    // A2: pageshow with persisted===true means a bfcache restore — the browser
+    // thawed a frozen snapshot. pagehide spares converged runs so the viewer
+    // returns to their trained policy, but a frozen WebGL context is usually dead
+    // on thaw: the GPU process recycled it during suspension. Destroy everything
+    // and land on idle so Start builds a genuinely fresh worker + context.
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (!e.persisted) return;
+      cancelIdleTeardown();
+      if (trainerRef.current) releaseWorkerToIdle();
+    };
+    window.addEventListener("pageshow", onPageShow);
     // fires once on observe, which is how heroOnScreenRef gets its real value
     const io = new IntersectionObserver(([entry]) => {
       heroOnScreenRef.current = entry.isIntersecting;
@@ -1501,10 +1512,30 @@ export default function Hero() {
     return () => {
       document.removeEventListener("visibilitychange", sync);
       window.removeEventListener("pagehide", onPageHide);
+      window.removeEventListener("pageshow", onPageShow);
       cancelIdleTeardown();
       io.disconnect();
     };
   }, [pauseTraining, resumeTraining, releaseWorkerToIdle]);
+
+  // Stale-tab guard: a tab left open across a deploy runs old JS against the
+  // current deploy's assets. On tab-return, fetch the deploy's build id and
+  // reload if it no longer matches the one baked into this bundle.
+  useEffect(() => {
+    const buildId = process.env.NEXT_PUBLIC_BUILD_ID;
+    if (!buildId) return;
+    const check = async () => {
+      if (document.hidden) return;
+      try {
+        const r = await fetch("/build-id.json", { cache: "no-store" });
+        if (!r.ok) return;
+        const { id } = await r.json();
+        if (id !== buildId) window.location.reload();
+      } catch { /* offline / fetch failed — skip */ }
+    };
+    document.addEventListener("visibilitychange", check);
+    return () => document.removeEventListener("visibilitychange", check);
+  }, []);
 
   /** "Try it" mode: run a sentence — the viewer's own, or a preset chip's —
       through the trained policy. The color head decodes which block to pick up;

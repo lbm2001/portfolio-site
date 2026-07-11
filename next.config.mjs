@@ -1,10 +1,19 @@
+import { randomUUID } from "node:crypto";
+import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { PHASE_DEVELOPMENT_SERVER } from "next/constants.js";
+
+const BUILD_ID = randomUUID();
+writeFileSync(
+  path.join(import.meta.dirname, "public/build-id.json"),
+  JSON.stringify({ id: BUILD_ID }),
+);
 
 /** @type {(phase: string) => import('next').NextConfig} */
 const config = (phase) => {
   /** @type {import('next').NextConfig} */
   const nextConfig = {
+    env: { NEXT_PUBLIC_BUILD_ID: BUILD_ID },
     reactStrictMode: true,
     // mini-vla ships TS source; Next must transpile it (and bundle its module
     // Web Worker) as if it were first-party code.
