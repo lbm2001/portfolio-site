@@ -2044,6 +2044,26 @@ a {
   font: 600 16px/1.35 var(--font-sans);
   color: var(--ink);
 }
+.resume-entry-link {
+  color: inherit;
+  text-decoration: none;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--red);
+  transition: color 0.15s ease;
+}
+.resume-entry-link::after {
+  content: "↗";
+  margin-left: 3px;
+  font-size: 0.8em;
+  color: var(--muted);
+}
+.resume-entry-link:hover {
+  color: var(--red);
+  text-decoration: underline;
+}
+.resume-entry-link:hover::after {
+  color: var(--red);
+}
 .resume-entry-dates {
   flex-shrink: 0;
   font: 500 12px var(--font-mono);

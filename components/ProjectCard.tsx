@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { Project } from "@/lib/content";
+import { externalLinkProps, type Project } from "@/lib/content";
 
 // A single project entry in the selected-work grid. The card itself links to
 // its detail page (via a stretched overlay link so it doesn't wrap the whole
@@ -29,7 +29,7 @@ export default function ProjectCard({ project: p }: { project: Project }) {
       </span>
       <span className="work-links">
         {p.links.map((lk) => (
-          <a key={lk.label} className="work-link" href={lk.href}>
+          <a key={lk.label} className="work-link" href={lk.href} {...externalLinkProps(lk.href)}>
             {lk.label}
           </a>
         ))}
