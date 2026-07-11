@@ -94,17 +94,30 @@ const SCENE_PALETTE: ScenePalette = {
 // throttle for the language + vision-gaze readouts (CONFIG.rollout).
 const LANG_MS = CONFIG.rollout.langMs;
 
+// First-line stall watchdog, handed to the package as replayWatchdogMs: how
+// long the real WebGL run may sit in "loading" (Language Warmup) without a first
+// training batch before the package swaps in the CPU replay. It overrides the
+// package default (CONFIG.replay.watchdogMs, 7.5s). Lowered to 6s: healthy
+// devices reach a first batch in ≤5s and clear the watchdog before it fires, so
+// this only ever affects a STALLED device (the iOS/iPadOS dead-context wedge) —
+// where 6s gets the replay going ~1.5s sooner than the default. The ~1s margin
+// above the observed ≤5s warm-up keeps a merely-slow-but-healthy run (cold
+// tfjs, thermal throttle, low-end GPU) from being swapped to the replay before
+// its own first batch lands — a false swap costs that device its genuine live
+// training. Don't drop below ~5.5s.
+const REPLAY_WATCHDOG_MS = 6_000;
+
 // How long "loading" (Language Warmup) may run before the host gives up. With
 // replayFallback on, the package itself owns first-line load-stuck recovery: on
-// a stall it swaps to the replay at CONFIG.replay.watchdogMs (7.5s), and the
-// replay's own load (tfjs-cpu + embeddings + checkpoints, ~1–2s) reaches
-// "training" around ~9s. So this host watchdog is no longer the first responder.
+// a stall it swaps to the replay at REPLAY_WATCHDOG_MS (6s), and the replay's
+// own load (tfjs-cpu + embeddings + checkpoints, ~1–2s) reaches "training"
+// around ~7.5s. So this host watchdog is no longer the first responder.
 // When it trips it splits on which run is still loading (see onLoadStuck): a
 // real run that never swapped (usingReplay === false) is genuinely wedged and
 // gets torn down here; a swap already underway (usingReplay === true) is the
 // replay loading, so it hands off to a second, longer ceiling
 // (REPLAY_LOAD_WATCHDOG_MS) rather than either killing a healthy swap or
-// standing down forever. 15s gives that ~9s replay-ready path clear headroom
+// standing down forever. 15s gives that ~7.5s replay-ready path clear headroom
 // before the net trips. On real hardware a healthy live warm-up is a few
 // seconds — 200 text-only batches that early-stop the moment the color head
 // plateaus (~tens of steps), which a GPU eats easily — so 15s still misfires
@@ -1275,6 +1288,10 @@ export default function Hero() {
       // context cap that no backend switch can rescue. See §4/§6: the host
       // watchdogs become a thin outer net and a "replay" chip flags it.
       replayFallback: true,
+      // Swap a stalled run to the replay at 6s instead of the package's 7.5s
+      // default (see REPLAY_WATCHDOG_MS) — gets iOS/iPadOS to a visible run
+      // sooner without risking a false swap on a healthy device.
+      replayWatchdogMs: REPLAY_WATCHDOG_MS,
     }));
     // any press of the bar is a deliberate choice: it ends any auto-pause, so
     // becoming visible again never overrides what the viewer just asked for
