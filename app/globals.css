@@ -977,15 +977,40 @@ a {
 /* Shown only when the package has swapped live training for the CPU-backend
    replay (iOS/iPadOS). A small muted pill hugging its text — deliberately quiet,
    sitting under the status word without competing with it. */
-.vla-replay-chip {
+.vla-replay-chip-wrap {
+  position: relative;
   align-self: flex-start;
+}
+.vla-replay-chip {
   font: 600 8px/1 var(--font-mono);
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--muted);
+  background: none;
   border: 1px solid var(--border);
   border-radius: 999px;
   padding: 3px 6px;
+  cursor: pointer;
+}
+/* Tap-revealed disclosure: title tooltips never fire on the touch-only
+   devices (iPad/iOS) this chip appears on, so the explanation lives here
+   instead, anchored under the chip like .vla-try-note. */
+.vla-replay-info {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 6px;
+  width: max-content;
+  max-width: 220px;
+  font: 500 9.5px/1.4 var(--font-mono);
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 8px 10px;
+  z-index: 9;
 }
 .vla-loss {
   flex: 1;
