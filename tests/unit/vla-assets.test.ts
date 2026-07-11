@@ -1,9 +1,14 @@
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { VLA_ASSET_BASE, VLA_RUNTIME_ASSETS, VLA_VERSION } from "../../lib/vla-assets";
+import {
+  VLA_ASSET_BASE,
+  VLA_REPLAY_MANIFEST,
+  VLA_RUNTIME_ASSETS,
+  VLA_VERSION,
+} from "../../lib/vla-assets";
 
 // The seam that neither repo can guard alone.
 //
@@ -53,5 +58,40 @@ describe("mini-vla asset path", () => {
     // A zero-byte file would be fetched happily and then fail validation deep
     // inside loadEmbeddings, where the error is far from the cause.
     expect(statSync(path).size).toBeGreaterThan(0);
+  });
+});
+
+// The replay fallback's assets — the SAME reachability seam as the embeddings
+// above, one layer deeper. When the package swaps to the CPU-backend replay
+// (the iOS/iPadOS path, where the real WebGL run can't get going), it fetches
+// replay/manifest.json from assetBase and then each checkpoint bin the manifest
+// names. These are copied automatically by copy-vla-assets.mjs's recursive copy,
+// but nothing else asserts they arrived: a missing or zeroed checkpoint would
+// look perfectly healthy until an actual iPad visitor triggers the swap and the
+// replay 404s. This block fails the build instead. Parse the checkpoint list
+// from the manifest — `npm run gen:replay` can change the count — rather than
+// hard-coding the current six.
+describe("mini-vla replay assets", () => {
+  const manifestPath = join(assetDir, VLA_REPLAY_MANIFEST);
+
+  it("serves a non-empty replay manifest where the replay will look for it", () => {
+    expect(existsSync(manifestPath), `${manifestPath} is missing`).toBe(true);
+    expect(statSync(manifestPath).size).toBeGreaterThan(0);
+  });
+
+  it("serves every checkpoint the manifest names, each non-empty", () => {
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
+      checkpoints: { file: string }[];
+    };
+    // A manifest that parses but lists no checkpoints is as broken as a missing
+    // one — the replay would load nothing and never produce a rollout.
+    expect(Array.isArray(manifest.checkpoints)).toBe(true);
+    expect(manifest.checkpoints.length).toBeGreaterThan(0);
+    const replayDir = join(assetDir, "replay");
+    for (const { file } of manifest.checkpoints) {
+      const path = join(replayDir, file);
+      expect(existsSync(path), `${path} is missing`).toBe(true);
+      expect(statSync(path).size, `${path} is empty`).toBeGreaterThan(0);
+    }
   });
 });

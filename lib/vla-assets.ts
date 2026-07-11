@@ -28,3 +28,13 @@ export const VLA_ASSET_BASE = `/vla/${VLA_VERSION}`;
 
 /** The two files loadEmbeddings() fetches at runtime. */
 export const VLA_RUNTIME_ASSETS = ["embeddings-50d.bin", "vocab.txt"] as const;
+
+/**
+ * The replay fallback's manifest, fetched at runtime from `assetBase` exactly
+ * like the embeddings when the package swaps to the CPU-backend replay (the
+ * iOS/iPadOS path). It lists the checkpoint bins the replay loads; both live
+ * under `public${VLA_ASSET_BASE}/replay/` via the recursive asset copy.
+ * Relative to VLA_ASSET_BASE, no leading slash. tests/unit/vla-assets.test.ts
+ * asserts this file and every checkpoint it names are present and non-empty.
+ */
+export const VLA_REPLAY_MANIFEST = "replay/manifest.json";
