@@ -73,11 +73,12 @@ import {
 const ACCENT = "#e12d1a"; // = --red; canvases can't read CSS vars cheaply
 
 // The demo/rollout scenes' cosmetic look is owned HERE (host-side) and passed
-// into paintScene as a palette. These match the renderer's defaults, so the
-// visible output is unchanged — the point is that the look now lives with the
-// host, not the model. (paintSilhouette takes no palette: the model's-eye view
-// versions with the model.)
-const SCENE_PALETTE: ScenePalette = {
+// into paintScene as a palette. The light palette matches the renderer's
+// defaults, so the visible output is unchanged — the point is that the look now
+// lives with the host, not the model. (paintSilhouette takes no palette: it is
+// the literal model input — a fixed white-background view the trained
+// checkpoints expect — and MUST NOT be recolored for a theme.)
+const LIGHT_SCENE_PALETTE: ScenePalette = {
   floor: "#e6e6e6",
   pedestal: "#2b2b2b",
   link: "#8a8a8a",
@@ -85,6 +86,47 @@ const SCENE_PALETTE: ScenePalette = {
   effectorOpen: "#fff",
   effectorOpenEdge: "#6f6f6f",
   effectorClosed: "#6f6f6f",
+};
+// Dark-mode arm/scene look: the near-black pedestal becomes a light structural
+// tone, the white joints/open-jaw stay light, and the floor line lifts just
+// above --bg. link stays mid-grey (reads on both). Default guesses — see the
+// mini-vla handoff; the block colours themselves live in the package.
+const DARK_SCENE_PALETTE: ScenePalette = {
+  floor: "#333333",
+  pedestal: "#c9c9c9",
+  link: "#8a8a8a",
+  joint: "#f2f2f2",
+  effectorOpen: "#f2f2f2",
+  effectorOpenEdge: "#8a8a8a",
+  effectorClosed: "#9a9a9a",
+};
+
+// Canvases can't read CSS vars cheaply, so the theme is resolved here and
+// mirrored into a ref the rAF loop reads each frame. Effective theme = the
+// <html data-theme> override the viewer set via the nav toggle, else the OS
+// preference — the same rule the CSS dark block uses; keep them in step.
+type CanvasTheme = {
+  palette: ScenePalette;
+  lossBaseline: string; // the loss curve's zero-line
+  visionBorder: string; // the vision panel's frame stroke
+};
+const LIGHT_CANVAS: CanvasTheme = {
+  palette: LIGHT_SCENE_PALETTE,
+  lossBaseline: "#efefef",
+  visionBorder: "rgba(0,0,0,.12)",
+};
+const DARK_CANVAS: CanvasTheme = {
+  palette: DARK_SCENE_PALETTE,
+  lossBaseline: "#2c2c2c",
+  visionBorder: "rgba(255,255,255,0.14)",
+};
+const resolveCanvasTheme = (): CanvasTheme => {
+  const t = document.documentElement.getAttribute("data-theme");
+  const dark =
+    t === "dark" ||
+    (t !== "light" &&
+      window.matchMedia("(prefers-color-scheme: dark)").matches);
+  return dark ? DARK_CANVAS : LIGHT_CANVAS;
 };
 
 // The rollout state machine — phases (reach → carry → hold → return), the
@@ -292,6 +334,9 @@ export default function Hero() {
   // offscreen canvases: the literal silhouette pipeline the model sees
   const silRef = useRef<HTMLCanvasElement | null>(null);
   const silThumbRef = useRef<HTMLCanvasElement | null>(null);
+  // Current theme colours for the canvases, read every frame by the rAF loop.
+  // Updated by the effect below on OS change or a nav-toggle data-theme flip.
+  const canvasThemeRef = useRef<CanvasTheme>(LIGHT_CANVAS);
 
   const [status, setStatus] = useState<TrainerStatus>("idle");
   const [hud, setHud] = useState({ lossText: "—", samples: 0, batches: 0 });
@@ -422,6 +467,27 @@ export default function Hero() {
     trainer.resume();
     statusRef.current = "training";
     setStatus("training");
+  }, []);
+
+  // Keep the canvas theme in step with the OS preference AND the nav toggle's
+  // data-theme override. The rAF loop reads canvasThemeRef every frame, so the
+  // arm/loss/vision recolour on the next painted frame with no extra repaint.
+  useEffect(() => {
+    const apply = () => {
+      canvasThemeRef.current = resolveCanvasTheme();
+    };
+    apply();
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    mq.addEventListener("change", apply);
+    const obs = new MutationObserver(apply);
+    obs.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
+    return () => {
+      mq.removeEventListener("change", apply);
+      obs.disconnect();
+    };
   }, []);
 
   // ---- the single rAF loop: wires + all four canvases, every frame ----
@@ -566,7 +632,7 @@ export default function Hero() {
           accent: ACCENT,
           carry: p.carry,
           grip: p.grip,
-          palette: SCENE_PALETTE,
+          palette: canvasThemeRef.current.palette,
         });
         return;
       }
@@ -604,7 +670,7 @@ export default function Hero() {
             accent: ACCENT,
             carry: pose.carry,
             grip: pose.grip,
-            palette: SCENE_PALETTE,
+            palette: canvasThemeRef.current.palette,
           });
           return;
         }
@@ -654,7 +720,7 @@ export default function Hero() {
         accent: ACCENT,
         carry,
         grip: grip ?? 0,
-        palette: SCENE_PALETTE,
+        palette: canvasThemeRef.current.palette,
       });
     };
 
@@ -743,7 +809,7 @@ export default function Hero() {
           accent: ACCENT,
           carry: f.carry,
           grip: f.grip,
-          palette: SCENE_PALETTE,
+          palette: canvasThemeRef.current.palette,
         });
         drawGaze(ctx, W, H, f.gaze, f.phase);
         setActionVals(f.target, f.grip);
@@ -807,7 +873,7 @@ export default function Hero() {
         lossNorm: trainer?.lossNorm() ?? 1,
         carry: f ? f.carry : null,
         grip: f ? f.grip : 0,
-        palette: SCENE_PALETTE,
+        palette: canvasThemeRef.current.palette,
       });
       drawGaze(ctx, W, H, f ? f.gaze : null, f ? f.phase : null);
       setActionVals(st === "idle" ? null : f ? f.target : null, f ? f.grip : 0);
@@ -872,7 +938,7 @@ export default function Hero() {
           }
       }
 
-      ctx.strokeStyle = "rgba(0,0,0,.12)";
+      ctx.strokeStyle = canvasThemeRef.current.visionBorder;
       ctx.lineWidth = 1;
       ctx.strokeRect(0.5, 0.5, W - 1, W - 1);
 
@@ -917,7 +983,7 @@ export default function Hero() {
       const raw = trainerRef.current?.lossHistory ?? [];
       const pad = 3;
 
-      ctx.strokeStyle = "#efefef";
+      ctx.strokeStyle = canvasThemeRef.current.lossBaseline;
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(0, H - pad);
