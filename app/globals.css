@@ -588,6 +588,12 @@ a {
 }
 
 .vla-label {
+  /* flex, so the ⓘ beside the text sits genuinely centered on the cap line
+     instead of hanging off the baseline (vertical-align guesswork); relative,
+     so EVERY label — in-flow or absolute — is the ⓘ popover's anchor */
+  display: flex;
+  align-items: center;
+  position: relative;
   font: 600 10px/1 var(--font-mono);
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -966,19 +972,25 @@ a {
   display: inline-block;
 }
 
-/* "try it" prompt — appears over the Rollout box once training converged */
+/* "try it" prompt — appears over the Rollout box once training converged.
+   Bottom-anchored and wrap-flowed: the input takes its own full row above the
+   Run/Shuffle buttons, and extra rows (the note) grow the block UPWARD, away
+   from the card underneath. */
 .vla-try {
   position: absolute;
-  left: -44px;
+  /* flush with the card's own edges — reaching left over the Action Head
+     (the old -44px) read as misalignment, not extra room */
+  left: 0;
   right: 0;
   bottom: 100%;
   margin-bottom: 10px;
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   z-index: 4;
 }
 .vla-try-input {
-  flex: 1;
+  flex: 1 0 100%;
   min-width: 0;
   border: 1px solid var(--border-strong);
   border-radius: 3px;
@@ -1033,13 +1045,11 @@ a {
   border-radius: 50%;
   border: 1px solid var(--border);
 }
-/* e.g. "no purple block in this scene — ⟳ to reshuffle" */
+/* e.g. "No purple block in this scene", or a post-run tip. In flow as the
+   try block's own full-width row — absolute (top:100%) it hung over the card
+   header, which is only a 10px gap below. */
 .vla-try-note {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
-  margin-top: 5px;
+  flex: 1 0 100%;
   font: 500 9.5px/1.4 var(--font-mono);
   color: var(--muted);
 }
@@ -1063,10 +1073,11 @@ a {
   padding: 12px 14px;
   transition: width 0.35s ease;
 }
-/* no curve to plot: the bar shrinks to what is left — a status word, the link
-   and one button — instead of framing a stretch of empty paper. */
+/* no curve to plot: the bar shrinks to what is left — a status word, the
+   teaser sentence and one button. 520, not 420: the teaser needs room to sit
+   on two lines without crowding either neighbor. */
 .vla-bar.is-compact {
-  width: min(420px, 86vw);
+  width: min(520px, 86vw);
 }
 .vla-status {
   display: flex;
@@ -1242,6 +1253,210 @@ a {
   border-color: var(--border-strong);
 }
 
+/* ---- guidance layer: ⓘ popovers, narration, nudges ---- */
+/* Tap-first ⓘ beside a card label — the replay chip's disclosure pattern
+   generalized: a real button, popover anchored to the card. title tooltips
+   never fire on the touch devices this must reach. The wrap is deliberately
+   NOT positioned: the labels are flex (align-items centers the icon on the
+   cap line — see .vla-label) and the popover anchors to the card instead. */
+.vla-info-wrap {
+  display: inline-flex;
+  margin-left: 7px;
+}
+.vla-info-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  font: 700 8px/1 var(--font-mono);
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--muted);
+  background: var(--bg);
+  cursor: pointer;
+}
+.vla-info-btn:hover {
+  color: var(--red);
+  border-color: currentColor;
+}
+/* The popover hangs under the LABEL row (every label is position:relative and
+   the wrap is static, so the label is the containing block wherever a state
+   has parked it), left-aligned with the card's inner edge at a fixed width
+   that fits inside the narrowest label-bearing cards. Anchored this way it
+   tracks the label, stays on screen, and — with the :has z-index raise below
+   — never gets clipped under a neighboring card the way the old icon-centered
+   bubble did. Opaque, roomy type: a sheet laid over the card, not text
+   colliding with it. Also resets the label's uppercase/nowrap styling. */
+.vla-info-pop {
+  position: absolute;
+  top: calc(100% + 9px);
+  left: -4px;
+  width: 190px;
+  font: 500 10px/1.55 var(--font-mono);
+  text-transform: none;
+  letter-spacing: normal;
+  white-space: normal;
+  text-align: left;
+  color: var(--muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 10px 12px;
+  z-index: 9;
+}
+/* a card with its popover open paints over its neighbors AND the bar —
+   without this the later-in-DOM Rollout clips the Action Head's popover */
+.vla-node:has(.vla-info-pop) {
+  z-index: 12;
+}
+/* the Action Head is the one card too narrow to host a readable popover:
+   right-align it to the label so it reaches LEFT into the empty wire gap
+   (never right — the Rollout sits only 40px away) */
+.vla-action .vla-info-pop {
+  left: auto;
+  right: -28px;
+}
+/* the middle-slot teaser sentence, carrying the mini-vla link in its words */
+.vla-teaser {
+  font: 500 10px/1.55 var(--font-mono);
+  color: var(--muted);
+  text-align: center;
+  max-width: 300px;
+}
+/* embedded in prose the link loses the ↗︎ and carries the red underline
+   instead — the standalone loss-head link keeps its arrow, no underline */
+.vla-teaser .vla-project-link {
+  text-decoration: underline;
+  text-decoration-color: var(--red);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+/* the warmup wait note under the status word: longer than the live counters,
+   so it may wrap instead of stretching the bar */
+.vla-warm-note {
+  white-space: normal;
+  max-width: 200px;
+  line-height: 1.5;
+}
+/* progress-keyed narration: desktop floats it just below the bar (the
+   stacked override folds it into the bar's wrap-flow instead) */
+.vla-caption {
+  position: absolute;
+  top: calc(100% + 7px);
+  left: 0;
+  right: 0;
+  text-align: center;
+  font: 500 10px/1.4 var(--font-mono);
+  color: var(--muted);
+  animation: vla-caption-in 0.45s ease;
+}
+@keyframes vla-caption-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* the payoff teaser on the Rollout while training is still earning it */
+.vla-locked {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 5px;
+  font: 600 8px/1.3 var(--font-mono);
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 8px;
+}
+/* desktop idle nudge: the Start Training button flashes the same beat as the
+   mobile CTA below (and the Language Encoder's warmup) — same 1.5s ease, same
+   4 beats, same 5px ring. Only the wash differs mechanically: this button is
+   SOLID ink, so the 0.08-alpha red overlay is baked in with color-mix instead
+   of a transparent background-color the solid fill would swallow. */
+.vla-btn.is-flash {
+  animation: vla-btn-flash 1.5s ease-in-out 4;
+}
+@keyframes vla-btn-flash {
+  0%,
+  100% {
+    background-color: var(--ink);
+    border-color: var(--ink);
+    box-shadow: 0 0 0 0 rgba(225, 45, 26, 0);
+  }
+  50% {
+    background-color: color-mix(in srgb, var(--ink) 92%, var(--red));
+    border-color: var(--red);
+    box-shadow: 0 0 0 5px rgba(225, 45, 26, 0.07);
+  }
+}
+/* mobile nudge: after ~3s of looking at the idle hero, the demo CTA pulses
+   the Language Encoder's exact warmup beat (vla-lang-warm: red wash fill,
+   border to --red, soft 5px ring, 1.5s ease-in-out) — "this button is the
+   way in". Finite where the encoder's is infinite (4 beats ≈ 6s), and the
+   red wash rides the keyframes so the one-shot ends on a clean resting
+   state instead of a background snap. */
+.hero-demo-btn.is-flash {
+  animation: vla-cta-flash 1.5s ease-in-out 4;
+}
+@keyframes vla-cta-flash {
+  0%,
+  100% {
+    border-color: var(--border-strong);
+    background-color: rgba(225, 45, 26, 0);
+    box-shadow: 0 0 0 0 rgba(225, 45, 26, 0);
+  }
+  50% {
+    border-color: var(--red);
+    /* ACCENT at 0.08 alpha — the same wash .is-loading .vla-lang fills with */
+    background-color: rgba(225, 45, 26, 0.08);
+    box-shadow: 0 0 0 5px rgba(225, 45, 26, 0.07);
+  }
+}
+/* converged idle nudge: a viewer who sat through training but hasn't touched
+   anything for ~3s gets the same language-warmup beat on the prompt box —
+   the input's solid --bg-alt fill takes the wash via color-mix, exactly like
+   the Start button's ink does */
+.vla-try-input.is-flash {
+  animation: vla-try-flash 1.5s ease-in-out 4;
+}
+@keyframes vla-try-flash {
+  0%,
+  100% {
+    border-color: var(--border-strong);
+    background-color: var(--bg-alt);
+    box-shadow: 0 0 0 0 rgba(225, 45, 26, 0);
+  }
+  50% {
+    border-color: var(--red);
+    background-color: color-mix(in srgb, var(--bg-alt) 92%, var(--red));
+    box-shadow: 0 0 0 5px rgba(225, 45, 26, 0.07);
+  }
+}
+/* converged: the try-input announces itself once, then gets out of the way */
+.vla-try-input.is-unlock {
+  animation: vla-unlock 2.4s ease;
+}
+@keyframes vla-unlock {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(225, 45, 26, 0);
+  }
+  20%,
+  70% {
+    border-color: var(--red);
+    box-shadow: 0 0 0 4px rgba(225, 45, 26, 0.18);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .is-live:not(.is-loading) .vla-payload,
   .is-live:not(.is-loading) .vla-vision .vla-label,
@@ -1263,6 +1478,15 @@ a {
      doing the work; without the animation it has to be stated statically */
   .is-loading .vla-lang {
     border-color: var(--red);
+  }
+  /* guidance layer: the nudge/unlock/flash/caption animations are decorative —
+     the elements themselves still appear, just without motion */
+  .vla-btn.is-flash,
+  .vla-try-input.is-unlock,
+  .vla-try-input.is-flash,
+  .hero-demo-btn.is-flash,
+  .vla-caption {
+    animation: none;
   }
 }
 
@@ -1433,8 +1657,7 @@ a {
     right: auto;
     margin-top: 12px;
   }
-  /* likewise the try-row, which on desktop hangs above the Rollout and reaches
-     back over the Action Head (left: -44px) */
+  /* likewise the try-row, which on desktop hangs absolutely above the Rollout */
   .hero.demo-open .vla-try {
     position: relative;
     left: auto;
@@ -1455,14 +1678,6 @@ a {
     gap: 6px;
     flex: 1 0 100%;
   }
-  /* in flow under the chips. Absolute (`top: 100%`) it would hang over the
-     rollout canvas, which on desktop is only ever a 10px gap away. */
-  .hero.demo-open .vla-try-note {
-    position: static;
-    flex: 1 0 100%;
-    margin-top: 0;
-  }
-
   /* in flow inside the sticky topbar. Status and the controls never fit on one
      320px row beside the curve, so the curve drops to a full-width second row
      underneath them — carrying the mini-vla link, since the label does not fit. */
@@ -1509,6 +1724,43 @@ a {
   .hero.demo-open.is-live:not(.is-loading) .vla-lang .vla-label,
   .hero.demo-open.is-live:not(.is-loading) .vla-action .vla-label {
     animation: vla-label-hop-center 0.5s ease;
+  }
+
+  /* guidance layer, stacked: the narration joins the bar's wrap-flow as its
+     own full-width row — absolute would hang the sticky topbar's text over
+     whatever card is under it. order 2 lands it below the loss row (order 1). */
+  .hero.demo-open .vla-caption {
+    position: static;
+    flex: 1 0 100%;
+    order: 2;
+    text-align: left;
+  }
+  /* stacked, the cards are page-wide — the Action Head no longer needs to
+     borrow room to the left for its popover */
+  .hero.demo-open .vla-action .vla-info-pop {
+    left: -4px;
+    right: auto;
+  }
+  /* the stacked cards center their headers; the flex labels follow suit
+     (text-align no longer reaches the label's flex children) */
+  .hero.demo-open .vla-input > .vla-label,
+  .hero.demo-open .vla-out-head .vla-label {
+    justify-content: center;
+  }
+  /* the teaser sentence gets its own full-width row under the status +
+     button row — sharing theirs squeezes it to a word per line at 320px */
+  .hero.demo-open .vla-link-slot {
+    flex: 1 0 100%;
+    order: 1;
+  }
+  /* with the whole row to itself the sentence stays on ONE line: drop the
+     desktop max-width, forbid the wrap, and let the type shrink a touch on
+     the narrowest phones (2.7vw ≈ 8.6px at 320px fits all 54 characters)
+     instead of clipping */
+  .hero.demo-open .vla-teaser {
+    max-width: none;
+    white-space: nowrap;
+    font-size: min(9.5px, 2.7vw);
   }
 }
 

@@ -267,6 +267,120 @@ function fitCanvas(c: HTMLCanvasElement, fallbackW = 190, fallbackH = 186) {
 
 const SIL_RENDER = CONFIG.rollout.silRender; // silhouette render size before the imgSize downsample
 
+// ---- guidance layer ----
+// Info boxes, nudges and tips that walk a first-time viewer through the flow:
+// idle (why press Start) → training (where to look) → converged (what the
+// try-row can do). Everything follows the replay chip's precedent: tap-first
+// (hover/title tooltips never reach the touch devices), quiet sentence-case
+// mono copy, one disclosure open at a time.
+
+/** ⓘ popover copy, per card. Keyed by a closed union so a typo'd id on an
+    InfoDot (or a renamed key here) is a compile error, not an `undefined`
+    silently rendered into the popover. */
+type InfoId = "demo" | "vision" | "lang" | "action" | "output";
+const INFO: Record<InfoId, string> = {
+  demo: "An analytical expert performs each command — the policy's training data. Thousands more examples are generated invisibly between the ones you see.",
+  vision: "The 32×32 silhouette the CNN actually sees; red = its spatial attention. Hover or tap to flip between this view and the model's-eye (inverted) one.",
+  lang: "Frozen GloVe word embeddings, attention-pooled — each bar is that word's learned weight. Synonyms it never trained on still resolve.",
+  action: "The policy's live output — predicted target joint angles plus the learned gripper action.",
+  output: "The policy attempts the demonstration's scene and command with its own learned motion. Once trained, it runs your commands.",
+};
+
+// Progress-keyed narration under the bar. Each line fires off a REAL signal
+// (training handoff, first gaze reply, second synced attempt, loss nearing
+// threshold) and holds until the next one — the captions are themselves the
+// progress bar, so there is no separate percent readout.
+const CAPTION_DEMO =
+  "The Demonstration is the expert — the policy learns by copying it";
+const CAPTION_GAZE =
+  "Red = where the model looks; watch it sharpen onto the commanded block";
+const CAPTION_ROLLOUT =
+  "The Rollout is the policy's own attempt — a fresh try at every snapshot";
+const CAPTION_ALMOST =
+  "Almost converged — the command box unlocks when the loss settles";
+
+// Rotating try-box placeholders — documentation of the grammar (and its
+// synonyms) disguised as a hint. Every color word maps into the FIRST
+// numColors palette entries (crimson→red, golden→yellow), so the cycle is
+// valid on both the desktop and the mobile task profile.
+const TRY_PLACEHOLDERS = [
+  "e.g. grab the blue cube",
+  "e.g. pick up the crimson one",
+  "e.g. lift the golden block",
+];
+
+// Post-run tips: one per completed successful episode, shown in the try-note
+// slot (real error notes there take priority). A tip whose action the viewer
+// already found on their own is retired unshown. "gold" is genuinely absent
+// from the grammar's synonym lists — it resolves through the pretrained
+// embedding geometry, which is the point of the tip.
+const TIPS = [
+  "Tip: drag a block somewhere else, then run again",
+  "Tip: Shuffle rearranges the scene — the policy re-plans from vision",
+  'Tip: "gold" was never in its training grammar — try it anyway',
+];
+
+// One-time nudges (the post-run tip chain) persist across visits. (`pulse`
+// used to live here too; the idle nudge is per-page-load now, so the field
+// is gone — a stale copy in an old visitor's storage is simply ignored.)
+type HintsSeen = { tips?: number[] };
+const HINTS_KEY = "vla-hints-seen";
+const loadHints = (): HintsSeen => {
+  try {
+    return JSON.parse(
+      window.localStorage.getItem(HINTS_KEY) ?? "{}"
+    ) as HintsSeen;
+  } catch {
+    return {};
+  }
+};
+const saveHints = (h: HintsSeen) => {
+  try {
+    window.localStorage.setItem(HINTS_KEY, JSON.stringify(h));
+  } catch {
+    /* storage denied (private mode) — the nudges just repeat next visit */
+  }
+};
+
+/** Tap-first ⓘ disclosure beside a label: the replay chip's popover pattern,
+    generalized. The host owns the single open id, so opening one closes the
+    rest; stopPropagation keeps the Vision card's tap-to-flip out of it. */
+function InfoDot({
+  id,
+  open,
+  onToggle,
+}: {
+  id: InfoId;
+  open: boolean;
+  onToggle: (id: InfoId) => void;
+}) {
+  return (
+    <span className="vla-info-wrap">
+      <button
+        type="button"
+        className="vla-info-btn"
+        aria-label="What is this?"
+        aria-expanded={open}
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggle(id);
+        }}
+      >
+        i
+      </button>
+      {open && (
+        <span
+          className="vla-info-pop"
+          role="note"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {INFO[id]}
+        </span>
+      )}
+    </span>
+  );
+}
+
 export default function Hero() {
   const stageRef = useRef<HTMLElement>(null);
   const flowRef = useRef<HTMLDivElement>(null);
@@ -425,6 +539,54 @@ export default function Hero() {
   // devices that land here (iPad/iOS) are touch-only and never see a title
   // tooltip. Reset whenever the replay flag itself changes off.
   const [showReplayInfo, setShowReplayInfo] = useState(false);
+  // ---- guidance layer state ----
+  // which ⓘ popover is open — one at a time across the whole hero
+  const [openInfo, setOpenInfo] = useState<InfoId | null>(null);
+  const toggleInfo = useCallback(
+    (id: InfoId) => setOpenInfo((v) => (v === id ? null : id)),
+    []
+  );
+  // The ⓘ layer exists only while the pipeline is actually running:
+  // training/paused shows it on every card, everything else drops the chrome.
+  // The warmup gets none (it is over in seconds — no time to read anything),
+  // dormant idle boxes need no footnotes, and a converged hero belongs to
+  // the try-row.
+  const infoVisible =
+    status === "training" || status === "paused";
+  // one-shot red flash on the idle hero's way in, after ~3s of looking at it:
+  // the demo CTA on mobile, the Start Training button on desktop — the same
+  // state drives both, since only one of them is ever visible at idle
+  const [flashCta, setFlashCta] = useState(false);
+  // the converged twin: flash the prompt box after ~3s of converged
+  // inactivity. triedRef = the viewer has already touched the try-row
+  // (typed, ran, dragged, shuffled) — no nudge needed.
+  const [flashTry, setFlashTry] = useState(false);
+  const triedRef = useRef(false);
+  // the one retirement path for that nudge — every try-row interaction goes
+  // through here, so a future interaction site can't forget half the pair
+  const retireTryNudge = useCallback(() => {
+    triedRef.current = true;
+    setFlashTry(false);
+  }, []);
+  // progress-keyed caption under the bar; the stage counter is forward-only
+  // so a late-arriving trigger can never step the narration backwards
+  const [caption, setCaption] = useState<string | null>(null);
+  const captionStageRef = useRef(0);
+  // converged-unlock glow + autofocus bookkeeping
+  const [justConverged, setJustConverged] = useState(false);
+  const prevStatusForUnlockRef = useRef<TrainerStatus>("idle");
+  const tryInputRef = useRef<HTMLInputElement>(null);
+  // rotating try-box placeholder index
+  const [phIdx, setPhIdx] = useState(0);
+  // post-run tip chain, shown one per successful episode in the try-note slot
+  const [tip, setTip] = useState<string | null>(null);
+  const tipsShownRef = useRef<Set<number>>(new Set());
+  const userDraggedRef = useRef(false); // viewer already found block-dragging
+  const userShuffledRef = useRef(false); // viewer already found ⟳ shuffle
+  // episode-completion detector for the tip chain: an episode was live, and
+  // it reached "hold" (the lift succeeded) before it ended
+  const episodeLiveRef = useRef(false);
+  const episodeHeldRef = useRef(false);
   const loadWatchdogRef = useRef<number | null>(null);
   // Training-phase watchdog: re-armed on every batch, fires if batches stop
   // landing while status still reads "training". Cleared on pause/converge.
@@ -498,6 +660,42 @@ export default function Hero() {
       mq.removeEventListener("change", apply);
       obs.disconnect();
     };
+  }, []);
+
+  // Advance the narration to `stage` (forward-only). Stable identity — the
+  // mount-once rAF closures call it.
+  const advanceCaption = useCallback((stage: number, text: string) => {
+    if (captionStageRef.current >= stage) return;
+    captionStageRef.current = stage;
+    setCaption(text);
+  }, []);
+
+  // Show the next unseen post-run tip; a tip whose action the viewer already
+  // performed on their own is retired unshown. Persisted, so a returning
+  // visitor is never re-toured.
+  const advanceTip = useCallback(() => {
+    const shown = tipsShownRef.current;
+    let next: number | null = null;
+    for (let i = 0; i < TIPS.length; i++) {
+      if (shown.has(i)) continue;
+      if (i === 0 && userDraggedRef.current) {
+        shown.add(i);
+        continue;
+      }
+      if (i === 1 && userShuffledRef.current) {
+        shown.add(i);
+        continue;
+      }
+      next = i;
+      break;
+    }
+    if (next !== null) {
+      shown.add(next);
+      setTip(TIPS[next]);
+    }
+    const h = loadHints();
+    h.tips = [...shown];
+    saveHints(h);
   }, []);
 
   // ---- the single rAF loop: wires + all four canvases, every frame ----
@@ -835,9 +1033,24 @@ export default function Hero() {
         [arm.a1, arm.a2] = wiggle(now, 2.6, 4.1);
       } else if (trainer?.ready) {
         if (st === "converged") {
-          if (engine.hasEpisode)
+          if (engine.hasEpisode) {
             f = engine.step(now, rolloutLayoutRef.current, predictFrozen);
-          else [arm.a1, arm.a2] = wiggle(now, 2.6, 4.1); // waiting for command
+            episodeLiveRef.current = true;
+            // "hold" = the block is aloft: the lift succeeded, whatever ends
+            // the episode after this (return finishing, a drag, a reset)
+            if (f.phase === "hold") episodeHeldRef.current = true;
+          } else {
+            // an episode just ended — if it got as far as the hold, the run
+            // paid off, so this is the moment for the next post-run tip
+            if (episodeLiveRef.current) {
+              episodeLiveRef.current = false;
+              if (episodeHeldRef.current) {
+                episodeHeldRef.current = false;
+                advanceTip();
+              }
+            }
+            [arm.a1, arm.a2] = wiggle(now, 2.6, 4.1); // waiting for command
+          }
         } else {
           // training: a fresh synced attempt at every new demonstration cycle,
           // run against a policy snapshot frozen at this boundary so the whole
@@ -853,6 +1066,15 @@ export default function Hero() {
             // surface it on the Rollout so the attempt is read as "this is what
             // N examples of training buys you" (updates once per demo cycle)
             setRolloutSamples(trainer.samples);
+            // cycle 0 lands together with the training handoff — hold this
+            // caption for the SECOND synced attempt, after the reader has
+            // actually seen the rollout try once. Gated on the gaze caption
+            // having shown (stage 2): its trigger is an async worker reply,
+            // and advanceCaption is forward-only, so firing 3 first would
+            // skip 2 for good. This trigger repeats at EVERY cycle boundary,
+            // so a slow gaze reply just defers this line one cycle.
+            if (lastCycleRef.current >= 1 && captionStageRef.current >= 2)
+              advanceCaption(3, CAPTION_ROLLOUT);
             engine.begin(
               demoSentenceRef.current.color,
               demoSentenceRef.current.tokens
@@ -976,7 +1198,11 @@ export default function Hero() {
             p.carry
           )
           .then((r) => {
-            if (r) visGazeRef.current = r.attn;
+            if (r) {
+              visGazeRef.current = r.attn;
+              // the gaze overlay just became visible — point the reader at it
+              advanceCaption(2, CAPTION_GAZE);
+            }
           })
           // clear the guard even if the round-trip rejects — otherwise a single
           // failed request would freeze the gaze overlay for the rest of the session
@@ -1101,7 +1327,8 @@ export default function Hero() {
       if (loadWatchdogRef.current !== null) window.clearTimeout(loadWatchdogRef.current);
       if (trainWatchdogRef.current !== null) window.clearTimeout(trainWatchdogRef.current);
     };
-  }, []);
+    // both are stable useCallbacks — the effect still mounts exactly once
+  }, [advanceCaption, advanceTip]);
 
   // ---- teardown + host-side failure detection ----
   // Return every piece of local view state to its pristine idle values. Shared
@@ -1151,6 +1378,17 @@ export default function Hero() {
     setDecoded(null);
     setRolloutSamples(0);
     setHud({ lossText: "—", samples: 0, batches: 0 });
+    // guidance layer: narration + tips restart with the run (the one-time
+    // localStorage nudges deliberately do not)
+    captionStageRef.current = 0;
+    setCaption(null);
+    setTip(null);
+    setOpenInfo(null);
+    setPhIdx(0);
+    setFlashTry(false);
+    triedRef.current = false;
+    episodeLiveRef.current = false;
+    episodeHeldRef.current = false;
     statusRef.current = "idle";
     setStatus("idle");
   }, [syncRunCfg]);
@@ -1270,8 +1508,10 @@ export default function Hero() {
       // rather than at the click (the warm-up's duration varies with the
       // machine, and the arm must not arrive mid-cycle). Resume-from-pause is
       // NOT a handoff — only loading → training re-stamps.
-      if (statusRef.current === "loading" && trainer.status === "training")
+      if (statusRef.current === "loading" && trainer.status === "training") {
         trainStartRef.current = performance.now() + 500; // half-second ease-in
+        advanceCaption(1, CAPTION_DEMO); // the narration opens on the expert
+      }
       // Arm the stuck-loading watchdog for exactly the "loading" span: entering
       // it starts the clock, leaving it (to training OR to a real error the
       // worker DID manage to report) means the run is progressing on its own.
@@ -1316,6 +1556,11 @@ export default function Hero() {
         // the interactive policy is the final model — show the full training
         // budget it saw, not the last per-cycle snapshot count
         setRolloutSamples(trainer.samples);
+        // the narration's job is done — the try-row takes over from here,
+        // and the ⓘ layer retires with the rest of the pipeline chrome
+        captionStageRef.current = 5;
+        setCaption(null);
+        setOpenInfo(null);
       }
     } else if (trainer.status === "training") {
       // Resume re-arm: resumeTraining() pre-sets status to "training", so the
@@ -1341,6 +1586,10 @@ export default function Hero() {
           }
         } else {
           deadLossRunRef.current = 0;
+          // within 2x of the convergence threshold: tell the reader the wait
+          // is almost over (a lucky single-batch dip firing early is harmless)
+          if (l < CONFIG.trainer.converge.loss * 2)
+            advanceCaption(4, CAPTION_ALMOST);
         }
       }
     }
@@ -1405,6 +1654,14 @@ export default function Hero() {
       rolloutLayoutRef.current = DEFAULT_LAYOUT.map((b) => ({ ...b }));
       setErrorReason(null); // mirrors start()'s own clear; a retry shows no stale reason
       setHostFailure(null);
+      // guidance layer: a fresh run narrates from the top (Start was pressed,
+      // so the idle flash's class condition drops with the status change)
+      setFlashCta(false);
+      captionStageRef.current = 0;
+      setCaption(null);
+      setTip(null);
+      episodeLiveRef.current = false;
+      episodeHeldRef.current = false;
       void trainer.start(onUpdate, cfg);
     }
   };
@@ -1424,6 +1681,7 @@ export default function Hero() {
   const openDemo = () => {
     showDemoRef.current = true;
     setShowDemo(true);
+    setFlashCta(false); // the nudge did its job (or the viewer beat it to it)
   };
   const closeDemo = () => {
     showDemoRef.current = false;
@@ -1547,12 +1805,101 @@ export default function Hero() {
     return () => document.removeEventListener("visibilitychange", check);
   }, []);
 
+  // ---- guidance layer: one-time nudges + converged affordances ----
+  // Hydrate the seen-tips set. Client-only — localStorage does not exist on
+  // the server render, so this cannot live in the useState initializer.
+  useEffect(() => {
+    tipsShownRef.current = new Set(loadHints().tips ?? []);
+  }, []);
+
+  // Idle-nudge flash: after ~3 CONSECUTIVE on-screen seconds with the demo
+  // still idle, flash the way in once in the language-warmup red — the
+  // "Try mini-vla" CTA below the breakpoint, the Start Training button above
+  // it (the same class lands on both; CSS only ever shows one of them).
+  // Consecutive, so a drive-by scroll doesn't bank progress; one-shot per
+  // page load (the animation runs its beats and stops). Opening the demo or
+  // starting a run retires it — the viewer found the button.
+  useEffect(() => {
+    let seen = 0;
+    const id = window.setInterval(() => {
+      if (statusRef.current !== "idle" || showDemoRef.current) {
+        window.clearInterval(id);
+        return;
+      }
+      if (!heroOnScreenRef.current) {
+        seen = 0;
+        return;
+      }
+      if (++seen >= 3) {
+        window.clearInterval(id);
+        setFlashCta(true);
+      }
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  // The converged twin of the idle nudge: the try-row is the payoff, but a
+  // viewer who just watched a minute of training may not realize the input is
+  // now theirs. After ~3 CONSECUTIVE on-screen seconds at converged with no
+  // interaction (typing, running, dragging, shuffling all count), flash the
+  // prompt box on the same beat as the other nudges. One-shot per run; any
+  // interaction retires it unshown.
+  useEffect(() => {
+    if (status !== "converged") return;
+    // no setFlashTry(false) here: every exit from converged runs resetToIdle,
+    // which already clears it — a synchronous setState in an effect body is
+    // both redundant and a lint error (react-hooks/set-state-in-effect)
+    triedRef.current = false;
+    let seen = 0;
+    const id = window.setInterval(() => {
+      if (triedRef.current) {
+        window.clearInterval(id);
+        return;
+      }
+      if (!heroOnScreenRef.current) {
+        seen = 0;
+        return;
+      }
+      if (++seen >= 3) {
+        window.clearInterval(id);
+        setFlashTry(true);
+      }
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [status]);
+
+  // Converged unlock: glow the try-input once and (desktop only — focusing on
+  // a phone yanks the keyboard up) hand it the caret. Keyed to the genuine
+  // training → converged transition, not to converged renders in general.
+  useEffect(() => {
+    const prev = prevStatusForUnlockRef.current;
+    prevStatusForUnlockRef.current = status;
+    if (status !== "converged" || prev !== "training") return;
+    setJustConverged(true);
+    if (!window.matchMedia(STACKED_MQ).matches && heroOnScreenRef.current)
+      tryInputRef.current?.focus();
+    const t = window.setTimeout(() => setJustConverged(false), 2600);
+    return () => window.clearTimeout(t);
+  }, [status]);
+
+  // Rotating placeholder: cycles example commands while the box sits empty —
+  // documentation of the grammar (and its synonyms) disguised as a hint.
+  useEffect(() => {
+    if (status !== "converged") return;
+    const id = window.setInterval(
+      () => setPhIdx((i) => (i + 1) % TRY_PLACEHOLDERS.length),
+      4000
+    );
+    return () => window.clearInterval(id);
+  }, [status]);
+
   /** "Try it" mode: run a sentence — the viewer's own, or a preset chip's —
       through the trained policy. The color head decodes which block to pick up;
       the motion itself is entirely the policy's. */
   const runCommand = async (command?: string) => {
     const trainer = trainerRef.current;
     if (!trainer?.ready || statusRef.current !== "converged") return;
+    retireTryNudge(); // the viewer found the try-row
     const text = (command ?? tryText).trim();
     if (!text) return;
     const words = text
@@ -1574,7 +1921,7 @@ export default function Hero() {
       const known = activePalette(cfg)
         .map((c) => c.name)
         .join(", ");
-      setTryNote(`this run never learned ${untrained.name} — only ${known}`);
+      setTryNote(`This run never learned ${untrained.name} — only ${known}`);
       setDecoded(null); // nothing ran: don't leave the previous answer standing
       return;
     }
@@ -1592,7 +1939,7 @@ export default function Hero() {
     // a color the policy knows, but that this scene doesn't contain: the reach
     // would silently fall back to some other block
     if (!rolloutLayoutRef.current.some((b) => b.color === d.color)) {
-      setTryNote(`no ${COLORS[d.color].name} block in this scene — ⟳ to reshuffle`);
+      setTryNote(`No ${COLORS[d.color].name} block in this scene`);
       setDecoded(null);
       return;
     }
@@ -1611,6 +1958,7 @@ export default function Hero() {
       prob: d.colorProb,
     });
     setTryNote(null);
+    setTip(null); // a fresh command retires the previous post-run tip
     armState.current = { a1: REST[0], a2: REST[1] };
     engineRef.current!.begin(d.color, tokens);
   };
@@ -1631,6 +1979,9 @@ export default function Hero() {
     engineRef.current!.reset();
     armState.current = { a1: REST[0], a2: REST[1] };
     setTryNote(null);
+    userShuffledRef.current = true; // the shuffle tip is now moot
+    retireTryNudge();
+    setTip(null);
   };
 
   // ---- drag the Rollout blocks (converged / "try it" mode only) ----
@@ -1689,6 +2040,9 @@ export default function Hero() {
     engineRef.current!.reset();
     armState.current = { a1: REST[0], a2: REST[1] };
     setTryNote(null);
+    userDraggedRef.current = true; // the drag tip is now moot
+    retireTryNudge();
+    setTip(null);
     // a dragged block rests on the floor
     b.y = 0;
     c.style.cursor = "grabbing";
@@ -1847,6 +2201,13 @@ export default function Hero() {
                   )}
                 </div>
               )}
+              {/* a bare status word + disabled button reads as broken; say
+                  what the wait is and that it is short */}
+              {status === "loading" && (
+                <span className="vla-status-sub vla-warm-note">
+                  Loading word embeddings — a few seconds
+                </span>
+              )}
               {live && hud.samples > 0 && (
                 <>
                   <span className="vla-status-sub">
@@ -1878,9 +2239,19 @@ export default function Hero() {
             </>
           ) : (
             <div className="vla-link-slot">
-              <Link className="vla-project-link" href="/projects/mini-vla">
-                mini-vla ↗︎
-              </Link>
+              {/* the teaser sentence: what Start runs, that it is genuinely
+                  live, how long it takes — with the write-up link folded into
+                  the words (the bare standalone link crowded the compact bar).
+                  Embedded in prose the link drops the ↗︎ and marks itself with
+                  a red underline instead (.vla-teaser .vla-project-link); the
+                  arrow stays on the standalone loss-head link. */}
+              <span className="vla-teaser">
+                Trains the{" "}
+                <Link className="vla-project-link" href="/projects/mini-vla">
+                  mini-vla
+                </Link>{" "}
+                model in your browser (takes&nbsp;~60s)
+              </span>
             </div>
           )}
           {hostFailure ? (
@@ -1921,7 +2292,9 @@ export default function Hero() {
             )
           ) : status === "idle" || status === "loading" ? (
             <button
-              className="vla-btn"
+              className={`vla-btn${
+                flashCta && status === "idle" ? " is-flash" : ""
+              }`}
               onClick={onPrimary}
               type="button"
               disabled={status === "loading"}
@@ -1946,6 +2319,14 @@ export default function Hero() {
               </button>
             </>
           )}
+          {/* the progress-keyed narration; keyed so each new line re-runs the
+              fade-in. Desktop floats it just below the bar, stacked folds it
+              into the bar's wrap-flow as its own row. */}
+          {caption && (status === "training" || status === "paused") && (
+            <div className="vla-caption" key={caption}>
+              {caption}
+            </div>
+          )}
         </div>
       </div>
 
@@ -1968,7 +2349,12 @@ export default function Hero() {
           {demoSentence.text}
           <span className="vla-grip" aria-hidden="true" />
         </div>
-        <div className="vla-label">Demonstration</div>
+        <div className="vla-label">
+          Demonstration
+          {infoVisible && (
+            <InfoDot id="demo" open={openInfo === "demo"} onToggle={toggleInfo} />
+          )}
+        </div>
         <canvas className="vla-canvas" ref={demoRef} />
       </div>
 
@@ -1981,7 +2367,16 @@ export default function Hero() {
         ref={visionCardRef}
         onClick={() => setModelView((v) => !v)}
       >
-        <div className="vla-label">Vision Encoder</div>
+        <div className="vla-label">
+          Vision Encoder
+          {infoVisible && (
+            <InfoDot
+              id="vision"
+              open={openInfo === "vision"}
+              onToggle={toggleInfo}
+            />
+          )}
+        </div>
         <canvas className="vla-vision-canvas" ref={visionRef} />
         <div className="vla-vision-hint" aria-hidden="true" />
       </div>
@@ -1989,9 +2384,14 @@ export default function Hero() {
       {/* Language Encoder — frozen pretrained GloVe embeddings, attention-
           pooled (a learned scorer weights each token so filler + padding stop
           diluting the color/verb word); near-synonyms the grammar never
-          trained on ("gold", "violet") resolve via the pretrained geometry */}
+          trained on ("gold") resolve via the pretrained geometry */}
       <div className="vla-node vla-lang" ref={langCardRef}>
-        <div className="vla-label">Language Encoder</div>
+        <div className="vla-label">
+          Language Encoder
+          {infoVisible && (
+            <InfoDot id="lang" open={openInfo === "lang"} onToggle={toggleInfo} />
+          )}
+        </div>
         <div className="vla-prompt-echo">&quot;{active.text}&quot;</div>
         <div className="vla-chip-row" ref={chipRowRef}>
           {active.words.map((w, i) => (
@@ -2036,7 +2436,16 @@ export default function Hero() {
       {/* Action Head — where the vision + language wires merge; shows the
           policy's current output (the predicted target joint angles) */}
       <div className="vla-node vla-action" ref={actionCardRef}>
-        <div className="vla-label">Action Head</div>
+        <div className="vla-label">
+          Action Head
+          {infoVisible && (
+            <InfoDot
+              id="action"
+              open={openInfo === "action"}
+              onToggle={toggleInfo}
+            />
+          )}
+        </div>
         <div className="vla-action-vals" ref={actionValsRef}>
           <span>
             <span className="vla-av-k">shoulder</span>
@@ -2058,12 +2467,16 @@ export default function Hero() {
         {status === "converged" && (
           <div className="vla-try">
             <input
-              className="vla-try-input"
-              placeholder="e.g. grab the blue cube"
+              className={`vla-try-input${justConverged ? " is-unlock" : ""}${
+                flashTry ? " is-flash" : ""
+              }`}
+              ref={tryInputRef}
+              placeholder={TRY_PLACEHOLDERS[phIdx]}
               value={tryText}
               onChange={(e) => {
                 setTryText(e.target.value);
                 setTryNote(null); // the note described the previous command
+                retireTryNudge(); // typing counts
               }}
               onKeyDown={(e) => {
                 if (e.key === "Enter") void runCommand();
@@ -2082,7 +2495,7 @@ export default function Hero() {
               type="button"
               title="Randomize blocks"
             >
-              ⟳
+              Shuffle
             </button>
             {/* one chip per trained color — display:none above the breakpoint,
                 where all eight colors are trained and typing is cheap */}
@@ -2102,19 +2515,35 @@ export default function Hero() {
                 </button>
               ))}
             </div>
-            {tryNote && <div className="vla-try-note">{tryNote}</div>}
+            {/* error notes and post-run tips share the slot; a real note about
+                the command that just ran always outranks a tip */}
+            {(tryNote ?? tip) && (
+              <div className="vla-try-note">{tryNote ?? tip}</div>
+            )}
           </div>
         )}
         <div className="vla-out-head">
           <div className="vla-label">
             {status === "converged" ? "Policy — your command" : "Rollout"}
+            {infoVisible && (
+              <InfoDot
+                id="output"
+                open={openInfo === "output"}
+                onToggle={toggleInfo}
+              />
+            )}
           </div>
+          {/* the payoff teaser: the single strongest reason to wait out the
+              run, retired at converged where the real try-row replaces it */}
+          {(status === "training" || status === "paused") && (
+            <div className="vla-locked">Your command — unlocks when trained</div>
+          )}
           {rolloutSamples > 0 &&
             (status === "training" ||
               status === "paused" ||
               status === "converged") && (
               <div className="vla-seen">
-                trained on {rolloutSamples.toLocaleString()} demos
+                Trained on {rolloutSamples.toLocaleString()} demos
               </div>
             )}
         </div>
@@ -2143,7 +2572,11 @@ export default function Hero() {
               Always rendered (SSR/hydration parity) — CSS hides it on desktop,
               where the ring is already on screen, and drops it onto its own row
               below the other two so neither of them has to wrap. */}
-          <button className="btn-outline hero-demo-btn" onClick={openDemo} type="button">
+          <button
+            className={`btn-outline hero-demo-btn${flashCta ? " is-flash" : ""}`}
+            onClick={openDemo}
+            type="button"
+          >
             Try mini-vla
           </button>
         </div>
