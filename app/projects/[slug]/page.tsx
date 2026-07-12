@@ -39,8 +39,8 @@ export default async function ProjectPage({
         </Link>
         <div className="page-head">
           <div className="label-mono detail-meta">
-            <span>{project.venue}</span>
             {project.period && <span>{project.period}</span>}
+            <span>{project.venue}</span>
           </div>
           <h1 className="page-title">{project.title}</h1>
         </div>
@@ -65,7 +65,7 @@ export default async function ProjectPage({
           <div className="detail-links">
             {project.links.map((lk) => (
               <a key={lk.label} className="detail-link" href={lk.href} {...externalLinkProps(lk.href)}>
-                {lk.label} →
+                {lk.label}
               </a>
             ))}
           </div>
