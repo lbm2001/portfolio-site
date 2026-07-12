@@ -47,11 +47,11 @@ export const profile = {
   name: "Lukas Müller",
   lead: [
     "Building intelligent machines that learn.",
-    "Passionate about statistics, machine learning, and robot learning.",
+    "Passionate about probability theory, machine learning, and robot learning.",
     "Currently focused on VLA models for imitation learning."
   ],
   focus: "Imitation Learning, VLAs",
-  field: "Machine Learning & Robot Learning",
+  field: "Machine Learning, Robot Learning",
   location: "Frankfurt, Germany",
   email: "contact@lukasmueller.dev",
   links: {
