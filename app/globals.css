@@ -2052,7 +2052,7 @@ a {
   transition: color 0.15s ease;
 }
 .resume-entry-link::after {
-  content: "↗";
+  content: "↗\FE0E";
   margin-left: 3px;
   font-size: 0.8em;
   color: var(--muted);
