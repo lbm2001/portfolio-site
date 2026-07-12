@@ -1832,8 +1832,10 @@ export default function Hero() {
   // interaction retires it unshown.
   useEffect(() => {
     if (status !== "converged") return;
+    // no setFlashTry(false) here: every exit from converged runs resetToIdle,
+    // which already clears it — a synchronous setState in an effect body is
+    // both redundant and a lint error (react-hooks/set-state-in-effect)
     triedRef.current = false;
-    setFlashTry(false);
     let seen = 0;
     const id = window.setInterval(() => {
       if (triedRef.current) {
