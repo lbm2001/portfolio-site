@@ -274,8 +274,11 @@ const SIL_RENDER = CONFIG.rollout.silRender; // silhouette render size before th
 // (hover/title tooltips never reach the touch devices), quiet sentence-case
 // mono copy, one disclosure open at a time.
 
-/** ⓘ popover copy, per card. */
-const INFO: Record<string, string> = {
+/** ⓘ popover copy, per card. Keyed by a closed union so a typo'd id on an
+    InfoDot (or a renamed key here) is a compile error, not an `undefined`
+    silently rendered into the popover. */
+type InfoId = "demo" | "vision" | "lang" | "action" | "output";
+const INFO: Record<InfoId, string> = {
   demo: "An analytical expert performs each command — the policy's training data. Thousands more examples are generated invisibly between the ones you see.",
   vision: "The 32×32 silhouette the CNN actually sees; red = its spatial attention. Hover or tap to flip between this view and the model's-eye (inverted) one.",
   lang: "Frozen GloVe word embeddings, attention-pooled — each bar is that word's learned weight. Synonyms it never trained on still resolve.",
@@ -347,9 +350,9 @@ function InfoDot({
   open,
   onToggle,
 }: {
-  id: string;
+  id: InfoId;
   open: boolean;
-  onToggle: (id: string) => void;
+  onToggle: (id: InfoId) => void;
 }) {
   return (
     <span className="vla-info-wrap">
@@ -538,9 +541,9 @@ export default function Hero() {
   const [showReplayInfo, setShowReplayInfo] = useState(false);
   // ---- guidance layer state ----
   // which ⓘ popover is open — one at a time across the whole hero
-  const [openInfo, setOpenInfo] = useState<string | null>(null);
+  const [openInfo, setOpenInfo] = useState<InfoId | null>(null);
   const toggleInfo = useCallback(
-    (id: string) => setOpenInfo((v) => (v === id ? null : id)),
+    (id: InfoId) => setOpenInfo((v) => (v === id ? null : id)),
     []
   );
   // The ⓘ layer exists only while the pipeline is actually running:
@@ -559,6 +562,12 @@ export default function Hero() {
   // (typed, ran, dragged, shuffled) — no nudge needed.
   const [flashTry, setFlashTry] = useState(false);
   const triedRef = useRef(false);
+  // the one retirement path for that nudge — every try-row interaction goes
+  // through here, so a future interaction site can't forget half the pair
+  const retireTryNudge = useCallback(() => {
+    triedRef.current = true;
+    setFlashTry(false);
+  }, []);
   // progress-keyed caption under the bar; the stage counter is forward-only
   // so a late-arriving trigger can never step the narration backwards
   const [caption, setCaption] = useState<string | null>(null);
@@ -1059,8 +1068,13 @@ export default function Hero() {
             setRolloutSamples(trainer.samples);
             // cycle 0 lands together with the training handoff — hold this
             // caption for the SECOND synced attempt, after the reader has
-            // actually seen the rollout try once
-            if (lastCycleRef.current >= 1) advanceCaption(3, CAPTION_ROLLOUT);
+            // actually seen the rollout try once. Gated on the gaze caption
+            // having shown (stage 2): its trigger is an async worker reply,
+            // and advanceCaption is forward-only, so firing 3 first would
+            // skip 2 for good. This trigger repeats at EVERY cycle boundary,
+            // so a slow gaze reply just defers this line one cycle.
+            if (lastCycleRef.current >= 1 && captionStageRef.current >= 2)
+              advanceCaption(3, CAPTION_ROLLOUT);
             engine.begin(
               demoSentenceRef.current.color,
               demoSentenceRef.current.tokens
@@ -1885,8 +1899,7 @@ export default function Hero() {
   const runCommand = async (command?: string) => {
     const trainer = trainerRef.current;
     if (!trainer?.ready || statusRef.current !== "converged") return;
-    triedRef.current = true; // the viewer found the try-row; no nudge needed
-    setFlashTry(false);
+    retireTryNudge(); // the viewer found the try-row
     const text = (command ?? tryText).trim();
     if (!text) return;
     const words = text
@@ -1967,8 +1980,7 @@ export default function Hero() {
     armState.current = { a1: REST[0], a2: REST[1] };
     setTryNote(null);
     userShuffledRef.current = true; // the shuffle tip is now moot
-    triedRef.current = true;
-    setFlashTry(false);
+    retireTryNudge();
     setTip(null);
   };
 
@@ -2029,8 +2041,7 @@ export default function Hero() {
     armState.current = { a1: REST[0], a2: REST[1] };
     setTryNote(null);
     userDraggedRef.current = true; // the drag tip is now moot
-    triedRef.current = true;
-    setFlashTry(false);
+    retireTryNudge();
     setTip(null);
     // a dragged block rests on the floor
     b.y = 0;
@@ -2465,8 +2476,7 @@ export default function Hero() {
               onChange={(e) => {
                 setTryText(e.target.value);
                 setTryNote(null); // the note described the previous command
-                triedRef.current = true; // typing counts — retire the nudge
-                setFlashTry(false);
+                retireTryNudge(); // typing counts
               }}
               onKeyDown={(e) => {
                 if (e.key === "Enter") void runCommand();
