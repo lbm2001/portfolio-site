@@ -38,9 +38,9 @@ export default async function ProjectPage({
           ← See all
         </Link>
         <div className="page-head">
-          <div className="label-mono">
-            {project.venue}
-            {project.period && ` · ${project.period}`}
+          <div className="label-mono detail-meta">
+            <span>{project.venue}</span>
+            {project.period && <span>{project.period}</span>}
           </div>
           <h1 className="page-title">{project.title}</h1>
         </div>

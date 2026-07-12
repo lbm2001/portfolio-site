@@ -1869,7 +1869,7 @@ export default function Hero() {
                 <div className="vla-loss-head">
                   <div className="vla-loss-label">Huber Loss</div>
                   <Link className="vla-project-link" href="/projects/mini-vla">
-                    mini-vla ↗
+                    mini-vla ↗︎
                   </Link>
                 </div>
                 <canvas className="vla-loss-canvas" ref={lossRef} />
@@ -1879,7 +1879,7 @@ export default function Hero() {
           ) : (
             <div className="vla-link-slot">
               <Link className="vla-project-link" href="/projects/mini-vla">
-                mini-vla ↗
+                mini-vla ↗︎
               </Link>
             </div>
           )}
