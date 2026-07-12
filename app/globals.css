@@ -1825,6 +1825,11 @@ a {
 .page-head .label-mono {
   margin-bottom: 14px;
 }
+.detail-meta > *:not(:last-child)::after {
+  content: "·";
+  margin: 0 8px;
+  color: var(--muted);
+}
 .page-title {
   font: 700 44px/1.04 var(--font-sans);
   letter-spacing: -0.03em;
@@ -2123,6 +2128,15 @@ a {
   }
   .resume-entry-dates,
   .resume-entry-sub span:last-child {
+    display: none;
+  }
+  .resume-contacts > span,
+  .resume-contacts > a,
+  .detail-meta > span {
+    display: block;
+  }
+  .resume-contacts > *:not(:last-child)::after,
+  .detail-meta > *:not(:last-child)::after {
     display: none;
   }
 }
