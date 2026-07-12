@@ -2077,10 +2077,10 @@ a {
 .page-head .label-mono {
   margin-bottom: 14px;
 }
-.detail-meta > *:not(:last-child)::after {
-  content: "·";
-  margin: 0 8px;
-  color: var(--muted);
+.detail-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
 }
 .page-title {
   font: 700 44px/1.04 var(--font-sans);
@@ -2242,6 +2242,12 @@ a {
   border-bottom: 1.5px solid var(--red);
   padding: 12px 0 2px;
 }
+.detail-link::after {
+  content: "↗\FE0E";
+  margin-left: 3px;
+  font-size: 0.8em;
+  color: var(--muted);
+}
 .post-meta-row {
   display: flex;
   gap: 16px;
@@ -2383,12 +2389,10 @@ a {
     display: none;
   }
   .resume-contacts > span,
-  .resume-contacts > a,
-  .detail-meta > span {
+  .resume-contacts > a {
     display: block;
   }
-  .resume-contacts > *:not(:last-child)::after,
-  .detail-meta > *:not(:last-child)::after {
+  .resume-contacts > *:not(:last-child)::after {
     display: none;
   }
 }
