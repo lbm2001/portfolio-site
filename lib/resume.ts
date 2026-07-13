@@ -54,6 +54,7 @@ function stripInline(s: string): string {
   // drop leftover \vspace{...}, \\ line breaks, stray braces from macros
   t = t.replace(/\\vspace\{[^}]*\}/g, "");
   t = t.replace(/\\\\/g, " ");
+  t = t.replace(/\$\\vert\$/g, "|");
   t = t.replace(/\$\|\$/g, "|");
   t = t.replace(/[{}]/g, "");
   return t.replace(/\s+/g, " ").trim();
