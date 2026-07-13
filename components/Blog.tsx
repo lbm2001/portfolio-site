@@ -8,7 +8,7 @@ export default function Blog() {
     <section id="blog" className="section">
       <div className="section-head">
         <div className="label-mono">04 Blog</div>
-        <Link href="/blog">See all →</Link>
+        <Link href="/blog">See all</Link>
       </div>
       {posts.length > 0 ? (
         posts.map((b) => <PostRow key={b.slug} post={b} />)

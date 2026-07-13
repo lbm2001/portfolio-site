@@ -51,7 +51,7 @@ export const profile = {
     "Currently focused on VLA models for imitation learning."
   ],
   focus: "Imitation Learning, VLAs",
-  field: "Machine Learning, Robot Learning",
+  field: "Machine Learning & Robot Learning",
   location: "Frankfurt, Germany",
   email: "contact@lukasmueller.dev",
   links: {

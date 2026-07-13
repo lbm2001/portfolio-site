@@ -8,7 +8,7 @@ export default function Work() {
     <section id="work" className="section">
       <div className="section-head">
         <div className="label-mono">03 Projects</div>
-        <Link href="/projects">See all →</Link>
+        <Link href="/projects">See all</Link>
       </div>
       <div className="work-grid">
         {projects.slice(0, 2).map((p) => (
