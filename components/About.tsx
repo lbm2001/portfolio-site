@@ -8,7 +8,7 @@ export default function About() {
     <section id="about" className="section">
       <div className="section-head">
         <div className="label-mono">01 About</div>
-        <Link href="/about">More →</Link>
+        <Link href="/about">More</Link>
       </div>
       <div className="about-head">
         <div className="about-photo about-photo-lg">

@@ -1741,6 +1741,15 @@ a {
     left: -4px;
     right: auto;
   }
+  /* Stacked, a LIVE encoder/action label carries translateX(-50%) (it re-centres
+     over its card). That transform turns the label into its own stacking
+     context, which traps the ⓘ popover's z-index inside the label — so the
+     later-in-DOM canvas / chip-row paint OVER the popover (the collision in the
+     screenshots). Lift the whole label (only while its popover is open) back
+     above the card's content so the opaque sheet cleanly overlays it. */
+  .hero.demo-open .vla-label:has(.vla-info-pop) {
+    z-index: 20;
+  }
   /* the stacked cards center their headers; the flex labels follow suit
      (text-align no longer reaches the label's flex children) */
   .hero.demo-open .vla-input > .vla-label,
@@ -1851,6 +1860,12 @@ a {
   font: 500 14px/1.4 var(--font-sans);
   color: var(--ink);
 }
+.info-cell .v a {
+  text-decoration: underline;
+  text-decoration-color: var(--red);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 2px;
+}
 
 /* Section header row */
 .section-head {
@@ -1862,7 +1877,10 @@ a {
 .section-head a {
   font: 500 13px var(--font-sans);
   color: var(--ink);
-  text-decoration: none;
+  text-decoration: underline;
+  text-decoration-color: var(--red);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 2px;
 }
 
 /* Work grid */
@@ -2132,9 +2150,15 @@ a {
   color: var(--body);
   margin: 0 0 6px;
 }
+/* The one site-wide hyperlink look: the word carries a red underline (see the
+   Paper/Code links on the project cards, .work-link). Applied to every inline
+   content link — prose, résumé, section "see all" — so nothing else invents its
+   own arrow-or-underline treatment. */
 .prose a {
   color: var(--ink);
   text-decoration: underline;
+  text-decoration-color: var(--red);
+  text-decoration-thickness: 1.5px;
   text-underline-offset: 2px;
 }
 .prose strong {
@@ -2242,12 +2266,6 @@ a {
   border-bottom: 1.5px solid var(--red);
   padding: 12px 0 2px;
 }
-.detail-link::after {
-  content: "↗\FE0E";
-  margin-left: 3px;
-  font-size: 0.8em;
-  color: var(--muted);
-}
 .post-meta-row {
   display: flex;
   gap: 16px;
@@ -2276,11 +2294,14 @@ a {
   display: inline-block;
 }
 .resume-contacts a {
-  color: var(--red);
-  text-decoration: none;
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-color: var(--red);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 2px;
 }
 .resume-contacts a:hover {
-  text-decoration: underline;
+  color: var(--red);
 }
 .resume-section {
   margin-bottom: 38px;
@@ -2289,7 +2310,7 @@ a {
   font: 600 11px var(--font-mono);
   letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: var(--ink);
+  color: var(--red);
   margin: 0 0 18px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--border);
@@ -2309,22 +2330,13 @@ a {
 }
 .resume-entry-link {
   color: inherit;
-  text-decoration: none;
-  text-underline-offset: 3px;
+  text-decoration: underline;
   text-decoration-color: var(--red);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
   transition: color 0.15s ease;
 }
-.resume-entry-link::after {
-  content: "↗\FE0E";
-  margin-left: 3px;
-  font-size: 0.8em;
-  color: var(--muted);
-}
 .resume-entry-link:hover {
-  color: var(--red);
-  text-decoration: underline;
-}
-.resume-entry-link:hover::after {
   color: var(--red);
 }
 .resume-entry-dates {

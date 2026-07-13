@@ -1812,17 +1812,23 @@ export default function Hero() {
     tipsShownRef.current = new Set(loadHints().tips ?? []);
   }, []);
 
-  // Idle-nudge flash: after ~3 CONSECUTIVE on-screen seconds with the demo
-  // still idle, flash the way in once in the language-warmup red — the
-  // "Try mini-vla" CTA below the breakpoint, the Start Training button above
-  // it (the same class lands on both; CSS only ever shows one of them).
-  // Consecutive, so a drive-by scroll doesn't bank progress; one-shot per
-  // page load (the animation runs its beats and stops). Opening the demo or
-  // starting a run retires it — the viewer found the button.
+  // Idle-nudge flash: after ~3 CONSECUTIVE on-screen seconds while idle, flash
+  // the NEXT step of the path in the language-warmup red. flashCta lands on both
+  // the "Try mini-vla" CTA and the Start Training button; CSS only ever shows
+  // one of them, so the same flag drives whichever is currently on screen.
+  //
+  // Re-armed on every showDemo change so the whole mobile path gets nudged in
+  // turn: closed → flash the CTA; opening the demo clears it (openDemo) and this
+  // re-runs, so after another ~3s it flashes the now-visible Start button. On
+  // desktop showDemo is inert, so this stays a single flash of the Start button.
+  // (The converged prompt box is the path's last step — see the flashTry twin.)
+  //
+  // Consecutive, so a drive-by scroll doesn't bank progress; the animation runs
+  // its beats and stops. Leaving idle (Start pressed) retires it.
   useEffect(() => {
     let seen = 0;
     const id = window.setInterval(() => {
-      if (statusRef.current !== "idle" || showDemoRef.current) {
+      if (statusRef.current !== "idle") {
         window.clearInterval(id);
         return;
       }
@@ -1836,7 +1842,7 @@ export default function Hero() {
       }
     }, 1000);
     return () => window.clearInterval(id);
-  }, []);
+  }, [showDemo]);
 
   // The converged twin of the idle nudge: the try-row is the payoff, but a
   // viewer who just watched a minute of training may not realize the input is
