@@ -17,6 +17,12 @@ const FIXTURE = String.raw`
 \resumeItem{Built a \textbf{VLA} pipeline with 95\% success.}
 \resumeItem{Nested braces: \href{https://x.dev}{link text} end.}
 
+\section{Projects}
+\resumeSubheading
+  {Optimal vs. Heuristic Policies for EV Charging}{Jan. 2026 -- Jun. 2026}
+  {Aarhus University}{\href{https://github.com/lukasmueller-dev/au-mdt}{\underline{Code}} $\vert$ \href{https://lukasmueller.dev/projects/ev-charging-optimal-vs-heuristics}{\underline{Project Page}}}
+\resumeItem{Modeled EV charging as an MDP.}
+
 \section{Skills}
 \textbf{Languages}{: Python, TypeScript} \\
 \textbf{ML}{: PyTorch, TF.js} \\
@@ -35,7 +41,7 @@ describe("parseResume (fixture)", () => {
   });
 
   it("ignores commented-out sections", () => {
-    expect(r.sections.map((s) => s.title)).toEqual(["Experience", "Skills"]);
+    expect(r.sections.map((s) => s.title)).toEqual(["Experience", "Projects", "Skills"]);
   });
 
   it("parses subheadings with escapes and attaches bullets in order", () => {
@@ -49,8 +55,22 @@ describe("parseResume (fixture)", () => {
     ]);
   });
 
+  it("keeps the 4th arg as a location for non-project entries", () => {
+    const exp = r.sections[0].entries[0];
+    expect(exp.location).toBe("Frankfurt");
+    expect(exp.slug).toBeUndefined();
+  });
+
+  it("pulls the slug from a project entry's Project Page link and drops the links text", () => {
+    const proj = r.sections[1].entries[0];
+    expect(proj.title).toBe("Optimal vs. Heuristic Policies for EV Charging");
+    expect(proj.slug).toBe("ev-charging-optimal-vs-heuristics");
+    // the "Code | Project Page" links must NOT leak into the rendered location
+    expect(proj.location).toBe("");
+  });
+
   it("parses the skills section into category/items pairs", () => {
-    expect(r.sections[1].skills).toEqual([
+    expect(r.sections[2].skills).toEqual([
       { category: "Languages", items: "Python, TypeScript" },
       { category: "ML", items: "PyTorch, TF.js" },
     ]);

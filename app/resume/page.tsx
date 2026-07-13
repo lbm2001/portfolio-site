@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Nav from "@/components/Nav";
 import Footer from "@/components/Footer";
-import { profile, resumeDownloadName, getProjectByTitle, externalLinkProps } from "@/lib/content";
+import { profile, resumeDownloadName, getProject, externalLinkProps } from "@/lib/content";
 import type { Resume } from "@/lib/resume";
 import resumeData from "@/lib/resume-data.json";
 
@@ -44,8 +44,6 @@ export default function ResumePage() {
         </div>
 
         {resume.sections.map((s) => {
-          // Only the Projects section links its entries to project pages.
-          const isProjects = /projects/i.test(s.title);
           return (
           <section key={s.title} className="resume-section">
             <h2 className="resume-section-title">{s.title}</h2>
@@ -62,7 +60,9 @@ export default function ResumePage() {
             )}
 
             {s.entries.map((e, i) => {
-              const project = isProjects ? getProjectByTitle(e.title) : undefined;
+              // A résumé Projects entry carries its own /projects/<slug> in the
+              // .tex; link the title only when that page actually exists.
+              const project = e.slug ? getProject(e.slug) : undefined;
               return (
               <div key={i} className="resume-entry">
                 <div className="resume-entry-row">
