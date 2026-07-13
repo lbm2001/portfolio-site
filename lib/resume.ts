@@ -17,6 +17,13 @@ export interface ResumeEntry {
   dates: string;
   org: string;
   location: string;
+  /**
+   * Project-page slug parsed from a "Project Page" link in the subheading's
+   * 4th arg (a `/projects/<slug>` href). Present only on Projects entries; the
+   * /resume page uses it to link the title straight to its project page instead
+   * of guessing the slug from the title.
+   */
+  slug?: string;
   bullets: string[];
 }
 export interface ResumeSkill {
@@ -148,11 +155,20 @@ export function parseResume(tex: string): Resume {
     while ((tm = tokenRe.exec(body))) {
       if (tm[1] === "Subheading") {
         const { args } = readArgs(body, tm.index + tm[0].length, 4);
+        // The 4th arg is a location for jobs/education, but for a project it
+        // holds "Code | Project Page" links instead. When it contains \href we
+        // treat it as links: pull the project-page slug out of the
+        // /projects/<slug> URL and drop the field from `location` so the page
+        // renders only the org, not the raw "Code | Project Page" text.
+        const rawLoc = args[3] || "";
+        const hasLinks = /\\href/.test(rawLoc);
+        const slug = rawLoc.match(/\/projects\/([A-Za-z0-9-]+)/)?.[1];
         cur = {
           title: stripInline(args[0] || ""),
           dates: stripInline(args[1] || ""),
           org: stripInline(args[2] || ""),
-          location: stripInline(args[3] || ""),
+          location: hasLinks ? "" : stripInline(rawLoc),
+          ...(slug ? { slug } : {}),
           bullets: [],
         };
         section.entries.push(cur);
