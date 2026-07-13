@@ -6,6 +6,7 @@
     { "repo": "lukasmueller-dev/mini-vla" },
     { "repo": "lukasmueller-dev/portfolio-site" },
     { "repo": "lukasmueller-dev/au-mdt", "slug": "ev-charging-optimal-vs-heuristics" },
+    { "slug": "vla-rl-support", "contentDir": "vla-rl-support" },
     { "slug": "cavitation-experiment-database", "contentDir": "cavitation-experiment-database" },
     { "repo": "lukasmueller-dev/mujopy" },
     { "repo": "lukasmueller-dev/lascroge", "slug": "large-scale-robot-generation" },
