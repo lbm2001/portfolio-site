@@ -99,7 +99,7 @@ export default function ResumePage() {
 
         <div className="resume-download">
           <a className="resume-btn" href="/resume.pdf" download={resumeDownloadName()}>
-            Download PDF ↓
+            Download PDF
           </a>
         </div>
       </article>
