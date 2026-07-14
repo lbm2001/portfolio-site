@@ -11,7 +11,7 @@ export default function ResumeStrip() {
         </div>
       </div>
       <Link className="resume-btn" href="/resume">
-        View Resume →
+        View Resume
       </Link>
     </section>
   );
