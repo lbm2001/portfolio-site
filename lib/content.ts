@@ -93,25 +93,6 @@ export const getPost = (slug: string) => posts.find((p) => p.slug === slug);
 export const externalLinkProps = (href: string) =>
   /^https?:/i.test(href) ? { target: "_blank", rel: "noopener noreferrer" } : {};
 
-// Normalize a free-text title into a slug-shaped key: lowercase, drop
-// parentheticals like "(Team Project)", and collapse anything non-alphanumeric
-// into single hyphens. Used to bridge the résumé (parsed from LaTeX, titles
-// drift from slugs — "Large-Scale Robot Generation" vs "large-scale-robot-generation").
-const slugifyTitle = (s: string) =>
-  s
-    .toLowerCase()
-    .replace(/\([^)]*\)/g, " ")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-
-// Match a résumé Projects entry to its project page by comparing the slugified
-// title against each project's slug (and slugified title). Returns undefined
-// when there's no page — callers fall back to plain text.
-export const getProjectByTitle = (title: string) => {
-  const key = slugifyTitle(title);
-  return projects.find((p) => p.slug === key || slugifyTitle(p.title) === key);
-};
-
 // Save-as filename for the resume PDF download, stamped with the current
 // month/year (e.g. resume-lukas-mueller-072026.pdf). The served asset stays
 // /resume.pdf — the browser's `download` attribute renames it on save.
