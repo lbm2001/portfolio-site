@@ -29,6 +29,8 @@
 //   -->
 //   Markdown body...
 
+import { splitFrontmatter, stripQuotes } from "./frontmatter";
+
 export interface ProjectMdLink {
   label: string;
   href: string;
@@ -44,38 +46,9 @@ export interface ProjectMd {
   body: string;
 }
 
-function stripQuotes(s: string): string {
-  const t = s.trim();
-  if (
-    (t.startsWith('"') && t.endsWith('"')) ||
-    (t.startsWith("'") && t.endsWith("'"))
-  ) {
-    return t.slice(1, -1);
-  }
-  return t;
-}
-
 export function parseProjectMd(raw: string): ProjectMd {
-  // Normalize newlines; split off the frontmatter block if present. It may be an
-  // HTML comment (<!-- ... -->, hidden on GitHub) or a --- fence; try the comment
-  // first since a leading comment is unambiguous.
-  const src = raw.replace(/\r\n/g, "\n").replace(/^﻿/, "");
-  const comment = /^<!--[\s\S]*?-->[ \t]*\n?/.exec(src);
-  const fence = /^---\n([\s\S]*?)\n---\n?/.exec(src);
-
-  let block: string;
-  let body: string;
-  if (comment) {
-    // Drop the <!-- and --> markers (plus any extra dashes) to get the raw
-    // key/value lines. Non-`key: value` lines (e.g. stray dashes) are ignored below.
-    block = comment[0].replace(/^<!--+/, "").replace(/--+>[ \t]*\n?$/, "");
-    body = src.slice(comment[0].length).trim();
-  } else if (fence) {
-    block = fence[1];
-    body = src.slice(fence[0].length).trim();
-  } else {
-    return { body: src.trim() };
-  }
+  const { block, body } = splitFrontmatter(raw);
+  if (block === null) return { body };
 
   const out: ProjectMd = { body };
 
