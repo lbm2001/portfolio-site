@@ -1823,10 +1823,18 @@ export default function Hero() {
   // desktop showDemo is inert, so this stays a single flash of the Start button.
   // (The converged prompt box is the path's last step — see the flashTry twin.)
   //
-  // Consecutive, so a drive-by scroll doesn't bank progress; the animation runs
-  // its beats and stops. Leaving idle (Start pressed) retires it.
+  // Consecutive, so a drive-by scroll doesn't bank progress. Leaving idle (Start
+  // pressed) retires it.
+  //
+  // Repeats: each beat is a 3s untouched-idle wait + the 6s flash (vla-*-flash =
+  // 1.5s × 4); at the end of the cycle the flag is cleared and a fresh 3s wait
+  // re-arms it, so an unattended hero keeps re-inviting until Start is pressed
+  // (or the mobile demo opens). Clearing the flag between beats drops the
+  // is-flash class, so re-adding it restarts the CSS animation cleanly.
   useEffect(() => {
-    let seen = 0;
+    const FLASH_AT = 3; // seconds of untouched idle before a beat fires
+    const CYCLE_END = 9; // FLASH_AT + 6s flash — clear here and re-arm
+    let seen = 0; // consecutive on-screen idle seconds within this cycle
     const id = window.setInterval(() => {
       if (statusRef.current !== "idle") {
         window.clearInterval(id);
@@ -1834,11 +1842,15 @@ export default function Hero() {
       }
       if (!heroOnScreenRef.current) {
         seen = 0;
+        setFlashCta(false);
         return;
       }
-      if (++seen >= 3) {
-        window.clearInterval(id);
+      seen += 1;
+      if (seen === FLASH_AT) {
         setFlashCta(true);
+      } else if (seen >= CYCLE_END) {
+        setFlashCta(false); // beat done; the next 3s wait starts a new cycle
+        seen = 0;
       }
     }, 1000);
     return () => window.clearInterval(id);
@@ -1848,27 +1860,37 @@ export default function Hero() {
   // viewer who just watched a minute of training may not realize the input is
   // now theirs. After ~3 CONSECUTIVE on-screen seconds at converged with no
   // interaction (typing, running, dragging, shuffling all count), flash the
-  // prompt box on the same beat as the other nudges. One-shot per run; any
-  // interaction retires it unshown.
+  // prompt box on the same beat as the other nudges.
+  //
+  // Repeats on the same 3s-wait + 6s-flash cycle as the idle nudge, re-arming
+  // until the viewer engages: any try-row interaction sets triedRef and retires
+  // it for good. So it keeps inviting a converged-but-idle viewer, but the first
+  // keystroke (or run/drag/shuffle) stops it permanently.
   useEffect(() => {
     if (status !== "converged") return;
     // no setFlashTry(false) here: every exit from converged runs resetToIdle,
     // which already clears it — a synchronous setState in an effect body is
     // both redundant and a lint error (react-hooks/set-state-in-effect)
     triedRef.current = false;
-    let seen = 0;
+    const FLASH_AT = 3; // seconds of untouched converged idle before a beat fires
+    const CYCLE_END = 9; // FLASH_AT + 6s flash — clear here and re-arm
+    let seen = 0; // consecutive on-screen idle seconds within this cycle
     const id = window.setInterval(() => {
       if (triedRef.current) {
-        window.clearInterval(id);
+        window.clearInterval(id); // engaged — retire the nudge for good
         return;
       }
       if (!heroOnScreenRef.current) {
         seen = 0;
+        setFlashTry(false);
         return;
       }
-      if (++seen >= 3) {
-        window.clearInterval(id);
+      seen += 1;
+      if (seen === FLASH_AT) {
         setFlashTry(true);
+      } else if (seen >= CYCLE_END) {
+        setFlashTry(false); // beat done; the next 3s wait starts a new cycle
+        seen = 0;
       }
     }, 1000);
     return () => window.clearInterval(id);
