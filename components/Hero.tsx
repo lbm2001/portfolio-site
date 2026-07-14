@@ -2347,14 +2347,6 @@ export default function Hero() {
               </button>
             </>
           )}
-          {/* the progress-keyed narration; keyed so each new line re-runs the
-              fade-in. Desktop floats it just below the bar, stacked folds it
-              into the bar's wrap-flow as its own row. */}
-          {caption && (status === "training" || status === "paused") && (
-            <div className="vla-caption" key={caption}>
-              {caption}
-            </div>
-          )}
         </div>
       </div>
 
@@ -2384,6 +2376,15 @@ export default function Hero() {
           )}
         </div>
         <canvas className="vla-canvas" ref={demoRef} />
+        {/* the progress-keyed narration; keyed so each new line re-runs the
+            fade-in. Anchored to the Demonstration — the expert scene it
+            narrates: floats just below the card on desktop, folds in as the
+            card's last row (below the canvas + prompt) when stacked. */}
+        {caption && (status === "training" || status === "paused") && (
+          <div className="vla-caption" key={caption}>
+            {caption}
+          </div>
+        )}
       </div>
 
       {/* Vision Encoder — 32x32 CNN input, blown up pixelated. Hover (or tap on
@@ -2552,7 +2553,7 @@ export default function Hero() {
         )}
         <div className="vla-out-head">
           <div className="vla-label">
-            {status === "converged" ? "Trained policy; your command" : "Rollout"}
+            {status === "converged" ? "Your command" : "Rollout"}
             {infoVisible && (
               <InfoDot
                 id="output"
