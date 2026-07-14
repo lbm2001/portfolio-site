@@ -1,7 +1,7 @@
-import Image from "next/image";
 import type { Metadata } from "next";
 import Nav from "@/components/Nav";
 import Footer from "@/components/Footer";
+import { AboutHead, ProfileInfoGrid } from "@/components/AboutProfile";
 import { profile } from "@/lib/content";
 
 export const metadata: Metadata = {
@@ -18,19 +18,7 @@ export default function AboutPage() {
           <h1 className="page-title">{profile.name}</h1>
         </div>
 
-        <div className="about-head">
-          <div className="about-photo about-photo-lg">
-            <Image src="/photo.jpg" alt={profile.name} fill sizes="160px" />
-          </div>
-          <p className="section-lead text-pretty">
-            {profile.lead.map((line, index) => (
-              <span key={index}>
-                {line}
-                {index < profile.lead.length - 1 && <br />}
-              </span>
-            ))}
-          </p>
-        </div>
+        <AboutHead />
 
         <div className="prose">
           <p>
@@ -54,26 +42,7 @@ export default function AboutPage() {
           </p>
         </div>
 
-        <div className="info-grid">
-          <div className="info-cell">
-            <div className="k">Field</div>
-            <div className="v">{profile.field}</div>
-          </div>
-          <div className="info-cell">
-            <div className="k">Focus</div>
-            <div className="v">{profile.focus}</div>
-          </div>
-          <div className="info-cell">
-            <div className="k">Location</div>
-            <div className="v">{profile.location}</div>
-          </div>
-          <div className="info-cell">
-            <div className="k">Email</div>
-            <div className="v">
-              <a href={profile.links.email}>{profile.email}</a>
-            </div>
-          </div>
-        </div>
+        <ProfileInfoGrid />
       </article>
       <Footer />
     </main>
