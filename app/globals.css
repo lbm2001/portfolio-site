@@ -833,9 +833,16 @@ a {
   cursor: pointer;
   filter: invert(var(--vision-rest-invert));
 }
-.hero.is-live:not(.is-loading):not(.is-converged) .vla-vision:hover .vla-vision-canvas,
 .hero.is-live:not(.is-loading):not(.is-converged) .vla-vision.model-view .vla-vision-canvas {
   filter: invert(var(--vision-flip-invert));
+}
+/* Hover drives the flip only on true-hover devices. On touch, the tap-emulated
+   :hover sticks after the first tap and would fight the JS .model-view toggle
+   (the second tap could never revert), so touch relies on .model-view alone. */
+@media (hover: hover) {
+  .hero.is-live:not(.is-loading):not(.is-converged) .vla-vision:hover .vla-vision-canvas {
+    filter: invert(var(--vision-flip-invert));
+  }
 }
 .vla-vision-hint {
   margin-top: 7px;
@@ -851,13 +858,19 @@ a {
 .hero.is-live:not(.is-loading):not(.is-converged) .vla-vision-hint {
   opacity: 0.55;
 }
-.hero.is-live:not(.is-loading):not(.is-converged) .vla-vision:hover .vla-vision-hint,
 .hero.is-live:not(.is-loading):not(.is-converged) .vla-vision.model-view .vla-vision-hint {
   opacity: 0.9;
 }
-.hero.is-live:not(.is-loading):not(.is-converged) .vla-vision:hover .vla-vision-hint::after,
 .hero.is-live:not(.is-loading):not(.is-converged) .vla-vision.model-view .vla-vision-hint::after {
   content: var(--vision-flip-label);
+}
+@media (hover: hover) {
+  .hero.is-live:not(.is-loading):not(.is-converged) .vla-vision:hover .vla-vision-hint {
+    opacity: 0.9;
+  }
+  .hero.is-live:not(.is-loading):not(.is-converged) .vla-vision:hover .vla-vision-hint::after {
+    content: var(--vision-flip-label);
+  }
 }
 
 /* the raw prompt "textarea" — a SEPARATE input floating just below the
