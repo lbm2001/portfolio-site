@@ -20,6 +20,11 @@
   --fill: rgba(0, 0, 0, 0.05);
   --nav-panel: rgba(255, 255, 255, 0.94);
   --hatch: rgba(0, 0, 0, 0.3);
+  /* How much --ink survives in the Start-button flash wash (rest is --red).
+     Light: --ink is near-black, so 8% red vanishes — keep far more red (72%
+     ink) for the wash to read. Dark: --ink is light, so 92% ink / 8% red is
+     already visible; the dark blocks override this back up. */
+  --flash-mix: 72%;
 
   /* Vision Encoder panel — the CNN feeds on 1 - pixel, so a CSS invert(1) shows
      its literal input. Light REST shows the host view (invert 0) and flips to
@@ -72,6 +77,8 @@
     --fill: rgba(255, 255, 255, 0.08);
     --nav-panel: rgba(15, 15, 15, 0.94);
     --hatch: rgba(255, 255, 255, 0.28);
+    /* --ink is light here, so the subtle 8% red wash already reads */
+    --flash-mix: 92%;
     /* dark rests on the model view; hover/tap reveals the host input — the copy
        follows the displayed state, so it flips with the invert. */
     --vision-rest-invert: 1;
@@ -94,6 +101,7 @@
   --fill: rgba(255, 255, 255, 0.08);
   --nav-panel: rgba(15, 15, 15, 0.94);
   --hatch: rgba(255, 255, 255, 0.28);
+  --flash-mix: 92%;
   /* keep in sync with the prefers-color-scheme block above */
   --vision-rest-invert: 1;
   --vision-flip-invert: 0;
@@ -1393,9 +1401,12 @@ a {
     box-shadow: 0 0 0 0 rgba(225, 45, 26, 0);
   }
   50% {
-    background-color: color-mix(in srgb, var(--ink) 92%, var(--red));
+    /* fill wash: --flash-mix keeps the red visible on a near-black button in
+       light mode. The 6px red halo carries the signal AROUND the button on
+       the page background, so it reads regardless of how dark the fill is. */
+    background-color: color-mix(in srgb, var(--ink) var(--flash-mix), var(--red));
     border-color: var(--red);
-    box-shadow: 0 0 0 5px rgba(225, 45, 26, 0.07);
+    box-shadow: 0 0 0 6px rgba(225, 45, 26, 0.18);
   }
 }
 /* mobile nudge: after ~3s of looking at the idle hero, the demo CTA pulses
