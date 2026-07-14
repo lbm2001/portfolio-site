@@ -1363,8 +1363,8 @@ a {
   max-width: 200px;
   line-height: 1.5;
 }
-/* progress-keyed narration: desktop floats it just below the bar (the
-   stacked override folds it into the bar's wrap-flow instead) */
+/* progress-keyed narration: desktop floats it just below the Demonstration
+   card (the stacked override folds it in as the card's last row instead) */
 .vla-caption {
   position: absolute;
   top: calc(100% + 7px);
@@ -1750,14 +1750,14 @@ a {
     animation: vla-label-hop-center 0.5s ease;
   }
 
-  /* guidance layer, stacked: the narration joins the bar's wrap-flow as its
-     own full-width row — absolute would hang the sticky topbar's text over
-     whatever card is under it. order 2 lands it below the loss row (order 1). */
+  /* guidance layer, stacked: the narration folds into the Demonstration card
+     (a flex column) as its last row — order 2 lands it below the canvas (0)
+     and the folded-in prompt (1). */
   .hero.demo-open .vla-caption {
     position: static;
-    flex: 1 0 100%;
     order: 2;
-    text-align: left;
+    text-align: center;
+    margin-top: 10px;
   }
   /* stacked, the cards are page-wide — the Action Head no longer needs to
      borrow room to the left for its popover */
