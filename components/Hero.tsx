@@ -279,11 +279,11 @@ const SIL_RENDER = CONFIG.rollout.silRender; // silhouette render size before th
     silently rendered into the popover. */
 type InfoId = "demo" | "vision" | "lang" | "action" | "output";
 const INFO: Record<InfoId, string> = {
-  demo: "An analytical expert performs each command — the policy's training data. Thousands more examples are generated invisibly between the ones you see.",
+  demo: "An analytical expert performs each command yielding the policy's training data. Thousands more examples are generated invisibly between the ones you see.",
   vision: "The 32×32 silhouette the CNN actually sees; red = its spatial attention. Hover or tap to flip between this view and the model's-eye (inverted) one.",
-  lang: "Frozen GloVe word embeddings, attention-pooled — each bar is that word's learned weight. Synonyms it never trained on still resolve.",
-  action: "The policy's live output — predicted target joint angles plus the learned gripper action.",
-  output: "The policy attempts the demonstration's scene and command with its own learned motion. Once trained, it runs your commands.",
+  lang: "Frozen GloVe word embeddings, attention-pooled. Each bar is that word's learned weight. Synonyms it never trained on still resolve.",
+  action: "The policy's live output: predicted target joint angles and the learned gripper action.",
+  output: "The policy attempts the demonstration's scene and command with its currently learned policy.",
 };
 
 // Progress-keyed narration under the bar. Each line fires off a REAL signal
@@ -291,13 +291,13 @@ const INFO: Record<InfoId, string> = {
 // threshold) and holds until the next one — the captions are themselves the
 // progress bar, so there is no separate percent readout.
 const CAPTION_DEMO =
-  "The Demonstration is the expert — the policy learns by copying it";
+  "The policy learns by trying to copy the expert's demonstrations";
 const CAPTION_GAZE =
   "Red = where the model looks; watch it sharpen onto the commanded block";
 const CAPTION_ROLLOUT =
-  "The Rollout is the policy's own attempt — a fresh try at every snapshot";
+  "The policy's attempt at the current training status";
 const CAPTION_ALMOST =
-  "Almost converged — the command box unlocks when the loss settles";
+  "Almost converged. You can type in your command soon";
 
 // Rotating try-box placeholders — documentation of the grammar (and its
 // synonyms) disguised as a hint. Every color word maps into the FIRST
@@ -316,8 +316,8 @@ const TRY_PLACEHOLDERS = [
 // embedding geometry, which is the point of the tip.
 const TIPS = [
   "Tip: drag a block somewhere else, then run again",
-  "Tip: Shuffle rearranges the scene — the policy re-plans from vision",
-  'Tip: "gold" was never in its training grammar — try it anyway',
+  "Tip: Shuffle rearranges the scene and the policy re-plans from vision",
+  'Tip: "gold" was never in its training grammar, you can try it anyway',
 ];
 
 // One-time nudges (the post-run tip chain) persist across visits. (`pulse`
@@ -2211,7 +2211,7 @@ export default function Hero() {
                   what the wait is and that it is short */}
               {status === "loading" && (
                 <span className="vla-status-sub vla-warm-note">
-                  Loading word embeddings — a few seconds
+                  Loading word embeddings (takes a few seconds)
                 </span>
               )}
               {live && hud.samples > 0 && (
@@ -2530,7 +2530,7 @@ export default function Hero() {
         )}
         <div className="vla-out-head">
           <div className="vla-label">
-            {status === "converged" ? "Policy — your command" : "Rollout"}
+            {status === "converged" ? "Trained policy; your command" : "Rollout"}
             {infoVisible && (
               <InfoDot
                 id="output"
@@ -2542,7 +2542,7 @@ export default function Hero() {
           {/* the payoff teaser: the single strongest reason to wait out the
               run, retired at converged where the real try-row replaces it */}
           {(status === "training" || status === "paused") && (
-            <div className="vla-locked">Your command — unlocks when trained</div>
+            <div className="vla-locked">Your command (unlocks when trained)</div>
           )}
           {rolloutSamples > 0 &&
             (status === "training" ||
