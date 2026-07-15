@@ -21,7 +21,7 @@
 //   --->
 //   Markdown body...
 
-import { splitFrontmatter, stripQuotes } from "./frontmatter";
+import { splitFrontmatter, stripQuotes } from "./frontmatter.ts";
 
 export interface PostMd {
   title?: string;
