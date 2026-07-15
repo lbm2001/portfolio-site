@@ -29,7 +29,7 @@
 //   -->
 //   Markdown body...
 
-import { splitFrontmatter, stripQuotes } from "./frontmatter";
+import { splitFrontmatter, stripQuotes } from "./frontmatter.ts";
 
 export interface ProjectMdLink {
   label: string;
