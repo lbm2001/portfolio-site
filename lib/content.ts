@@ -1,7 +1,9 @@
 import projectsData from "./projects-data.json";
 import postsData from "./posts-data.json";
 
-export interface NavLink {
+// Not exported: nothing outside this file consumes the type by name, only
+// the `nav` value below (whose type is inferred at its declaration site).
+interface NavLink {
   label: string;
   href: string;
 }
