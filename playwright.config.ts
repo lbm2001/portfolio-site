@@ -1,4 +1,4 @@
-import { defineConfig } from "@playwright/test";
+import { defineConfig, devices } from "@playwright/test";
 
 // E2E runs against the REAL Cloudflare worker (workerd via `wrangler dev`), not
 // `next start` — passing here means the OpenNext bundle builds and serves, which
@@ -58,6 +58,19 @@ export default defineConfig({
         isMobile: true,
         hasTouch: true,
       },
+    },
+    // Real WebKit, not just Chromium/SwiftShader: the CPU-backend replay
+    // fallback (Hero.tsx's replayFallback: true) exists specifically for
+    // iOS/iPadOS's WebGL context cap, but until now nothing in this suite
+    // ever ran on the engine that condition actually occurs on — only a
+    // simulated abort on Chromium (tests/e2e/hero-error.spec.ts). The device
+    // preset below drives real WebKit with an iOS user agent/viewport/touch
+    // profile. The chromium-only `--use-angle=swiftshader` launch args above
+    // don't apply to WebKit, hence the explicit empty override.
+    {
+      name: "webkit-mobile",
+      testMatch: /hero.*\.spec\.ts/,
+      use: { ...devices["iPhone 13"], launchOptions: {} },
     },
   ],
   webServer: liveBaseUrl

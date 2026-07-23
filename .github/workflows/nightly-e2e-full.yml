@@ -36,8 +36,8 @@ jobs:
       - name: Build worker (next build + OpenNext bundle)
         run: npm run e2e:build
 
-      - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium webkit
 
       - name: E2E including train-to-convergence (Playwright vs wrangler dev)
         run: npm run e2e:full
