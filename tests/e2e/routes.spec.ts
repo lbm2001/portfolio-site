@@ -1,32 +1,12 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { expect, test } from "@playwright/test";
 import { VLA_ASSET_BASE } from "../../lib/vla-assets";
-import { collectPageErrors } from "./helpers";
-
-// Every page the site serves, enumerated from the same committed data the
-// build renders from — a slug in the JSON without a working page is exactly
-// the kind of regression this sweep exists to catch.
+import { collectPageErrors, sitePageRoutes } from "./helpers";
 
 const root = join(import.meta.dirname, "../..");
-const projects: { slug: string }[] = JSON.parse(
-  readFileSync(join(root, "lib/projects-data.json"), "utf8"),
-);
-const posts: { slug: string }[] = JSON.parse(
-  readFileSync(join(root, "lib/posts-data.json"), "utf8"),
-);
 
-const routes = [
-  "/",
-  "/about",
-  "/projects",
-  "/blog",
-  "/resume",
-  ...projects.map((p) => `/projects/${p.slug}`),
-  ...posts.map((p) => `/blog/${p.slug}`),
-];
-
-for (const route of routes) {
+for (const route of sitePageRoutes()) {
   test(`renders ${route} without errors`, async ({ page }) => {
     const errors = collectPageErrors(page);
     const response = await page.goto(route);
