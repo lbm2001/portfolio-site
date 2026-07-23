@@ -10,17 +10,52 @@
 - **Repo:** portfolio-site
 - **Branch:** `fresh-review-1`
 - **Worktree:** /root/git/worktrees/portfolio-site/fresh-review-1
-- **Last updated:** 2026-07-23 15:24 UTC · server (srv1841294)
+- **Last updated:** 2026-07-23 17:35 UTC · server (srv1841294)
 
 ## State
 
-Not started. This is review round 1 for portfolio-site — no prior review
-round exists, so there is no coverage to skip and no review-PR history to
-de-duplicate against.
+Discovery + merge done. Baseline gate (typecheck/lint/test/`next build`) was
+green — no fixes needed there. 7 blind sub-reviewers ran in parallel over the
+scope below, then the `codebase-health` scan-only leg ran strictly after, then
+everything was merged into one ranked list and de-duplicated against
+`PROJECT_STATUS.md`/`PROJECT_ROADMAP.md` (both empty scaffolds — nothing to
+skip) and a repo-wide TODO/FIXME grep (nothing existing matched). The full
+ranked list (22 code findings + 1 process correction) was posted to the user
+in chat this session — **it has no durable home yet**. Top items, so a cold
+read doesn't need the chat transcript:
 
-Mission: run one independent, blind review pass over the whole repo, then a
-scan-only `codebase-health` leg, then merge the two into a single ranked
-findings list.
+1. **Confirmed live bug**: `config/projects.sources.json:9` project
+   `vla-rl-support` (added 2026-07-13) has zero entries in
+   `lib/projects-data.json` — silently dropped by `gen-projects-data.mjs`'s
+   per-project catch+warn, invisible on the live site for ~10 days.
+2. **Confirmed live bug**: `package.json` pins `mini-vla#v0.7.1`, but the
+   locked package's own `package.json` version is still `0.7.0` — defeats the
+   version-derived asset-path guarantee `lib/vla-assets.ts` depends on.
+3. **Confirmed security gap**: `.env` (a supported `GITHUB_TOKEN` source) is
+   not covered by `.gitignore` (`.env*.local` only).
+4. CI's `e2e` job never sets `VLA_FULL`, so `hero-full.spec.ts` — the only
+   spec that waits for training convergence — is skipped by default; the
+   site's centerpiece is untested by default CI.
+5. Script-injection shape in `bump-mini-vla.yml` (`${{ }}` interpolated into
+   shell `run:` before validation runs), with write permissions.
+6. `bump-mini-vla.yml` never runs e2e before a version-bump PR merges — the
+   exact gap that let #2 land.
+
+Full list (all 23 items, with file:line and failure scenarios) is in this
+session's chat transcript only right now — promote it before this task ends
+(see Next action).
+
+**Process correction to this file's own standing rules**: the "CI here is
+opt-in per PR — apply a label" assumption below is **false** for this repo.
+Verified: `.github/workflows/ci.yml` triggers unconditionally on
+`pull_request`/`push`, no label anywhere. No label is needed on the review PR.
+
+**New review dimension this round surfaced** (not yet in the
+codebase-review skill's catalog): *silent partial-failure in build-time
+generation loops* — whether a per-item failure in a commit-time
+data-generation loop (content fetch, asset copy, config parsing) fails the
+build, warns-and-skips, or silently produces wrong/missing output with no
+signal. 4 of this round's findings are instances of it.
 
 Scope — the review-dimensions generic core, applied to this repo:
 
@@ -73,21 +108,23 @@ Round-1 extras (no prior round to build on):
 
 ## Next action
 
-1. `git rebase origin/main` (never the resume verb — it fast-forwards to
-   this branch's own upstream and reports up to date while arbitrarily far
-   behind the default branch).
-2. Run the repo's own verification gate as the baseline: `npm run typecheck`,
-   `npm run lint`, `npm test`, `npx next build`. A failure here is yours to
-   fix or flag first — treat whatever this gate does *not* catch as the
-   round's real target.
-3. Fan out parallel sub-reviewers over the scope above, then run the
-   `codebase-health` scan leg, then merge into one ranked findings list —
-   `file:line` and a concrete failure scenario each, reasoned-but-unproven
-   claims labelled as such.
+Discovery/merge (former steps 1-3) is done — do not re-run the fan-out.
+Waiting on the owner for how to proceed with the results:
+
+1. Decide which findings get fixed now vs. filed for later, and whether the
+   findings list becomes its own committed report + PR (the standing rule
+   below about labeling "the review PR" assumes one gets opened) or stays a
+   chat-only artifact.
+2. Whatever is decided, promote the findings list out of chat into a durable
+   home before this task ends — a committed report, `PROJECT_ROADMAP.md`
+   items, or PR descriptions — per this file's own hygiene rule. Right now
+   it lives only in this session's transcript, which does not survive.
+3. Add the new dimension named in **State** above to the codebase-review
+   skill's dimension catalog.
 
 ## Blockers
 
-None known yet.
+None — waiting on owner direction (see Next action), not stuck.
 
 Standing rules for this round:
 
@@ -105,5 +142,10 @@ Standing rules for this round:
 
 ## Gotchas (unpromoted)
 
-None yet — this section is for surprises the round turns up that aren't
-resolved by the time it hands off.
+- This worktree/container had no Node.js installed at all (not even via nvm —
+  `nvm`/`node`/`npm` were all missing from PATH, despite `.nvmrc` requiring
+  22). Had to download a standalone Node v22.17.0 tarball and symlink
+  `node`/`npm`/`npx` into `/usr/local/bin` before anything in CLAUDE.md's
+  Commands section would run. Worth checking if this is specific to this
+  container or a recurring provisioning gap — if it recurs, promote to repo
+  or toolkit docs.
