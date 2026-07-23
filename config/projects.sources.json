@@ -2,6 +2,7 @@
   "contentRepo": "lukasmueller-dev/portfolio-project-content",
   "file": "README.md",
   "projects": [
+    { "repo": "lukasmueller-dev/agentic-dev-toolkit" },
     { "repo": "lukasmueller-dev/algo-lens" },
     { "repo": "lukasmueller-dev/mini-vla" },
     { "repo": "lukasmueller-dev/portfolio-site" },
