@@ -3,9 +3,17 @@ import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { PHASE_DEVELOPMENT_SERVER } from "next/constants.js";
 
+// Kept as a literal, not imported from lib/build-id.ts: this file is loaded
+// directly by Next's own config loader, which can't type-strip .ts (verified —
+// importing lib/build-id.ts here throws ERR_UNKNOWN_FILE_EXTENSION even though
+// scripts/*.mjs can, via `node --experimental-strip-types`). components/Hero.tsx
+// and public/_headers reference this same path; tests/unit/build-id.test.ts
+// guards all three against drift instead.
+const BUILD_ID_PATH = "/build-id.json";
+
 const BUILD_ID = randomUUID();
 writeFileSync(
-  path.join(import.meta.dirname, "public/build-id.json"),
+  path.join(import.meta.dirname, "public" + BUILD_ID_PATH),
   JSON.stringify({ id: BUILD_ID }),
 );
 

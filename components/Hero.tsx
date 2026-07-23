@@ -48,6 +48,7 @@ import {
   type TrainerStatus,
 } from "mini-vla/trainer";
 import { VLA_ASSET_BASE } from "@/lib/vla-assets";
+import { BUILD_ID_PATH, type BuildIdPayload } from "@/lib/build-id";
 import {
   RolloutEngine,
   type RolloutFrame,
@@ -1693,9 +1694,9 @@ export default function Hero() {
     const check = async () => {
       if (document.hidden) return;
       try {
-        const r = await fetch("/build-id.json", { cache: "no-store" });
+        const r = await fetch(BUILD_ID_PATH, { cache: "no-store" });
         if (!r.ok) return;
-        const { id } = await r.json();
+        const { id }: BuildIdPayload = await r.json();
         if (id !== buildId) window.location.reload();
       } catch { /* offline / fetch failed — skip */ }
     };

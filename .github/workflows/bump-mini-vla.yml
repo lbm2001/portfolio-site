@@ -8,11 +8,15 @@
 # the built-in GITHUB_TOKEN (with the permissions below) is enough to push a
 # branch and open the PR.
 #
-# The job re-runs the real gates (asset staging, typecheck, unit tests, build)
-# against the new pin BEFORE opening the PR, because a PR opened by GITHUB_TOKEN
-# does NOT trigger ci.yml (GitHub blocks that recursion). Treat this run as the
-# PR's CI. If branch protection later requires ci.yml's checks on the PR itself,
-# swap `token` below for a PAT stored here too.
+# The job re-runs the real gates (asset staging, typecheck, lint, unit tests,
+# build, e2e against a real Workers bundle, AND the slow train-to-convergence
+# specs via VLA_FULL — worth the extra time here specifically, since a model
+# bump is exactly the change most likely to regress in-browser training
+# behavior without tripping typecheck/lint/unit) against the new pin BEFORE
+# opening the PR, because a PR opened by GITHUB_TOKEN does NOT trigger ci.yml
+# (GitHub blocks that recursion). Treat this run as the PR's CI. If branch
+# protection later requires ci.yml's checks on the PR itself, swap `token`
+# below for a PAT stored here too.
 name: bump-mini-vla
 
 on:
@@ -32,6 +36,8 @@ permissions:
 jobs:
   bump:
     runs-on: ubuntu-latest
+    env:
+      WRANGLER_SEND_METRICS: "false"
     steps:
       - uses: actions/checkout@v4
 
@@ -42,13 +48,14 @@ jobs:
 
       - name: Resolve tag
         id: tag
+        env:
+          RAW_TAG: ${{ github.event.client_payload.tag || github.event.inputs.tag }}
         run: |
-          TAG='${{ github.event.client_payload.tag || github.event.inputs.tag }}'
-          case "$TAG" in
+          case "$RAW_TAG" in
             v[0-9]*) ;;
-            *) echo "refusing to bump to unexpected tag: '$TAG'"; exit 1 ;;
+            *) echo "refusing to bump to unexpected tag: '$RAW_TAG'"; exit 1 ;;
           esac
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "tag=$RAW_TAG" >> "$GITHUB_OUTPUT"
 
       # Re-point the pin AND reinstall in one step: `npm install <spec>` rewrites
       # both package.json and package-lock.json. setup-node restores ~/.npm, so a
@@ -56,10 +63,29 @@ jobs:
       # forces a fresh clone of the tag, and removing node_modules/mini-vla stops
       # an old checkout from shadowing it.
       - name: Bump pin + cache-clean reinstall
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
         run: |
           npm cache clean --force
           rm -rf node_modules/mini-vla
-          npm install "mini-vla@github:lukasmueller-dev/mini-vla#${{ steps.tag.outputs.tag }}" --no-audit --no-fund
+          npm install "mini-vla@github:lukasmueller-dev/mini-vla#${TAG}" --no-audit --no-fund
+
+      # lib/vla-assets.ts derives the served asset path from mini-vla's own
+      # package.json `version` field, not the git tag — the two are supposed
+      # to agree (mini-vla's release process is meant to refuse to tag
+      # otherwise), but that hasn't always held (see review-round-1 finding
+      # #2: v0.7.1 was tagged while package.json stayed at 0.7.0). Catch a
+      # repeat here, at bump time, rather than silently shipping content
+      # under a stale-looking version path.
+      - name: Verify mini-vla package version matches the bumped tag
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          PKG_VERSION=$(node -p "require('mini-vla/package.json').version")
+          EXPECTED="${TAG#v}"
+          if [ "$PKG_VERSION" != "$EXPECTED" ]; then
+            echo "::warning::mini-vla tag ${TAG} has package.json version ${PKG_VERSION} — the versioned asset path will read /vla/${PKG_VERSION}/, not /vla/${EXPECTED}/. Confirm this is intentional before merging."
+          fi
 
       # vla-assets.test.ts asserts public/vla/<version>/ exists (see ci.yml).
       - name: Stage mini-vla assets
@@ -68,11 +94,35 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Lint
+        run: npm run lint
+
       - name: Unit tests
         run: npm test
 
       - name: Build
         run: npx next build
+
+      - name: Build worker (next build + OpenNext bundle)
+        run: npm run e2e:build
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium webkit
+
+      # A model bump is exactly the change most likely to regress in-browser
+      # training/rollout behavior without tripping typecheck/lint/unit — run
+      # the full suite including the slow train-to-convergence specs
+      # (VLA_FULL), which ci.yml's own e2e job deliberately skips on every
+      # push to stay fast.
+      - name: E2E including train-to-convergence (Playwright vs wrangler dev)
+        run: npm run e2e:full
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
 
       - name: Open bump PR
         uses: peter-evans/create-pull-request@v7
@@ -91,10 +141,14 @@ jobs:
             This branch was reinstalled against the new pin and the gates below
             all passed here before the PR opened:
 
+            - version-consistency check (package.json `version` vs. the bumped tag)
             - `copy-vla-assets` (stages `public/vla/<version>/`)
             - `npm run typecheck`
+            - `npm run lint`
             - `npm test`
             - `npx next build`
+            - `npm run e2e:build` + `npm run e2e:full` (Playwright vs. `wrangler
+              dev`, including the slow train-to-convergence specs)
 
             Note: PRs opened by `GITHUB_TOKEN` don't re-run `ci.yml`, so the run
             that produced this PR is the CI signal. Merge to ship the new

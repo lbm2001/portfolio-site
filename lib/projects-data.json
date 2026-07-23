@@ -16,16 +16,35 @@
       },
       {
         "label": "Website",
-        "href": "https://lukasmueller.dev/projects/algo-lens"
+        "href": "https://algo-lens.lukasmueller.dev"
       }
     ],
     "body": "Writing coming soon."
   },
   {
+    "slug": "portfolio-site",
+    "title": "portfolio-site",
+    "venue": "Open Source",
+    "period": "Jul. 2026",
+    "blurb": "My personal site (lukasmueller.dev): Next.js on Cloudflare Workers with a live in-browser mini-vla training demo.",
+    "tags": [
+      "Next.js",
+      "Cloudflare"
+    ],
+    "links": [
+      {
+        "label": "Code",
+        "href": "https://github.com/lukasmueller-dev/portfolio-site"
+      }
+    ],
+    "aiAssisted": true,
+    "body": "This page."
+  },
+  {
     "slug": "mini-vla",
     "title": "mini-vla",
     "venue": "Open Source",
-    "period": "Ongoing",
+    "period": "Jun. 2026",
     "blurb": "Whats's the smallest VLA model viable for which task?",
     "tags": [
       "VLM"
@@ -42,7 +61,7 @@
     "slug": "ev-charging-optimal-vs-heuristics",
     "title": "Optimal versus Heuristic Policies for Electrical Vehicle Charging",
     "venue": "Aarhus University",
-    "period": "Jan–Jun 2026",
+    "period": "Jan. – Jun. 2026",
     "blurb": "How close can a simple, computation-free charging rule get to the cost-optimal policy for an EV facing uncertain trips and fluctuating electricity prices?",
     "tags": [
       "Markov Decision Processes",
@@ -67,10 +86,26 @@
     "body": "Electric vehicles are a fast-growing load on the grid, and how a single car is charged matters both for the driver's bill and for the system as a whole. The problem is a trade-off under uncertainty: the battery should be full whenever the driver needs it, but recharging is slow and electricity prices fluctuate over the day, so the car cannot simply be topped up right before departure. A good charging policy has to balance vehicle availability against energy cost when both the next trip and the price are unknown in advance.\n\nI formulated the single-vehicle charging problem as a finite-horizon Markov Decision Process and solved it exactly by backward induction to obtain the cost-optimal policy, minimizing expected future cost $C_t$ at every state $s$ and time $t$ over the charging action $u$:\n\n$$J_t(s) = \\min_{u \\in \\mathcal{U}} \\left[ C_t(s,u) + \\sum_{s'} P_t(s' \\mid s, u)\\, J_{t+1}(s') \\right]$$\n\nThat policy is not something you would run online, since it needs the full model and a heavy offline computation, so I used it purely as a reference. Against it I benchmarked seven heuristic rules that require no offline computation, computing the exact expected cost of each by policy evaluation on the same MDP.\n\n![Heatmaps of charging rate by hour of day and battery level, for the optimal policy and seven heuristics](/projects/ev-charging-optimal-vs-heuristics/policy-heatmaps.png \"Charging rate by hour and battery level. The optimal policy and the Departure Urgency heuristic (top row) share the same shape — charging swells ahead of each commute peak and the charge-or-wait line rises as departure nears. The simpler rules below only ever capture one side of that pattern.\")\n\nThe central finding is that a computation-free rule can come close to the optimum, but only if it reasons over the right signals: the electricity price, the battery state of charge, and the time to the next departure. My best heuristic, Departure Urgency, folds all three into a single ratio comparing the energy still needed against the time left to the next expected departure $\\tau(m)$:\n\n$$\\rho_t = \\min\\left\\{1, \\frac{e^{\\text{tgt}} - e_t}{u_{\\max}\\,\\eta_c\\,\\omega\\,\\tau(m)}\\right\\}$$\n\nIt charges whenever the price is cheap relative to $\\rho_t$, and reaches the optimum to within about 67% in the baseline while reproducing its structure: front-loading charge ahead of likely trips and treating price only as a secondary signal. This is essentially a systematic version of \"charge before trips, prefer cheap hours\". Rules that track only one side of the trade-off, or follow a fixed schedule, are worse by one to several orders of magnitude.\n\n![Bar chart of expected total cost for the optimal policy and seven heuristic policies, log scale](/projects/ev-charging-optimal-vs-heuristics/baseline-cost.png \"Expected total cost per policy (log scale), split into charging cost (solid) and unserved-demand penalty (hatched). The urgency rules sit closest to the optimum; rules that under-charge are dominated by the penalty.\")\n\nTo test how far this holds, I added a negative-binomial trip-duration model for more realistic trips and a set of electricity-price models estimated from historical ENTSO-E data, then ran a sensitivity study across 28 configurations. The ranking is robust: Departure Urgency is the best heuristic in 22 of them, and the parameters that matter most are the penalty for unserved demand, the trip-duration model, and the departure profile. The takeaway is that for this model, a cheap online rule reasoning over price, charge, and time to the next departure captures much of what the exact optimal policy achieves."
   },
   {
+    "slug": "vla-rl-support",
+    "title": "Support of a Research Project: VLM Evaluation & Domain Randomization",
+    "venue": "TU Darmstadt (Intelligent Autonomous Systems Group)",
+    "period": "Oct. 2025 - Jan. 2026",
+    "blurb": "Evaluated open-source vision-language models for robotic perception and built domain randomization for sim-to-real transfer in Isaac Sim.",
+    "tags": [
+      "Isaac Sim",
+      "IsaacLab",
+      "PyTorch",
+      "Vision-Language Models",
+      "Domain Randomization"
+    ],
+    "links": [],
+    "body": "Contributed to a robot learning research codebase (loco-manipulation with vision-language-action policies in a RL-loop) in two areas, supporting [Nico Bohlinger](https://www.ias.informatik.tu-darmstadt.de/Team/NicoBohlinger) from the IAS group.\n\n**Open-source VLM evaluation.** Tested open-source VLMs (Florence-2 and CLIP) for object detection, grounding, and captioning. Used synthetic MuJoCo scenes built from Google Scanned Objects. Goal: assess their fit as perception backbones for downstream policies. Built a small evaluation harness covering Florence-2's task prompts (OCR, captioning, object detection, segmentation, phrase grounding), including rendering, postprocessing, and result visualization.\n\n![Florence-2 object detection on a synthetic MuJoCo scene, front camera view](/projects/vla-rl-support/picture_front.png \"Florence-2 object detection (wicker basket), front view\")\n\n![Florence-2 object detection on a synthetic MuJoCo scene, right camera view](/projects/vla-rl-support/picture_right.png \"Florence-2 object detection (wicker basket), right view\")\n\n**Domain randomization in Isaac Sim.** Implemented visual and physical randomization for a loco-manipulation environment to help close the sim-to-real gap. Randomized object and table colors/materials per episode. Randomized dome-light (HDR environment map) settings. Added an image randomizer applying GPU-side augmentations (brightness, contrast, hue, saturation, noise, blur) to rendered camera observations. Added camera extrinsics randomization (e.g. position and rotation noise on a RGB-D camera, following the VIRAL paper's parameterization) to make policies robust to camera mounting variance."
+  },
+  {
     "slug": "cavitation-experiment-database",
     "title": "Cavitation Experiment Database",
     "venue": "TU Darmstadt (Chair of Fluid Systems)",
-    "period": "Oct 2025 - Mar 2026",
+    "period": "Oct. 2025 - Mar. 2026",
     "blurb": "Database Design and Python API Development for High Frequency Experiment Data.",
     "tags": [
       "PostgreSQL",
@@ -85,7 +120,7 @@
     "slug": "mujopy",
     "title": "MuJoPy",
     "venue": "Open Source",
-    "period": "Oct 2025",
+    "period": "Oct. 2025",
     "blurb": "A small Python package that gives pythonic, graph-structured access to MuJoCo models — the preprocessing layer from the robot-generation project, factored out into a standalone, pip-installable tool.",
     "tags": [
       "MuJoCo",
@@ -108,8 +143,8 @@
   {
     "slug": "large-scale-robot-generation",
     "title": "Large Scale Robot Generation",
-    "venue": "Technical University of Darmstadt",
-    "period": "Apr–Sep 2025",
+    "venue": "TU Darmstadt (Intelligent Autonomous Systems Group)",
+    "period": "Apr. 2025 – Sep. 2025",
     "blurb": "Can a variational autoencoder over robot graphs learn a continuous latent space of morphologies, so that thousands of diverse, physically plausible embodiments can be sampled directly from existing robot designs? (Robot Learning Integrated Project, TU Darmstadt)",
     "tags": [
       "Graph Neural Networks",
@@ -128,13 +163,13 @@
       }
     ],
     "aiAssisted": true,
-    "body": "Cross-embodiment locomotion policies generalize better the more diverse the robots they are trained on, but the design space of embodiments grows exponentially with the number of components. Existing automated approaches are grammar-based: they assemble robots from a predefined library of parts, which requires prior knowledge to define that library, restricts designs to discrete combinations, and ignores the continuous physical parameters — mass, geometry, joint limits — of real systems. With Nurhak Yalcin, I built an end-to-end system that instead learns a generative model directly from existing robot designs: a variational autoencoder (VAE) implemented as a message-passing graph neural network (MPNN), so that novel, physically plausible embodiments can be sampled from a learned latent space.\n\nA robot is abstracted as an acyclic, undirected graph $\\mathcal{G} = (V, E)$ — effectively a kinematic tree — whose nodes are body parts (links or joints) and whose edges are their connections, with the continuous attributes of each part stored in a feature matrix $\\mathbf{X} \\in \\mathbb{R}^{n \\times d}$. The encoder is an MPNN that runs $T$ steps of message passing, updating node messages and hidden states as\n\n$$m_v^{t+1} = \\sum_{w \\in N(v)} M_t(h_v^t, h_w^t, e_{vw}), \\qquad h_v^{t+1} = U_t(h_v^t, m_v^{t+1})$$\n\nwhere in our case the learned functions $M_t$ and $U_t$ are realized by a GRU adapted to graphs. The graph representation $h_{\\mathcal{G}}$ — the sum over leaf-node states — is mapped by two linear layers to the mean $\\mu_{\\mathcal{G}}$ and variance $\\sigma_{\\mathcal{G}}^2$ of a latent distribution, from which we sample $z_{\\mathcal{G}} \\sim \\mathcal{N}(\\mu_{\\mathcal{G}}, \\sigma_{\\mathcal{G}}^2)$ using the reparametrization trick.\n\nThe decoder reconstructs the graph autoregressively from $z_{\\mathcal{G}}$, expanding depth-first from the root. At each step it decides whether to add a node with probability $p_t = \\sigma\\!\\left(u^c \\cdot \\tau(W_1^c x_{i_t} + W_2^c z_{\\mathcal{G}} + W_3^c \\sum_k h_{k,i_t})\\right)$ and — departing from classification-based methods that pick parts from a vocabulary — directly regresses the new node's continuous feature vector $f_j = U^l \\tau(W_1^l z_{\\mathcal{G}} + W_2^l h_{i,j})$ along with a link/joint type. Training minimizes the decoder's topology, feature-regression and type losses together with a KL term pulling the latent distribution toward a standard Gaussian prior:\n\n$$\\mathcal{L}(\\mathcal{G}) = \\mathcal{L}_d(\\mathcal{G}) + \\beta\\, \\mathcal{L}_{KL}$$\n\nWe validated the system on synthetic graphs and on real robots from the MuJoCo Menagerie. Trained only on quadrupeds, the VAE reconstructed the unseen Unitree Go2 exactly; trained jointly on quadrupeds and humanoids it recovered a close but imperfect structure, with continuous features reconstructed well in both cases, and sampling a random latent vector yielded valid, novel graph structures. Scaling to 17 robots preserved the structure but left a higher feature-regression error that longer training should reduce. A postprocessing pipeline back to MuJoCo XML and validation via policy transfer are the main next steps — the goal being a task-agnostic generator of the diverse embodiments that morphology-agnostic policies need. This was joint work with Nurhak Yalcin for the Robot Learning: Integrated Project at TU Darmstadt."
+    "body": "Cross-embodiment locomotion policies generalize better the more diverse the robots they are trained on, but the design space of embodiments grows exponentially with the number of components. Existing automated approaches are grammar-based: they assemble robots from a predefined library of parts, which requires prior knowledge to define that library, restricts designs to discrete combinations, and ignores the continuous physical parameters — mass, geometry, joint limits — of real systems. With Nurhak Yalcin, I built an end-to-end system that instead learns a generative model directly from existing robot designs: a variational autoencoder (VAE) implemented as a message-passing graph neural network (MPNN), so that novel, physically plausible embodiments can be sampled from a learned latent space.\n\nA robot is abstracted as an acyclic, undirected graph $\\mathcal{G} = (V, E)$ — effectively a kinematic tree — whose nodes are body parts (links or joints) and whose edges are their connections, with the continuous attributes of each part stored in a feature matrix $\\mathbf{X} \\in \\mathbb{R}^{n \\times d}$. The encoder is an MPNN that runs $T$ steps of message passing, updating node messages and hidden states as\n\n$$m_v^{t+1} = \\sum_{w \\in N(v)} M_t(h_v^t, h_w^t, e_{vw}), \\qquad h_v^{t+1} = U_t(h_v^t, m_v^{t+1})$$\n\nwhere in our case the learned functions $M_t$ and $U_t$ are realized by a GRU adapted to graphs. The graph representation $h_{\\mathcal{G}}$ — the sum over leaf-node states — is mapped by two linear layers to the mean $\\mu_{\\mathcal{G}}$ and variance $\\sigma_{\\mathcal{G}}^2$ of a latent distribution, from which we sample $z_{\\mathcal{G}} \\sim \\mathcal{N}(\\mu_{\\mathcal{G}}, \\sigma_{\\mathcal{G}}^2)$ using the reparametrization trick.\n\nThe decoder reconstructs the graph autoregressively from $z_{\\mathcal{G}}$, expanding depth-first from the root. At each step it decides whether to add a node with probability $p_t = \\sigma\\!\\left(u^c \\cdot \\tau(W_1^c x_{i_t} + W_2^c z_{\\mathcal{G}} + W_3^c \\sum_k h_{k,i_t})\\right)$ and — departing from classification-based methods that pick parts from a vocabulary — directly regresses the new node's continuous feature vector $f_j = U^l \\tau(W_1^l z_{\\mathcal{G}} + W_2^l h_{i,j})$ along with a link/joint type. Training minimizes the decoder's topology, feature-regression and type losses together with a KL term pulling the latent distribution toward a standard Gaussian prior:\n\n$$\\mathcal{L}(\\mathcal{G}) = \\mathcal{L}_d(\\mathcal{G}) + \\beta\\, \\mathcal{L}_{KL}$$\n\nWe validated the system on synthetic graphs and on real robots from the MuJoCo Menagerie. Trained only on quadrupeds, the VAE reconstructed the unseen Unitree Go2 exactly; trained jointly on quadrupeds and humanoids it recovered a close but imperfect structure, with continuous features reconstructed well in both cases, and sampling a random latent vector yielded valid, novel graph structures. Scaling to 17 robots preserved the structure but left a higher feature-regression error that longer training should reduce. A postprocessing pipeline back to MuJoCo XML and validation via policy transfer are the main next steps — the goal being a task-agnostic generator of the diverse embodiments that morphology-agnostic policies need. This was joint work with Nurhak Yalcin for the Robot Learning: Integrated Project at TU Darmstadt, supervised by [Nico Bohlinger](https://www.ias.informatik.tu-darmstadt.de/Team/NicoBohlinger)."
   },
   {
     "slug": "easy-eda-visualizations",
     "title": "Easy EDA Visualizations",
     "venue": "Open Source",
-    "period": "Feb 2022",
+    "period": "Feb. 2022",
     "blurb": "Simple plotting methods extensions for matplotlib/seaborn to speed up the EDA process.",
     "tags": [
       "python",
@@ -160,7 +195,7 @@
     "slug": "airbnb-price-estimation",
     "title": "Airbnb Price & Review Score Analysis (Boston & Seattle)",
     "venue": "Udacity Data Scientist Nanodegree",
-    "period": "Feb 2022",
+    "period": "Feb. 2022",
     "blurb": "A linear regression prediction model to gauge the prices of AirBnB locations in Boston and Seattle.",
     "tags": [
       "Pandas",

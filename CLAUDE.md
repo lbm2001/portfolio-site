@@ -61,15 +61,28 @@ directory is gitignored.
 needed — this is what a fork's PR can run) and `e2e` (full OpenNext Workers
 bundle + Playwright against `wrangler dev`, i.e. the actual deploy runtime).
 Both intentionally run `npx next build` / `npm run e2e:build` rather than
-`npm run build`, since the latter requires `GITHUB_TOKEN`.
+`npm run build`, since the latter requires `GITHUB_TOKEN`. Neither lane sets
+`VLA_FULL`, so the slow train-to-convergence specs
+(`tests/e2e/hero-full.spec.ts`) never run on a normal push or PR by design —
+`.github/workflows/nightly-e2e-full.yml` runs them against `main` on a daily
+cron instead, and `.github/workflows/bump-mini-vla.yml` runs them on every
+mini-vla version bump, so a regression still surfaces within a day rather
+than never.
 
 **Cache-busting across deploys**: every deploy produces a fresh
 content-hashed asset manifest, so page HTML is served
 `Cache-Control: max-age=0, must-revalidate` (`next.config.mjs`). A tab left
 open across a deploy holds stale chunk URLs in memory; when it lazily
 requests one (e.g. constructing the trainer worker on "Start Training"), the
-404 is caught and surfaces as a **Reload** prompt (`loadFailed` in
-`components/Hero.tsx`) rather than a silent failure.
+404 is caught by `worker.onerror` — with `replayFallback: true` (the option
+`Hero.tsx` always passes to `VLATrainer`), that's treated as just another
+reason to fall over to the CPU-backend replay (a captured-policy rollout
+behind an honest "replay" chip), not a terminal error. Only a genuine double
+failure — the live embeddings AND the replay's own checkpoints both
+unreachable — is truly terminal, surfacing as `errorReason === "assets"`
+("Load failed" + Try again, `components/Hero.tsx`). See
+`tests/e2e/hero-error.spec.ts` for both cases exercised against real network
+failures.
 
 ## Layout
 

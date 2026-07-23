@@ -7,6 +7,7 @@ import {
   resumeDownloadName,
 } from "../../lib/content";
 import resumeData from "../../lib/resume-data.json";
+import projectsSources from "../../config/projects.sources.json";
 
 // The committed lib/*-data.json files are what the deployed pages actually
 // render (nothing is fetched at request time). A bad regeneration — empty
@@ -37,6 +38,19 @@ describe("projects-data.json", () => {
   it("still contains the mini-vla project the hero links to", () => {
     // Hero.tsx hard-links to /projects/mini-vla; losing that project 404s the link.
     expect(getProject("mini-vla")).toBeDefined();
+  });
+
+  it("has an entry for every project configured in config/projects.sources.json", () => {
+    // gen-projects-data.mjs never fails the build on a per-project fetch
+    // error (by design, so a flaky GitHub API can't break a deploy) — which
+    // means a project that has never once fetched successfully leaves no
+    // trace beyond a console.warn nobody may be watching. This is the loud
+    // failure for that case: every configured slug must show up in the
+    // committed snapshot, token or not.
+    for (const source of projectsSources.projects) {
+      const slug = source.slug ?? source.repo?.split("/")[1];
+      expect(getProject(slug), `missing project "${slug}" from lib/projects-data.json`).toBeDefined();
+    }
   });
 });
 

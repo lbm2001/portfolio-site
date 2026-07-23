@@ -90,5 +90,8 @@ which are gone.
 
 A tab left open *across* a deploy is a separate case: it holds the old chunk URLs in
 memory and only requests them lazily, when "Start Training" constructs the trainer
-worker. That fetch 404s, the trainer reports failure by returning to idle, and the
-hero swaps the button for a **Reload** (see `loadFailed` in `components/Hero.tsx`).
+worker. That fetch 404s, but the hero passes `replayFallback: true` to `VLATrainer`
+(`components/Hero.tsx`), so a dead worker chunk is just another reason to fall over
+to the CPU-backend replay — a captured-policy rollout behind an honest "replay"
+chip — rather than a dead end. Only if the replay's own assets are *also*
+unreachable does it become a true terminal ("Load failed" + Try again).

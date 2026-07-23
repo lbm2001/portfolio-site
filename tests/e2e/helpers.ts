@@ -1,4 +1,32 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
+
+const root = join(import.meta.dirname, "../..");
+
+/** Every page route the build actually serves, enumerated from the same
+ *  committed data the build renders from — a slug in the JSON without a
+ *  working page is exactly the kind of regression these sweeps exist to
+ *  catch. Shared so routes.spec.ts and caching.spec.ts can't drift apart:
+ *  they previously each read lib/*-data.json and built this list themselves,
+ *  so a route added to one copy silently wasn't added to the other's sweep. */
+export function sitePageRoutes(): string[] {
+  const projects: { slug: string }[] = JSON.parse(
+    readFileSync(join(root, "lib/projects-data.json"), "utf8"),
+  );
+  const posts: { slug: string }[] = JSON.parse(
+    readFileSync(join(root, "lib/posts-data.json"), "utf8"),
+  );
+  return [
+    "/",
+    "/about",
+    "/projects",
+    "/blog",
+    "/resume",
+    ...projects.map((p) => `/projects/${p.slug}`),
+    ...posts.map((p) => `/blog/${p.slug}`),
+  ];
+}
 
 // Content images under /projects/ and /blog/ are fetched at build time with a
 // GITHUB_TOKEN and are absent from tokenless CI builds — their 404s are

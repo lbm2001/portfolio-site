@@ -18,6 +18,11 @@ on:
     branches: [main]
   pull_request:
 
+# Neither job pushes, comments, or uses a secret — least-privilege default
+# instead of inheriting whatever the repo-wide default happens to be.
+permissions:
+  contents: read
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -66,12 +71,16 @@ jobs:
       - name: Build worker (next build + OpenNext bundle)
         run: npm run e2e:build
 
-      - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
+      # webkit: the replayFallback CPU-backend path (Hero.tsx) exists
+      # specifically for iOS/iPadOS's WebGL context cap — the webkit-mobile
+      # project (playwright.config.ts) is the only one that actually runs on
+      # that engine rather than simulating the condition on Chromium.
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium webkit
 
-      # Route sweep + VLA hero alive-gate on desktop and mobile viewports.
-      # The slow train-to-convergence specs are opt-in (npm run e2e:full)
-      # and intentionally not part of CI.
+      # Route sweep + VLA hero alive-gate on desktop, mobile, and webkit-mobile
+      # viewports. The slow train-to-convergence specs are opt-in
+      # (npm run e2e:full) and intentionally not part of CI.
       - name: E2E (Playwright vs wrangler dev)
         run: npm run e2e
 

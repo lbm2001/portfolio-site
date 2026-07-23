@@ -1,6 +1,5 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { expect, test } from "@playwright/test";
+import { sitePageRoutes } from "./helpers";
 
 // Regression guard for the "Start Training silently does nothing" outage.
 //
@@ -17,26 +16,8 @@ import { expect, test } from "@playwright/test";
 // Widening that rule to a catch-all would kill repeat-visit performance;
 // dropping it brings the outage back. Neither shows up in any other test.
 
-const root = join(import.meta.dirname, "../..");
-const projects: { slug: string }[] = JSON.parse(
-  readFileSync(join(root, "lib/projects-data.json"), "utf8"),
-);
-const posts: { slug: string }[] = JSON.parse(
-  readFileSync(join(root, "lib/posts-data.json"), "utf8"),
-);
-
-const pageRoutes = [
-  "/",
-  "/about",
-  "/projects",
-  "/blog",
-  "/resume",
-  ...projects.map((p) => `/projects/${p.slug}`),
-  ...posts.map((p) => `/blog/${p.slug}`),
-];
-
 test.describe("page routes revalidate", () => {
-  for (const route of pageRoutes) {
+  for (const route of sitePageRoutes()) {
     test(`${route} is must-revalidate, not long-lived`, async ({ request }) => {
       const res = await request.get(route);
       expect(res.status()).toBe(200);

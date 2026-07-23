@@ -72,7 +72,7 @@ export const nav: NavLink[] = [
 // scripts/gen-projects-data.mjs (run in the prebuild step) into
 // lib/projects-data.json, imported at the top of this file as a static module —
 // same pattern as the résumé (lib/resume-data.json). Nothing is fetched at request time.
-// Edit a repo's portfolio.md / About / topics to change what shows here.
+// Edit a project's README.md / About / topics to change what shows here.
 export const projects = projectsData as Project[];
 
 // Blog posts are pulled from the single blog repo (config/blog.sources.json) at BUILD

@@ -61,7 +61,9 @@ async function main() {
   // Both files are required: a failure fails the build (there is no fallback).
   for (const key of ["tex", "pdf"]) {
     const name = cfg[key];
-    if (!name) continue;
+    if (!name) {
+      throw new Error(`config/resume.source.json is missing "${key}" — both "tex" and "pdf" are required`);
+    }
     const bytes = await ghFile(cfg.repo, `${dir}${name}`);
     fs.writeFileSync(path.join(root, "public", name), bytes);
     console.log(`gen-resume-source: fetched public/${name} <- ${cfg.repo}/${dir}${name}`);
