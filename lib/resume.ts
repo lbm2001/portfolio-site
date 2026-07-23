@@ -51,7 +51,7 @@ function stripInline(s: string): string {
   // \href{url}{text} → text  (drop \underline inside)
   t = t.replace(/\\href\{[^}]*\}\{([^}]*)\}/g, "$1");
   // remove common formatting wrappers, keeping their content
-  t = t.replace(/\\(?:textbf|textit|underline|emph|small|scshape|href)\b/g, "");
+  t = t.replace(/\\(?:textbf|textit|texttt|underline|emph|small|scshape|href)\b/g, "");
   // \& → &, \% → %, \$ → $, \# → #, \_ → _
   t = t.replace(/\\([&%$#_])/g, "$1");
   // ranges and dashes
