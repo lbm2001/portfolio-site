@@ -21,4 +21,14 @@ describe("BUILD_ID_PATH", () => {
     const config = readFileSync(join(root, "next.config.mjs"), "utf8");
     expect(config).toContain(`BUILD_ID_PATH = "${BUILD_ID_PATH}"`);
   });
+
+  // The path pinning above doesn't confirm the JSON shape next.config.mjs
+  // writes still matches BuildIdPayload ({ id: string }) — components/Hero.tsx
+  // destructures `{ id }` from the fetched body (Hero.tsx:1699) and reloads
+  // whenever it disagrees with buildId, so a silently-renamed key would read
+  // `undefined` there and force a reload on every visibilitychange.
+  it("writes the payload under the key components/Hero.tsx reads (id)", () => {
+    const config = readFileSync(join(root, "next.config.mjs"), "utf8");
+    expect(config).toContain("JSON.stringify({ id: BUILD_ID })");
+  });
 });
