@@ -1,0 +1,50 @@
+# ci.yml's e2e job deliberately never sets VLA_FULL, so hero-full.spec.ts —
+# the only spec that waits for training to actually converge and checks
+# command-decoding accuracy — never runs on a normal push or PR (review
+# round 1, finding #4). bump-mini-vla.yml now runs it on every mini-vla
+# version bump, but a regression introduced in this repo's own code (e.g.
+# components/Hero.tsx) between bumps would still ship undetected. Run it
+# nightly against main instead, so any regression surfaces within a day
+# rather than never.
+name: nightly-e2e-full
+
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  e2e-full:
+    runs-on: ubuntu-latest
+    env:
+      WRANGLER_SEND_METRICS: "false"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build worker (next build + OpenNext bundle)
+        run: npm run e2e:build
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: E2E including train-to-convergence (Playwright vs wrangler dev)
+        run: npm run e2e:full
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7

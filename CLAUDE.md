@@ -61,7 +61,13 @@ directory is gitignored.
 needed — this is what a fork's PR can run) and `e2e` (full OpenNext Workers
 bundle + Playwright against `wrangler dev`, i.e. the actual deploy runtime).
 Both intentionally run `npx next build` / `npm run e2e:build` rather than
-`npm run build`, since the latter requires `GITHUB_TOKEN`.
+`npm run build`, since the latter requires `GITHUB_TOKEN`. Neither lane sets
+`VLA_FULL`, so the slow train-to-convergence specs
+(`tests/e2e/hero-full.spec.ts`) never run on a normal push or PR by design —
+`.github/workflows/nightly-e2e-full.yml` runs them against `main` on a daily
+cron instead, and `.github/workflows/bump-mini-vla.yml` runs them on every
+mini-vla version bump, so a regression still surfaces within a day rather
+than never.
 
 **Cache-busting across deploys**: every deploy produces a fresh
 content-hashed asset manifest, so page HTML is served
