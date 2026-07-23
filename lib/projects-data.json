@@ -22,6 +22,26 @@
     "body": "Writing coming soon."
   },
   {
+    "slug": "agentic-dev-toolkit",
+    "title": "agentic-dev-toolkit",
+    "venue": "Open Source",
+    "period": "Jul. 2026",
+    "blurb": "My toolkit for agentic code development.",
+    "tags": [
+      "Developer Tools",
+      "CLI",
+      "Agent Skills",
+      "Automation"
+    ],
+    "links": [
+      {
+        "label": "Code",
+        "href": "https://github.com/lukasmueller-dev/agentic-dev-toolkit"
+      }
+    ],
+    "body": "Tooling for doing agentic development across as many machines as I work on: the laptop in front of me, and any box I reach over SSH and want to keep working after I disconnect. One repo, one install script, kept in sync everywhere with `git pull`; everything is installed by symlink, so nothing ever gets copied and left to drift out of date. The idea started after watching [this video](https://www.youtube.com/watch?v=trg1FRbpnys) of the german YouTuber Niklas Steenfatt.\n\n**`vibe`.** The CLI at the center of it: one git branch, one worktree, and one tmux session per task. It hands a task off between machines through git alone — start a task on one box, `park` it, `attach` from another — and `vibe loop` runs a task unattended, checking in on a schedule instead of babysitting a terminal. `vibe doctor` diagnoses the setup when something looks wrong.\n\n**Agent Skills.** A growing set of portable `SKILL.md` skills, written to the open Agent Skills format rather than tied to one agent — things like keeping a repo's `HANDOFF.md` and `PROJECT_STATUS.md` current across sessions, running a non-behavioral codebase health check, or staging an unattended loop that drives a pull request to green and mergeable.\n\n**Shared config across agents.** A single global memory file — the local/server split, the handoff discipline, where each kind of information belongs — gets installed into Claude Code, Codex, and Gemini's own instruction paths from one source file, so the same working agreement holds no matter which agent a given machine is running."
+  },
+  {
     "slug": "portfolio-site",
     "title": "portfolio-site",
     "venue": "Open Source",
@@ -45,7 +65,7 @@
     "title": "mini-vla",
     "venue": "Open Source",
     "period": "Jun. 2026",
-    "blurb": "Whats's the smallest VLA model viable for which task?",
+    "blurb": "What's the smallest VLA model viable for which task?",
     "tags": [
       "VLM"
     ],
@@ -55,7 +75,7 @@
         "href": "https://github.com/lukasmueller-dev/mini-vla"
       }
     ],
-    "body": "Writing coming soon."
+    "body": "An ongoing research project: how small can a vision-language-action (VLA) model be while still learning to follow a language command and act on it, and how far does that hold across different tasks?\n\n**Done so far.** A tiny language-conditioned policy learns, by behavioral cloning against an analytical inverse-kinematics expert, to pick up a named block on a 2-link arm (\"grab the blue cube\"). It's small enough to train from scratch live in the browser in under 60 seconds. You can try it at the top of this page.\n\n**Next.** Moving past this hand-built pickup task: training a behavioral-cloning VLA policy in [ManiSkill](https://www.maniskill.ai/), a GPU-accelerated robot simulation benchmark, to see how well the same small-model approach transfers to more realistic manipulation tasks."
   },
   {
     "slug": "ev-charging-optimal-vs-heuristics",
