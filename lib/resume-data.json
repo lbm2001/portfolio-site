@@ -48,7 +48,7 @@
       "entries": [
         {
           "title": "Working Student Machine Learning & Data Engineering",
-          "dates": "Aug. 2024 – Present",
+          "dates": "Aug. 2024 – Jul. 2026",
           "org": "Compredict GmbH",
           "location": "Darmstadt, HE",
           "bullets": [
@@ -83,33 +83,35 @@
       "title": "Projects",
       "entries": [
         {
-          "title": "Cavitation Experiment Database (Team Project)",
-          "dates": "Oct. 2025 – Mar. 2026",
-          "org": "TU Darmstadt (Chair of Fluid Systems)",
+          "title": "agentic-dev-toolkit",
+          "dates": "Jul. 2026 – Present",
+          "org": "Open Source",
           "location": "",
+          "slug": "agentic-dev-toolkit",
           "bullets": [
-            "Built a TimescaleDB database replacing HDF5/JSON-based experimental data storage with a unified schema",
-            "Developed a documented Python API for ingestion and querying of experimental sensor and metadata",
-            "Set up unit/integration tests and GitLab CI/CD for linting, testing, and documentation deployment",
-            "Technologies: Python, PostgreSQL, TimescaleDB, GitLab CI/CD"
+            "Built \\textttvibe, a CLI giving each task its own git branch, worktree, and tmux session, with handoff between machines",
+            "Authored a library of portable Agent Skills for the open Agent Skills format, covering e.g. codebase health checks",
+            "Technologies: Bash, tmux, git, shellcheck/shfmt, bats"
           ]
         },
         {
-          "title": "MuJoPy",
-          "dates": "Sep. 2025",
-          "org": "Open Source (GitHub/PyPI)",
+          "title": "mini-vla: A Tiny, Language-Conditioned Vision-Language-Action Policy",
+          "dates": "Jun. 2026",
+          "org": "Open Source",
           "location": "",
+          "slug": "mini-vla",
           "bullets": [
-            "Built and published a Python package exposing MuJoCo models as robot graphs for ML workflows",
-            "Implemented robot-graph feature extraction and a Pytest-based test suite",
-            "Technologies: Python, MuJoCo, Pytest, PyPI"
+            "Designed a language-conditioned spatial-attention policy that fuses a rendered scene, a typed command, and gripper state to control a 2-link arm on block-grasping tasks",
+            "Trained the policy via behavioral cloning against a closed-form analytical inverse-kinematics expert, then ported the identical architecture to TensorFlow.js so it trains live in-browser on my personal Portfolio Site",
+            "Technologies: Python, Keras, TensorFlow.js, Weights & Biases"
           ]
         },
         {
           "title": "Large-Scale Robot Generation (Team Project)",
           "dates": "Apr. 2025 – Sep. 2025",
-          "org": "Technical University of Darmstadt (Intelligent Autonomous Systems Group)",
+          "org": "TU Darmstadt (Intelligent Autonomous Systems Group)",
           "location": "",
+          "slug": "large-scale-robot-generation",
           "bullets": [
             "Built an MPNN-based variational autoencoder learning latent representations of robot morphologies in MuJoCo",
             "Implemented training and evaluation workflows in PyTorch with experiment tracking in Weights & Biases",
@@ -124,20 +126,16 @@
       "entries": [],
       "skills": [
         {
-          "category": "Programming",
-          "items": "Python, SQL, C++, Java"
+          "category": "Machine and Robot Learning",
+          "items": "PyTorch, TensorFlow/Keras, MuJoCo, Weights & Biases"
         },
         {
-          "category": "Data Engineering & Backend",
-          "items": "PostgreSQL, Apache Airflow/MWAA, FastAPI, AWS (Redshift/Glue/S3), Docker"
+          "category": "Dev Tooling",
+          "items": "Claude Code, git, CI/CD (GitHub Actions/GitLab CI), Docker"
         },
         {
-          "category": "Machine Learning",
-          "items": "PyTorch, TensorFlow, Keras, Weights & Biases"
-        },
-        {
-          "category": "Testing & Tooling",
-          "items": "Pytest, GitLab CI/CD, Python packaging, Polars, Pandas"
+          "category": "Programming & Data Engineering",
+          "items": "Python, C++, SQL, AWS (S3/Glue/Redshift/MWAA)"
         },
         {
           "category": "Languages",
