@@ -11,7 +11,7 @@ results could be checked for overlap afterward — none of round 2's findings
 duplicate round 1's; every item below is new. Baseline gate (`typecheck`,
 `lint`, `test`, `next build`) was green going in and stayed green throughout.
 
-## Status: 11 of ~17 substantiated findings fixed and verified; 6 reported only
+## Status: 13 of ~17 substantiated findings fixed and verified; 4 reported only
 
 Every fix below was verified against the real committed data/scripts and,
 for the two behavioral bug fixes, against the actual OpenNext/Workers bundle
@@ -79,9 +79,9 @@ this branch (`814cb7e..HEAD`) for each change.
    round 1 deliberately made this check non-blocking, since a mismatch can
    be harmless (their own investigation proved exactly that for the
    v0.7.1/0.7.0 case) — hardening it to a hard failure is a real process
-   decision (it would block a future legitimate-but-mismatched bump on a
-   manual override), not a bug fix, so it's left as an open question below
-   rather than changed unilaterally.
+   decision, not a bug fix, so it was raised with the owner rather than
+   changed unilaterally. **Confirmed:** stays warn-only, permanently by
+   design — no further change made.
    **Also fixed:** the tag validator accepted anything shaped `v<digit>*`
    via a loose shell glob; tightened to a strict semver regex. Not currently
    exploitable (the value only reaches shell text through `env:`
@@ -182,30 +182,45 @@ this branch (`814cb7e..HEAD`) for each change.
 
 ## Reasoned, not fixed — reported for the owner
 
-13. **`nightly-e2e-full.yml`'s only failure signal is a Playwright HTML
+Items #13 and #14 below were discussed with the owner after this round's
+initial pass and resolved as follow-up commits on this same branch — kept
+here as-written (with their resolution noted) since the reasoning for why
+they weren't fixed *automatically* still stands: these are owner-level
+tradeoffs, not mechanical fixes a review pass should make unilaterally.
+
+13. **`nightly-e2e-full.yml`'s only failure signal was a Playwright HTML
     artifact upload**, visible only to someone who manually opens that
-    specific Actions run. No issue-creation or notification step exists in
-    any of the four workflows. This undercuts the workflow's own header
+    specific Actions run. No issue-creation or notification step existed in
+    any of the four workflows. This undercut the workflow's own header
     comment (and CLAUDE.md's claim) that a regression "surfaces within a day
-    rather than never" — the actual backstop is GitHub's default
+    rather than never" — the actual backstop was GitHub's default
     scheduled-workflow-failure email, sent only to whoever last edited the
-    file, which is easy to miss or mute. Not fixed: adding a real
-    notification (e.g., issue-on-failure) means granting `issues: write` to
-    a workflow currently scoped to `contents: read` only, plus dedup logic
-    to avoid spamming a new issue every night — a permissions/design call
-    better made by the owner than assumed here.
+    file, which is easy to miss or mute. Not fixed automatically: adding a
+    real notification means granting `issues: write` to a workflow
+    previously scoped to `contents: read` only, plus dedup logic to avoid
+    spamming a new issue every night — a permissions/design call for the
+    owner.
+    **Resolved:** owner chose issue-on-failure. Added a title-matched
+    tracking issue, opened/commented on failure and closed on the next
+    green run, via `actions/github-script`.
 
 14. **`hero-full.spec.ts`'s 35-minute timeout was measured only on
     desktop/Chromium+SwiftShader**, but its `testMatch` pattern also matches
     the `mobile` and `webkit-mobile` Playwright projects, and neither
-    `npm run e2e:full` nor the workflows that call it pass a `--project`
+    `npm run e2e:full` nor the workflows that called it passed a `--project`
     filter. `mobile` trains a different task (`MOBILE_RUN_CONFIG`) and
     `webkit-mobile` runs on real WebKit rather than SwiftShader — neither's
-    convergence rate against this budget has been measured. Not fixed:
-    doing so needs either removing real coverage (restricting to desktop
-    only) or actually running the slow convergence suite on both other
-    engines to re-measure — both are product/cost decisions, not a
-    same-round mechanical fix.
+    convergence rate against this budget had been measured. Not fixed
+    automatically: doing so meant either removing real coverage (restricting
+    to desktop only) or actually running the slow convergence suite on both
+    other engines to re-measure — a product/cost decision for the owner.
+    **Resolved:** owner chose to restrict to desktop. Added
+    `--project=desktop` to `npm run e2e:full` in both `bump-mini-vla.yml`
+    and `nightly-e2e-full.yml`; verified via `--list` that only `[desktop]`
+    now picks up `hero-full.spec.ts` (and everything else in that run).
+    Other hero specs still cover mobile/webkit-mobile via `ci.yml`'s own
+    `e2e` job on every push, so no coverage is lost outside the
+    convergence-only run.
 
 15. **`lib/vla-assets.ts`'s `VLA_RUNTIME_ASSETS`/`VLA_REPLAY_MANIFEST`
     filename constants are a second, independent hardcoding of the same

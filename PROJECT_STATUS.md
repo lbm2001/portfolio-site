@@ -43,11 +43,22 @@ section stays a pointer rather than a second copy that can drift from it.
   overwrite a non-empty `lib/posts-data.json` with an empty listing result
   (previously indistinguishable from a genuinely empty blog). See
   `docs/review-round-2-findings.md` #2.
-- 2026-07-23 (round 2, this branch): the `bump-mini-vla.yml`
-  version-consistency check stays warn-only, not build-blocking, by design
-  (same reasoning as the round-1 decision above) — its PR-body wording was
-  fixed to stop implying otherwise. See `docs/review-round-2-findings.md` #3
-  and its "Open questions" below.
+- 2026-07-23 (round 2, this branch): confirmed with the owner —
+  `bump-mini-vla.yml`'s version-consistency check stays warn-only, not
+  build-blocking, permanently by design (a mismatch can be harmless, as
+  already proven once). Only its PR-body wording was fixed to stop implying
+  otherwise. See `docs/review-round-2-findings.md` #3.
+- 2026-07-23 (round 2, this branch): `nightly-e2e-full.yml` now opens/
+  updates a title-matched tracking issue on failure and closes it on the
+  next green run (`issues: write` granted) — GitHub's default
+  scheduled-workflow email alone was easy to miss. See
+  `docs/review-round-2-findings.md` #13.
+- 2026-07-23 (round 2, this branch): `hero-full.spec.ts`'s slow
+  train-to-convergence run is now scoped to the `desktop` Playwright project
+  only (`--project=desktop` on `npm run e2e:full` in both
+  `bump-mini-vla.yml` and `nightly-e2e-full.yml`) — its 35-min timeout was
+  only ever measured there; the other hero specs already cover
+  mobile/webkit-mobile via `ci.yml`. See `docs/review-round-2-findings.md` #14.
 
 ## Roadmap
 
@@ -58,11 +69,4 @@ this file keeps only the pointer.
 
 _Unresolved things that block or shape the work._
 
-- Should `bump-mini-vla.yml`'s version-consistency check be hardened from
-  warn-only to build-blocking (with a manual-override escape hatch for a
-  verified-harmless mismatch), or is warn-only the right permanent design?
-  See `docs/review-round-2-findings.md` #3.
-- `nightly-e2e-full.yml` has no real failure-notification path beyond
-  GitHub's default scheduled-workflow email — worth adding (e.g.
-  issue-on-failure), but needs an owner call on the `issues: write`
-  permission grant and dedup logic. See `docs/review-round-2-findings.md` #13.
+- ...
