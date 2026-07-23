@@ -8,6 +8,7 @@ import {
 } from "../../lib/content";
 import resumeData from "../../lib/resume-data.json";
 import projectsSources from "../../config/projects.sources.json";
+import { deriveSlug } from "../../scripts/lib/slug.mjs";
 
 // The committed lib/*-data.json files are what the deployed pages actually
 // render (nothing is fetched at request time). A bad regeneration — empty
@@ -48,7 +49,7 @@ describe("projects-data.json", () => {
     // failure for that case: every configured slug must show up in the
     // committed snapshot, token or not.
     for (const source of projectsSources.projects) {
-      const slug = source.slug ?? source.repo?.split("/")[1];
+      const slug = deriveSlug(source);
       expect(getProject(slug), `missing project "${slug}" from lib/projects-data.json`).toBeDefined();
     }
   });
