@@ -24,6 +24,11 @@ yarn-error.log*
 next-env.d.ts
 
 # env
+# .env itself (not just .env.local variants) is a supported GITHUB_TOKEN
+# source for scripts/gen-*.mjs (see loadToken() in each) — review round 1
+# finding #3 found it wasn't ignored, so an ordinary `.env` + `git add -A`
+# could have committed a live token.
+.env
 .env*.local
 
 # OpenNext
