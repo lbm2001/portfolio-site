@@ -113,7 +113,20 @@ async function buildOne(source, contentRepo, file) {
   // + "assets/x.png" -> "mujopy/assets/x.png".
   const inContentDir = (rel) => `${contentDir}/${rel}`;
 
-  const meta = repo ? await ghJson(`https://api.github.com/repos/${repo}`) : null;
+  // README first: it's the primary content (frontmatter + body); `meta` is
+  // only a FALLBACK for title/blurb/tags when frontmatter omits them (see
+  // header comment). Fetch it independently so a flaky/rate-limited metadata
+  // call can never discard an otherwise-successful README fetch — it used to
+  // throw before the README was even requested, so a good content edit could
+  // silently not ship because of an unrelated metadata hiccup.
+  let meta = null;
+  if (repo) {
+    try {
+      meta = await ghJson(`https://api.github.com/repos/${repo}`);
+    } catch (e) {
+      console.warn(`  ! metadata for ${repo}: ${e.message} — falling back to frontmatter-only title/blurb/tags, no "Code" link`);
+    }
+  }
   const mdText = (await ghFile(contentRepo, inContentDir(file))).toString("utf8");
   const fmParsed = parseProjectMd(mdText);
 
@@ -161,9 +174,19 @@ async function buildOne(source, contentRepo, file) {
     links.push(lk);
   }
 
+  // Project.title (lib/content.ts) is a required string, but frontmatter can
+  // omit `title` and `meta` is null for a repo-less project (source has no
+  // "repo") — falling back to `undefined` would render as the literal string
+  // "undefined" on the page (JSON.stringify drops the key, and the `as
+  // Project[]` cast at the read side gives no runtime check). Fall back to
+  // the slug instead, so a missing title is visibly a slug, not a crash or a
+  // literal "undefined".
+  if (!fmParsed.title && !meta?.name) {
+    console.warn(`  ! ${slug}: no title in frontmatter and no repo metadata — using slug as title`);
+  }
   return {
     slug,
-    title: fmParsed.title || meta?.name,
+    title: fmParsed.title || meta?.name || slug,
     venue: fmParsed.venue || "",
     ...(fmParsed.period ? { period: fmParsed.period } : {}),
     blurb: fmParsed.blurb || meta?.description || "",
