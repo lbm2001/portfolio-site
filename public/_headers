@@ -16,6 +16,9 @@
 # Stale-tab reload guard: a tab left open across a deploy fetches this on
 # visibilitychange and reloads if the id no longer matches the one baked into
 # its JS bundle. Must revalidate so the CDN always serves the current deploy's
-# value — the browser fetch already uses cache:"no-store".
+# value — the browser fetch already uses cache:"no-store". This path is a
+# static string here (this file can't import lib/build-id.ts's BUILD_ID_PATH
+# constant, which next.config.mjs and Hero.tsx both use) — keep it in sync by
+# hand if that constant ever changes.
 /build-id.json
   Cache-Control: public,max-age=0,must-revalidate
