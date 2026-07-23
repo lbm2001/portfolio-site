@@ -10,120 +10,77 @@
 - **Repo:** portfolio-site
 - **Branch:** `fresh-review-2`
 - **Worktree:** /root/git/worktrees/portfolio-site/fresh-review-2
-- **Last updated:** 2026-07-23 18:45 UTC · server (srv1841294)
+- **Last updated:** 2026-07-23 · server (srv1841294)
 
 ## State
 
-Not started. This is review round 2 for portfolio-site. Round 1 landed as
-PR #57 (22 findings, all fixed/tested/investigated) and merged via squash
-into main at commit `814cb7e` — no other commits have landed since, so this
-round reviews the exact tree round 1 left behind, fixes and all.
+Review round 2 is done. Fanned out 8 blind parallel sub-reviewers (same
+generic-core dimension set as round 1) + a scan-only `codebase-health` leg,
+merged into one ranked list, de-duplicated against
+`docs/review-round-1-findings.md` (nothing overlapped — round 1's 22
+findings all stayed fixed). Fixed and verified 11 of ~17 substantiated
+findings; 6 reported with reasoning for why they weren't fixed this round.
+Full detail: `docs/review-round-2-findings.md`. `PROJECT_STATUS.md` was
+backfilled (was still an empty scaffold, including round 1's own
+never-promoted decisions — flagged by round 1's own handoff).
 
-Mission: a second independent, blind review round — same generic-core
-dimension set as round 1 (adversarial static read, docs-vs-code drift, test
-blind spots, config/permission safety, CI correctness, cross-file
-consistency, derived-but-unused values, guard blind spots), fanned out over
-parallel sub-reviewers, followed by a scan-only `codebase-health` leg, then
-merged into one ranked findings list. **You may fix what you find as you
-go this round**, the same way round 1 did — the standing rules below still
-apply (one commit per concern, owner go-ahead before anything high-blast-
-radius).
+Baseline gate was green going in and stayed green: `typecheck`, `lint`,
+`test`, `next build` all pass, plus a full `next e2e:build && npm run e2e`
+run — 59 passed, 5 skipped as designed, across desktop/mobile/webkit-mobile.
+The two behavioral fixes were each verified by deliberately reverting and
+confirming the new test fails, then restoring and confirming it passes,
+against the real Workers bundle.
 
-**This round's value depends on not re-finding round 1.** Do the full
-discovery pass *first* — read `CLAUDE.md` and this repo's own docs, not
-`docs/review-round-1-findings.md` or PR #57 — then de-duplicate against
-that report. Re-finding something round 1 already fixed is a sign the pass
-is working, not a finding; report it separately from anything new.
-
-What round 1 covered thoroughly, so you can weight effort elsewhere:
-`CLAUDE.md`'s documented guarantees (content-fetch-at-build-time,
-`lib/vla-assets.ts`'s version-derived path, the two CI lanes, the
-cache-busting/stale-chunk reload path), `scripts/gen-projects-data.mjs` and
-`scripts/gen-resume-source.mjs`'s failure semantics, the Hero.tsx watchdogs,
-`config/projects.sources.json` vs. the committed data, and security/CI
-issues in `bump-mini-vla.yml`/`claude-review.yml`/`ci.yml`.
-
-Where round 1 was thin, and where this round should push hardest:
-
-- **`scripts/gen-blog-data.mjs` never got the same scrutiny** as its two
-  siblings. Round 1's whole "silent partial-failure in build-time
-  generation loops" finding (config vs. committed data going silently out
-  of sync, a partial fetch failure discarding good data, a required field
-  silently defaulting to `undefined`) was found in `gen-projects-data.mjs`
-  and `gen-resume-source.mjs` — check whether the same shapes exist here
-  too. This class of defect isn't in the codebase-review skill's
-  dimension catalog yet (`references/review-dimensions.md` in
-  agentic-dev-toolkit) even though round 1 proposed it — name it again if
-  this round confirms it's a recurring class, so it actually gets added.
-- **Round 1's own new surface is unreviewed by construction** — it was
-  added and fixed in the same pass that found it, so nothing adversarial
-  has looked at it yet: `.github/workflows/nightly-e2e-full.yml` (new),
-  the `bump-mini-vla.yml` changes (version-check step, e2e gate, the `env:`
-  fix for the injection), `claude-review.yml`'s `author_association` gate,
-  `lib/build-id.ts` + `tests/unit/build-id.test.ts`, the `"@"` alias added
-  to `vitest.config.ts`, `tests/e2e/hero-watchdog.spec.ts`'s scripted
-  `Worker` double, and the `webkit-mobile` Playwright project. Read these
-  with the same adversarial eye as everything else — a fix landed under
-  time pressure across many concurrent findings is exactly where a new
-  defect hides.
-- **Three CI workflows now each install Playwright browsers with
-  near-identical steps** (`ci.yml`, `bump-mini-vla.yml`,
-  `nightly-e2e-full.yml`) — worth a cross-file-consistency look; a browser
-  added to one and not the others would silently narrow that workflow's
-  coverage the same way the pre-round-1 route-list duplication did.
-- **`PROJECT_STATUS.md` and `PROJECT_ROADMAP.md` are still empty
-  scaffolds** — round 1's decisions (the mini-vla version-mismatch guard,
-  the `.env` gitignore fix, the `vla-debug` removal, the proposed new
-  review dimension) were never promoted into `PROJECT_STATUS.md`'s "Key
-  decisions" list. Not this round's job to backfill, but worth flagging to
-  the owner if it's still true when this round ends.
-
-This repo is not the toolkit — no conditional dimensions apply (no
-`bin/vibe`, `install.sh`, `docs/skill-quality.md` anchors here); extend
-scope from `CLAUDE.md` and this repo's own docs, never from the toolkit's
-own review anatomy.
+12 commits on this branch, `814cb7e..HEAD` (round 1's merge commit to
+current). **Nothing pushed yet** — this branch only exists locally in this
+worktree; `origin` still points at round 1's merged state.
 
 ## Next action
 
-1. `git rebase origin/main` (never `vibe resume` — it fast-forwards to this
-   branch's own upstream and reports up to date while arbitrarily far
-   behind the default branch; this branch was just cut from a
-   freshly-fetched `main`, so this should be a no-op, but confirm it).
-2. Run the repo's own verification gate as the baseline: `npm run
-   typecheck`, `npm run lint`, `npm test`, `npx next build`. Baseline at
-   staging time: all four green (round 1 left them that way). A failure
-   here is yours to fix or flag first — treat whatever this gate does
-   *not* catch as the round's real target.
-3. Fan out parallel sub-reviewers over the scope above, then run the
-   `codebase-health` scan leg strictly after (never before — it anchors
-   the reviewer to what the tool already knows), then merge into one
-   ranked findings list — `file:line` and a concrete failure scenario
-   each, reasoned-but-unproven claims labelled as such. Fix what's
-   reasonable to fix in the same round; report the rest.
+Ask the owner whether to push this branch and open a PR (mirroring round
+1's PR #57) — push/PR creation wasn't pre-authorized for this round, so it
+wasn't done automatically. If yes: `git push -u origin fresh-review-2`,
+then `gh pr create` with a body summarizing `docs/review-round-2-findings.md`
+(same shape as round 1's PR).
+
+Two things worth the owner's attention regardless of whether this becomes a
+PR now:
+- **Open question in `PROJECT_STATUS.md`**: should
+  `bump-mini-vla.yml`'s version-consistency check move from warn-only to
+  build-blocking? Left as-is this round (matches round 1's own design
+  intent), only the misleading PR-body wording was fixed.
+- **Two reported-not-fixed items involve owner-level tradeoffs**, not
+  mechanical fixes: `nightly-e2e-full.yml` has no real failure notification
+  (needs an `issues: write` permission grant + dedup logic), and
+  `hero-full.spec.ts`'s 35-min timeout is unverified on the `mobile`/
+  `webkit-mobile` Playwright projects it also runs on (needs either
+  narrowing coverage or actually re-measuring). See
+  `docs/review-round-2-findings.md` #13–14 for full reasoning.
 
 ## Blockers
 
-None known. Node.js was missing entirely from the container round 1 ran
-in (not even via nvm) and had to be installed by hand from a tarball before
-anything in CLAUDE.md's Commands section would run — check early whether
-this round's environment has the same gap, so it doesn't eat time
-mid-round.
+None. Node.js (v22.17.0, matches `.nvmrc`) was present this time — no
+install-from-tarball needed, unlike round 1.
 
 ## Gotchas (unpromoted)
 
-- **This repo's CI is not label-gated** — `ci.yml` triggers unconditionally
-  on `pull_request`/`push`, confirmed by reading it directly. Round 1's own
-  `HANDOFF.md` wrongly assumed a label was needed; don't repeat that
-  assumption — no label is needed on this round's review PR either.
-- **The staging tool (`review.sh`) can't detect a squash-merged round as
-  done.** Round 1's PR was squash-merged (GitHub default), so the merged
-  commit on `main` shares no history with `fresh-review-1` and its subject
-  doesn't contain the branch name — `review.sh create`'s ancestor-and-
-  regex-fallback check couldn't tell round 1 was finished and re-adopted
-  the old branch instead of computing round 2. This branch was staged by
-  hand (same `stage_worktree`/template-render mechanics, just with the
-  round number set correctly) after confirming via `gh pr view 57` that it
-  was genuinely merged. Not this round's job to fix, but worth naming as a
-  toolkit-level gap: `review.sh`'s merge check should also try a `gh pr
-  list --state merged` search scoped to the round's own head branch, not
-  just branch ancestry.
+- **A 1-second margin before a 20-second virtualized watchdog deadline is
+  too tight for real-browser e2e timing jitter.** Building
+  `hero-watchdog.spec.ts`'s new pause/resume-race test, a `page.clock`
+  fast-forward to 19s (1s before `TRAIN_STALL_MS`) was flaky — roughly 1-in-3
+  runs; the stall fired a couple seconds "early" relative to nominal,
+  apparently from compounding microtask/rAF timing in a real headless
+  browser. Widened all the margins in that test to 8-10s+ and it now passes
+  reliably (5/5, then 3/3 repeated). If a future watchdog test feels flaky
+  near its nominal deadline, this is the likely cause — don't shave the
+  margin thin to save a few seconds of test runtime.
+- **A scripted worker-double's `postMessage` ack timing matters, not just
+  its content.** The same new test initially used a *synchronous* ack for
+  `{t: "resume"}` (for test determinism) — but that made the ack land
+  *before* `resumeTraining()` had set its own `statusRef.current`, routing
+  `onUpdate` through the transition branch (which unconditionally re-arms
+  the watchdog) instead of the steady-state "Resume re-arm" branch actually
+  under test — silently defeating the test's own purpose (it passed even
+  with the bug reverted). Real workers only ever ack asynchronously; matched
+  that with a microtask, same as the existing "start" ack, and the test
+  then correctly failed/passed with the bug reverted/fixed.
