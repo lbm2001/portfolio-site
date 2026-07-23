@@ -41,8 +41,10 @@ test.describe("training-loop watchdogs (scripted worker double)", () => {
    *   - "collapse": immediately posts one more batch reporting a "converged"
    *     status with a loss under CONVERGED_LOSS_FLOOR — the zeroed-readback
    *     false-convergence onTrainCollapsed exists to reject.
-   *  Any other posted message (pause/resume/reset/predict/...) is ignored;
-   *  none of those paths are under test here. */
+   *  "resume" is acked with an unchanged-batches "training" state (see below,
+   *  needed for the pause/resume-race test); any other posted message
+   *  (pause/reset/predict/...) is ignored — none of those paths are under
+   *  test here. */
   async function installScriptedWorker(
     page: import("@playwright/test").Page,
     mode: "stall" | "collapse",
@@ -54,10 +56,35 @@ test.describe("training-loop watchdogs (scripted worker double)", () => {
         onmessageerror: ((ev: unknown) => void) | null = null;
         constructor(_url: string | URL, _opts?: unknown) {}
         postMessage(msg: { t: string; gen: number }) {
-          if (msg.t !== "start") return; // pause/resume/reset/predict/... unused here
           const post = (data: Record<string, unknown>) => {
             this.onmessage?.({ data } as MessageEvent);
           };
+          if (msg.t === "resume") {
+            // A real worker's ack always lands on a later task than the
+            // synchronous trainer.resume() call that sent it — by which point
+            // resumeTraining() has already set statusRef.current itself, so
+            // onUpdate sees trainer.status === statusRef.current and takes
+            // the steady-state branch (the "Resume re-arm" logic under test),
+            // not the transition branch (which unconditionally re-arms
+            // regardless of pauseTraining's own behavior, masking the bug
+            // this test exists to catch). Match that with a microtask, same
+            // as the "start" ack below — a synchronous ack here would land
+            // before that assignment and false-pass this test.
+            void Promise.resolve().then(() => {
+              post({
+                t: "state",
+                gen: msg.gen,
+                status: "training",
+                errorReason: null,
+                loss: 0.5,
+                smoothLoss: 0.5,
+                initialLoss: 1,
+                batches: 1,
+              });
+            });
+            return;
+          }
+          if (msg.t !== "start") return; // pause/reset/predict/... unused here
           // Microtask, not a timer: fires regardless of a fake/paused clock,
           // matching a real worker's async-but-immediate first reply.
           void Promise.resolve().then(() => {
@@ -144,6 +171,53 @@ test.describe("training-loop watchdogs (scripted worker double)", () => {
       timeout: 10_000,
     });
     await expect(page.locator(primaryBtn).first()).toHaveText("Reload");
+  });
+
+  test("pausing just before the stall deadline and resuming doesn't falsely trip the watchdog", async ({
+    page,
+    isMobile,
+  }) => {
+    // Regression this catches: pauseTraining() previously left the stall
+    // watchdog armed with its PRE-pause deadline. A pause/resume landing
+    // close enough to that deadline would leave the stale timer pending
+    // through the resume, and it would fire moments later against the
+    // resumed (and healthy) "training" status — tearing down a run that
+    // never actually stalled. See pauseTraining's own comment.
+    await installScriptedWorker(page, "stall");
+    await page.clock.install();
+
+    await openHero(page, isMobile);
+    await page.locator(primaryBtn).first().click();
+    await expect(page.locator(status)).toHaveText("Training", { timeout: 10_000 });
+
+    // Well short of TRAIN_STALL_MS (20s) — wide margin against real-browser
+    // jitter in exactly when the arm happened relative to this fast-forward
+    // (the stall timer is still pending either way).
+    await page.clock.fastForward("00:10");
+    await page.locator(primaryBtn).first().click(); // Pause
+    await expect(page.locator(status)).toHaveText("Paused");
+
+    await page.locator(primaryBtn).first().click(); // Resume
+    await expect(page.locator(status)).toHaveText("Training");
+    // Flush the scripted worker's synchronous resume ack (see
+    // installScriptedWorker) before advancing the clock below — real-time
+    // wait, independent of the virtualized clock.
+    await page.waitForTimeout(200);
+
+    // Cross the OLD (pre-pause) deadline (~20s from arm) by a wide margin,
+    // while staying well short of a FRESH deadline armed at the resume point
+    // (~10s + 20s = ~30s). The buggy version's stale timer fires somewhere
+    // around the old deadline, against the now-resumed "training" status,
+    // and falsely stalls the run; the fixed version re-armed on resume, so
+    // this alone must NOT trip it.
+    await page.clock.fastForward("00:15");
+    await expect(page.locator(status)).toHaveText("Training");
+
+    // The watchdog isn't disabled outright, just correctly re-timed from the
+    // resume point: cross the fresh deadline (~30s total) with still no
+    // further batch, and confirm it still fires.
+    await page.clock.fastForward("00:10");
+    await expect(page.locator(status)).toHaveText("Training stalled — reload");
   });
 });
 
