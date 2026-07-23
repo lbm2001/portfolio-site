@@ -31,24 +31,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parsePostMd } from "../lib/post-md.ts";
+import { loadToken } from "./lib/github-token.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const OUT = path.join(root, "lib", "posts-data.json");
 
-// --- token: read from env, or a gitignored .dev.vars / .env.local (the build
-// scripts run before Next loads env, so we read it ourselves). Mirrors gen-projects-data.mjs.
-function loadToken() {
-  if (process.env.GITHUB_TOKEN) return process.env.GITHUB_TOKEN.trim();
-  for (const f of [".dev.vars", ".env.local", ".env"]) {
-    try {
-      const txt = fs.readFileSync(path.join(root, f), "utf8");
-      const m = txt.match(/^\s*GITHUB_TOKEN\s*=\s*(.+)\s*$/m);
-      if (m) return m[1].replace(/^["']|["']$/g, "").trim();
-    } catch {}
-  }
-  return null;
-}
-const TOKEN = loadToken();
+const TOKEN = loadToken(root);
 
 function ghHeaders() {
   const h = { Accept: "application/vnd.github+json", "User-Agent": "portfolio-build" };
