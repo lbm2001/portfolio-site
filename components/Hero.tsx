@@ -1710,7 +1710,10 @@ export default function Hero() {
         const r = await fetch(BUILD_ID_PATH, { cache: "no-store" });
         if (!r.ok) return;
         const { id }: BuildIdPayload = await r.json();
-        if (id !== buildId) window.location.reload();
+        // A malformed-but-200 body (id missing/not a string) isn't evidence
+        // of a stale deploy — treat it the same as the network/parse
+        // failures below (skip), not as an automatic "reload".
+        if (typeof id === "string" && id !== buildId) window.location.reload();
       } catch { /* offline / fetch failed — skip */ }
     };
     document.addEventListener("visibilitychange", check);
