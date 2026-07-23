@@ -22,28 +22,21 @@
 // the site always builds with last-known data. An EMPTY posts dir is a valid
 // result, though: the listing succeeding with zero post folders writes [] (the
 // blog page then shows "Writing Coming Soon"). Only an ERROR keeps existing data.
+// Exception: a listing that comes back empty when lib/posts-data.json already
+// has posts is treated as suspicious, not a legitimate empty-blog transition —
+// see the guard in main(). ghList() maps both "dir/repo doesn't exist" and "the
+// token can't see this private repo" to the same 404-derived [], so a narrowed
+// or revoked GITHUB_TOKEN would otherwise silently wipe every committed post.
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parsePostMd } from "../lib/post-md.ts";
+import { loadToken } from "./lib/github-token.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const OUT = path.join(root, "lib", "posts-data.json");
 
-// --- token: read from env, or a gitignored .dev.vars / .env.local (the build
-// scripts run before Next loads env, so we read it ourselves). Mirrors gen-projects-data.mjs.
-function loadToken() {
-  if (process.env.GITHUB_TOKEN) return process.env.GITHUB_TOKEN.trim();
-  for (const f of [".dev.vars", ".env.local", ".env"]) {
-    try {
-      const txt = fs.readFileSync(path.join(root, f), "utf8");
-      const m = txt.match(/^\s*GITHUB_TOKEN\s*=\s*(.+)\s*$/m);
-      if (m) return m[1].replace(/^["']|["']$/g, "").trim();
-    } catch {}
-  }
-  return null;
-}
-const TOKEN = loadToken();
+const TOKEN = loadToken(root);
 
 function ghHeaders() {
   const h = { Accept: "application/vnd.github+json", "User-Agent": "portfolio-build" };
@@ -145,6 +138,13 @@ async function main() {
   const slugs = entries.filter((e) => e.type === "dir").map((e) => e.name);
   const existing = readExisting();
   const byslug = Object.fromEntries(existing.map((p) => [p.slug, p]));
+
+  if (slugs.length === 0 && existing.length > 0) {
+    console.warn(
+      `gen-blog-data: listing ${repo}/${dir} returned zero post folders, but lib/posts-data.json already has ${existing.length} — likely a misconfigured dir or an unauthorized token (both surface as 404), not a newly-emptied blog; leaving the file untouched`,
+    );
+    return;
+  }
 
   const out = [];
   for (const slug of slugs) {
