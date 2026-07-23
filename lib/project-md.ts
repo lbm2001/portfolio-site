@@ -30,11 +30,11 @@
 //   Markdown body...
 
 import { splitFrontmatter, stripQuotes } from "./frontmatter.ts";
+// Same shape lib/content.ts's Project.links renders — share it instead of
+// defining an identical type twice, so a field added to one can't silently
+// diverge from the other (review round 1, finding #20).
+import type { ProjectLink } from "./content.ts";
 
-export interface ProjectMdLink {
-  label: string;
-  href: string;
-}
 export interface ProjectMd {
   title?: string;
   venue?: string;
@@ -42,7 +42,7 @@ export interface ProjectMd {
   blurb?: string;
   aiAssisted?: boolean;
   tags?: string[];
-  links?: ProjectMdLink[];
+  links?: ProjectLink[];
   body: string;
 }
 
@@ -80,11 +80,11 @@ export function parseProjectMd(raw: string): ProjectMd {
     }
 
     if (key === "links") {
-      const links: ProjectMdLink[] = [];
+      const links: ProjectLink[] = [];
       // indented list of "- label: X" then "  href: Y" (order-insensitive)
       while (i + 1 < lines.length && /^\s*-\s+/.test(lines[i + 1])) {
         const first = lines[++i].replace(/^\s*-\s+/, "");
-        const cur: Partial<ProjectMdLink> = {};
+        const cur: Partial<ProjectLink> = {};
         const apply = (s: string) => {
           const m = /^(label|href):\s*(.*)$/.exec(s.trim());
           if (m) cur[m[1] as "label" | "href"] = stripQuotes(m[2]);
@@ -97,7 +97,7 @@ export function parseProjectMd(raw: string): ProjectMd {
         ) {
           apply(lines[++i]);
         }
-        if (cur.label && cur.href) links.push(cur as ProjectMdLink);
+        if (cur.label && cur.href) links.push(cur as ProjectLink);
       }
       if (links.length) out.links = links;
       continue;
