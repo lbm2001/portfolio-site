@@ -22,6 +22,11 @@
 // the site always builds with last-known data. An EMPTY posts dir is a valid
 // result, though: the listing succeeding with zero post folders writes [] (the
 // blog page then shows "Writing Coming Soon"). Only an ERROR keeps existing data.
+// Exception: a listing that comes back empty when lib/posts-data.json already
+// has posts is treated as suspicious, not a legitimate empty-blog transition —
+// see the guard in main(). ghList() maps both "dir/repo doesn't exist" and "the
+// token can't see this private repo" to the same 404-derived [], so a narrowed
+// or revoked GITHUB_TOKEN would otherwise silently wipe every committed post.
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -145,6 +150,13 @@ async function main() {
   const slugs = entries.filter((e) => e.type === "dir").map((e) => e.name);
   const existing = readExisting();
   const byslug = Object.fromEntries(existing.map((p) => [p.slug, p]));
+
+  if (slugs.length === 0 && existing.length > 0) {
+    console.warn(
+      `gen-blog-data: listing ${repo}/${dir} returned zero post folders, but lib/posts-data.json already has ${existing.length} — likely a misconfigured dir or an unauthorized token (both surface as 404), not a newly-emptied blog; leaving the file untouched`,
+    );
+    return;
+  }
 
   const out = [];
   for (const slug of slugs) {
