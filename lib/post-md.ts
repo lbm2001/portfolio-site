@@ -21,7 +21,7 @@
 //   --->
 //   Markdown body...
 
-import { splitFrontmatter, stripQuotes } from "./frontmatter.ts";
+import { parseAiAssisted, parseKvLine, splitFrontmatter, stripQuotes } from "./frontmatter.ts";
 
 export interface PostMd {
   title?: string;
@@ -39,14 +39,12 @@ export function parsePostMd(raw: string): PostMd {
   const out: PostMd = { body };
 
   for (const line of block.split("\n")) {
-    if (!line.trim() || line.trim().startsWith("#")) continue;
-    const kv = /^([A-Za-z][\w]*):\s*(.*)$/.exec(line);
+    const kv = parseKvLine(line);
     if (!kv) continue;
-    const key = kv[1];
-    const value = kv[2].trim();
+    const { key, value } = kv;
 
     if (key === "aiAssisted") {
-      out.aiAssisted = /^(true|yes|1)$/i.test(value);
+      out.aiAssisted = parseAiAssisted(value);
       continue;
     }
 

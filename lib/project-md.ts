@@ -29,7 +29,7 @@
 //   -->
 //   Markdown body...
 
-import { splitFrontmatter, stripQuotes } from "./frontmatter.ts";
+import { parseAiAssisted, parseKvLine, splitFrontmatter, stripQuotes } from "./frontmatter.ts";
 // Same shape lib/content.ts's Project.links renders — share it instead of
 // defining an identical type twice, so a field added to one can't silently
 // diverge from the other (review round 1, finding #20).
@@ -55,12 +55,9 @@ export function parseProjectMd(raw: string): ProjectMd {
   const lines = block.split("\n");
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (!line.trim() || line.trim().startsWith("#")) continue;
-
-    const kv = /^([A-Za-z][\w]*):\s*(.*)$/.exec(line);
+    const kv = parseKvLine(line);
     if (!kv) continue;
-    const key = kv[1];
-    const value = kv[2].trim();
+    const { key, value } = kv;
 
     // `tags` / `links` may be an inline value or a following indented list.
     if (key === "tags") {
@@ -104,7 +101,7 @@ export function parseProjectMd(raw: string): ProjectMd {
     }
 
     if (key === "aiAssisted") {
-      out.aiAssisted = /^(true|yes|1)$/i.test(value);
+      out.aiAssisted = parseAiAssisted(value);
       continue;
     }
 
