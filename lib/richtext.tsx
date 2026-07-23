@@ -5,7 +5,7 @@ import katex from "katex";
 // Renders a Markdown article body (project write-ups + blog posts) to HTML at
 // build time. Standard GitHub-flavored Markdown — headings, bold/italic, lists,
 // links, code, blockquotes, tables — so a file renders the SAME on GitHub and on
-// the site (these bodies live in each project's repo as `portfolio.md`). On top
+// the site (these bodies live in each project's content dir as `README.md`). On top
 // of plain Markdown we add two extensions:
 //   $..$ / $$..$$        -> inline / display math (KaTeX, rendered at build)
 //   ![alt](src "caption") -> a <figure> with the title as its <figcaption>,

@@ -1,4 +1,4 @@
-// A small, TARGETED parser for the `portfolio.md` file each project repo holds:
+// A small, TARGETED parser for the `README.md` file each project repo holds:
 // a YAML-ish frontmatter block followed by a Markdown body. Like lib/resume.ts,
 // this is NOT a general YAML parser — it understands exactly the keys the portfolio
 // uses (scalars, an inline `tags` list, and a `links` list of {label, href}).

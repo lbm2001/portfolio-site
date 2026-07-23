@@ -74,8 +74,15 @@ content-hashed asset manifest, so page HTML is served
 `Cache-Control: max-age=0, must-revalidate` (`next.config.mjs`). A tab left
 open across a deploy holds stale chunk URLs in memory; when it lazily
 requests one (e.g. constructing the trainer worker on "Start Training"), the
-404 is caught and surfaces as a **Reload** prompt (`loadFailed` in
-`components/Hero.tsx`) rather than a silent failure.
+404 is caught by `worker.onerror` — with `replayFallback: true` (the option
+`Hero.tsx` always passes to `VLATrainer`), that's treated as just another
+reason to fall over to the CPU-backend replay (a captured-policy rollout
+behind an honest "replay" chip), not a terminal error. Only a genuine double
+failure — the live embeddings AND the replay's own checkpoints both
+unreachable — is truly terminal, surfacing as `errorReason === "assets"`
+("Load failed" + Try again, `components/Hero.tsx`). See
+`tests/e2e/hero-error.spec.ts` for both cases exercised against real network
+failures.
 
 ## Layout
 
