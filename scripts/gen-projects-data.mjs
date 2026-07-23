@@ -100,10 +100,18 @@ function periodKey(s) {
   return Number.isNaN(t) ? 0 : t;
 }
 
+// Single source of truth for a source's slug — main() previously
+// re-derived this independently (for log/catch messages) from buildOne()'s
+// copy (for actual use); an edit to one without the other could silently
+// make logged output and actual output disagree.
+function deriveSlug(source) {
+  return source.slug ?? source.repo?.split("/")[1];
+}
+
 async function buildOne(source, contentRepo, file) {
   const { repo } = source;
   const repoName = repo?.split("/")[1];
-  const slug = source.slug ?? repoName;
+  const slug = deriveSlug(source);
   const contentDir = source.contentDir ?? repoName;
   if (!slug || !contentDir) {
     throw new Error(`no "repo" set — "slug" and "contentDir" must both be given explicitly`);
@@ -213,7 +221,7 @@ async function main() {
 
   const out = [];
   for (const source of config.projects) {
-    const slug = source.slug ?? source.repo?.split("/")[1];
+    const slug = deriveSlug(source);
     try {
       out.push(await buildOne(source, config.contentRepo, config.file));
       console.log(`gen-projects-data: fetched ${slug} <- ${source.repo ?? `${config.contentRepo}/${source.contentDir ?? slug}`}`);
