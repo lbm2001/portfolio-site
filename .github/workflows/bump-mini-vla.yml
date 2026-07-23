@@ -113,8 +113,16 @@ jobs:
       # the full suite including the slow train-to-convergence specs
       # (VLA_FULL), which ci.yml's own e2e job deliberately skips on every
       # push to stay fast.
+      #
+      # --project=desktop: hero-full.spec.ts's 35-min per-test timeout was
+      # measured only against desktop/Chromium+SwiftShader (see its own
+      # comment). It also matches the mobile/webkit-mobile projects, whose
+      # convergence rate against that budget has never been measured — the
+      # other hero specs already run on all three projects via ci.yml's own
+      # e2e job on every push, so this doesn't lose coverage, only avoids an
+      # unverified-timeout flake risk (review round 2, finding #14).
       - name: E2E including train-to-convergence (Playwright vs wrangler dev)
-        run: npm run e2e:full
+        run: npm run e2e:full -- --project=desktop
 
       - uses: actions/upload-artifact@v4
         if: failure()
