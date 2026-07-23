@@ -10,10 +10,17 @@ on:
 
 jobs:
   review:
+    # Without the author_association check, ANY GitHub account could comment
+    # "@claude" on any PR (including one they opened themselves) on this
+    # public repo and get an LLM run with pull-requests: write and repo-read
+    # access to attacker-controlled diff/PR-description content — a
+    # confused-deputy / prompt-injection surface (review round 1, finding
+    # #18). Restrict to accounts GitHub itself already trusts on this repo.
     if: >
       github.event_name == 'issue_comment' &&
       github.event.issue.pull_request &&
-      contains(github.event.comment.body, '@claude')
+      contains(github.event.comment.body, '@claude') &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
