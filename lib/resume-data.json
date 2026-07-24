@@ -89,7 +89,7 @@
           "location": "",
           "slug": "agentic-dev-toolkit",
           "bullets": [
-            "Built \\textttvibe, a CLI giving each task its own git branch, worktree, and tmux session, with handoff between machines",
+            "Built vibe, a CLI giving each task its own git branch, worktree, and tmux session, with handoff between machines",
             "Authored a library of portable Agent Skills for the open Agent Skills format, covering e.g. codebase health checks",
             "Technologies: Bash, tmux, git, shellcheck/shfmt, bats"
           ]
