@@ -514,6 +514,18 @@ export default function Hero() {
     if (!trainer || trainer.status !== "training") return;
     trainer.pause();
     pauseStartRef.current = performance.now();
+    // Disarm the stall watchdog for the pause's duration. Its deadline was
+    // computed from the last batch BEFORE the pause, so left running it can
+    // fire moments after a resume that lands just under that stale deadline —
+    // tearing down a healthy, just-resumed run as a false "train-stalled".
+    // resumeTraining's entry-arm (see the "Resume re-arm" comment below) only
+    // re-arms when the ref is null, so clearing it here — not just on the
+    // long-pause-already-fired path — makes that check correct for a short
+    // pause too.
+    if (trainWatchdogRef.current !== null) {
+      window.clearTimeout(trainWatchdogRef.current);
+      trainWatchdogRef.current = null;
+    }
     flowRef.current
       ?.querySelectorAll<HTMLElement>(".vla-payload")
       .forEach((el) => {
@@ -1464,10 +1476,11 @@ export default function Hero() {
     } else if (trainer.status === "training") {
       // Resume re-arm: resumeTraining() pre-sets status to "training", so the
       // worker's resume-ack "state" is NOT a transition and misses the entry-arm
-      // above. If a long pause let the pre-pause watchdog already fire (it nulls
-      // the ref), the resumed run would have NO watchdog — a resume onto a
-      // context that died while paused produces no batches and would hang with no
-      // reload prompt. Arm here whenever training is running unwatched.
+      // above. pauseTraining() always clears the ref on pause (see its own
+      // comment), so every resume needs this re-arm, not just a long one — a
+      // resume onto a context that died while paused produces no batches and
+      // would hang with no reload prompt. Arm here whenever training is
+      // running unwatched.
       if (trainWatchdogRef.current === null) armTrainWatchdog();
       // Steady-state training (no status change): a new batch landed. Reset the
       // stall clock and watch for a run of non-physical losses — DEAD_LOSS_LIMIT
@@ -1697,7 +1710,10 @@ export default function Hero() {
         const r = await fetch(BUILD_ID_PATH, { cache: "no-store" });
         if (!r.ok) return;
         const { id }: BuildIdPayload = await r.json();
-        if (id !== buildId) window.location.reload();
+        // A malformed-but-200 body (id missing/not a string) isn't evidence
+        // of a stale deploy — treat it the same as the network/parse
+        // failures below (skip), not as an automatic "reload".
+        if (typeof id === "string" && id !== buildId) window.location.reload();
       } catch { /* offline / fetch failed — skip */ }
     };
     document.addEventListener("visibilitychange", check);

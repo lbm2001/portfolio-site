@@ -18,7 +18,8 @@
 # its JS bundle. Must revalidate so the CDN always serves the current deploy's
 # value — the browser fetch already uses cache:"no-store". This path is a
 # static string here (this file can't import lib/build-id.ts's BUILD_ID_PATH
-# constant, which next.config.mjs and Hero.tsx both use) — keep it in sync by
-# hand if that constant ever changes.
+# constant — only Hero.tsx does; next.config.mjs keeps its own literal too,
+# see its own comment for why) — keep it in sync by hand if that constant
+# ever changes. tests/unit/build-id.test.ts pins all three together.
 /build-id.json
   Cache-Control: public,max-age=0,must-revalidate

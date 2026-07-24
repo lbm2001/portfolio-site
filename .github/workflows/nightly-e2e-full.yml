@@ -6,6 +6,12 @@
 # components/Hero.tsx) between bumps would still ship undetected. Run it
 # nightly against main instead, so any regression surfaces within a day
 # rather than never.
+#
+# On failure, open/update a single tracking issue (title-matched, so this
+# never needs a pre-existing label) instead of relying solely on GitHub's
+# default scheduled-workflow-failure email — that email goes only to
+# whoever last edited this file, easy to miss or mute (review round 2,
+# finding #13). The issue auto-closes on the next green run.
 name: nightly-e2e-full
 
 on:
@@ -15,6 +21,7 @@ on:
 
 permissions:
   contents: read
+  issues: write
 
 jobs:
   e2e-full:
@@ -39,8 +46,15 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium webkit
 
+      # --project=desktop: hero-full.spec.ts's 35-min per-test timeout was
+      # measured only against desktop/Chromium+SwiftShader (see its own
+      # comment). It also matches the mobile/webkit-mobile projects, whose
+      # convergence rate against that budget has never been measured — the
+      # other hero specs already run on all three projects via ci.yml's own
+      # e2e job on every push, so this doesn't lose coverage, only avoids an
+      # unverified-timeout flake risk (review round 2, finding #14).
       - name: E2E including train-to-convergence (Playwright vs wrangler dev)
-        run: npm run e2e:full
+        run: npm run e2e:full -- --project=desktop
 
       - uses: actions/upload-artifact@v4
         if: failure()
@@ -48,3 +62,59 @@ jobs:
           name: playwright-report
           path: playwright-report/
           retention-days: 7
+
+      - name: Open/update failure-tracking issue
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = "nightly-e2e-full is failing";
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+            });
+            const existing = issues.find((i) => i.title === title);
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body: `Still failing: ${runUrl}`,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body: `The nightly train-to-convergence e2e run failed: ${runUrl}\n\nAuto-managed by .github/workflows/nightly-e2e-full.yml — closes automatically once this workflow passes again.`,
+              });
+            }
+
+      - name: Close failure-tracking issue on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = "nightly-e2e-full is failing";
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+            });
+            for (const issue of issues.filter((i) => i.title === title)) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: `Passed: ${runUrl}`,
+              });
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+              });
+            }

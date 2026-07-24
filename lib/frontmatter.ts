@@ -18,6 +18,20 @@ export function stripQuotes(s: string): string {
   return t;
 }
 
+/** Parse one frontmatter line as `key: value`. Returns null for a blank line,
+    a `#` comment, or anything not matching that shape — callers skip those. */
+export function parseKvLine(line: string): { key: string; value: string } | null {
+  if (!line.trim() || line.trim().startsWith("#")) return null;
+  const kv = /^([A-Za-z][\w]*):\s*(.*)$/.exec(line);
+  if (!kv) return null;
+  return { key: kv[1], value: kv[2].trim() };
+}
+
+/** The `aiAssisted: true|yes|1` convention both parsers use. */
+export function parseAiAssisted(value: string): boolean {
+  return /^(true|yes|1)$/i.test(value);
+}
+
 /** Split raw file text into its frontmatter `block` (raw key/value lines, markers
     stripped) and the Markdown `body`. Returns `block: null` when there is no
     frontmatter — the whole input is the body. Tries the comment form first, since

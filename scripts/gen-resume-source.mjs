@@ -15,23 +15,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadToken } from "./lib/github-token.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-// --- token: env, or a gitignored .dev.vars / .env.local (build scripts run
-// before Next loads env, so we read it ourselves). Mirrors gen-projects-data.mjs.
-function loadToken() {
-  if (process.env.GITHUB_TOKEN) return process.env.GITHUB_TOKEN.trim();
-  for (const f of [".dev.vars", ".env.local", ".env"]) {
-    try {
-      const txt = fs.readFileSync(path.join(root, f), "utf8");
-      const m = txt.match(/^\s*GITHUB_TOKEN\s*=\s*(.+)\s*$/m);
-      if (m) return m[1].replace(/^["']|["']$/g, "").trim();
-    } catch {}
-  }
-  return null;
-}
-const TOKEN = loadToken();
+const TOKEN = loadToken(root);
 
 // Fetch a repo file's raw bytes via the Contents API (works for private repos).
 async function ghFile(repo, filePath) {

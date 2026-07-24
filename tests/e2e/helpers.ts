@@ -87,7 +87,7 @@ export async function startTraining(page: Page): Promise<void> {
   );
 
   // "Stuck" is Hero's own loading-watchdog (LOADING_WATCHDOG_MS): it gives up
-  // on "loading" after 10s with no word from the worker. On CI's software-
+  // on "loading" after 15s with no word from the worker. On CI's software-
   // rendered (SwiftShader) Chromium the desktop task's warmup can genuinely
   // take longer than that — slower than any real visitor's hardware, this
   // repo's iPad included — so it isn't the wedged-forever failure the
